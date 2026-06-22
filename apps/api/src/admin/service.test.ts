@@ -437,6 +437,16 @@ describe("adminDeviceStatus", () => {
     expect(
       adminDeviceStatus(device({ lastSyncAt: "2026-06-19T12:00:00.000Z" }), latestRelease, now),
     ).toBe("stale");
+    expect(
+      adminDeviceStatus(
+        device({
+          lastCheckInAt: "2026-06-19T12:00:00.000Z",
+          lastSyncAt: "2026-06-19T19:30:00.000Z",
+        }),
+        latestRelease,
+        now,
+      ),
+    ).toBe("healthy");
     expect(adminDeviceStatus(device({ arch: null, version: null }), latestRelease, now)).toBe(
       "unknown",
     );

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, notFound } from "@tanstack/react-router";
 import type { ProfileDailyResponse, ProfileDailyRow } from "@tokenmaxxing/api-contract";
 
 type DailyRow = typeof ProfileDailyRow.Type;
@@ -23,6 +23,8 @@ import { Avatar } from "../components/ui/avatar";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Code } from "../components/ui/code";
+import { isApiError } from "../lib/api";
+import { breadcrumbSchema, profilePageSchema } from "../lib/jsonld";
 import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_WIDTH,
@@ -35,12 +37,20 @@ import { profileDailyQueryOptions, profileQueryOptions } from "../lib/queries";
 
 const Route = createFileRoute("/$user")({
   loader: async ({ context, params }) => {
-    const [profile, daily] = await Promise.all([
-      context.queryClient.ensureQueryData(profileQueryOptions(params.user)),
-      context.queryClient.ensureQueryData(profileDailyQueryOptions(params.user)),
-    ]);
+    try {
+      const [profile, daily] = await Promise.all([
+        context.queryClient.ensureQueryData(profileQueryOptions(params.user)),
+        context.queryClient.ensureQueryData(profileDailyQueryOptions(params.user)),
+      ]);
 
-    return { daily, profile };
+      return { daily, profile };
+    } catch (error) {
+      if (isApiError(error, "UserNotFound")) {
+        throw notFound();
+      }
+
+      throw error;
+    }
   },
   head: ({ loaderData }) => {
     if (loaderData === undefined) {
@@ -67,6 +77,16 @@ const Route = createFileRoute("/$user")({
         { name: "twitter:card", content: "summary_large_image" },
         { name: "twitter:image", content: image },
       ],
+      scripts: [
+        {
+          type: "application/ld+json",
+          children: JSON.stringify(profilePageSchema(profile)),
+        },
+        {
+          type: "application/ld+json",
+          children: JSON.stringify(breadcrumbSchema(profile.user.login, url)),
+        },
+      ],
     };
   },
   component: ProfilePage,
@@ -89,7 +109,7 @@ function ProfilePage() {
     <>
       <header className="flex items-center justify-between gap-4 px-4 py-8">
         <div className="flex min-w-0 items-center gap-4">
-          <Avatar priority size={56} src={owner.avatarUrl} />
+          <Avatar alt={`${owner.login} avatar`} priority size={56} src={owner.avatarUrl} />
           <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{owner.login}</h1>
         </div>
         <ProfileShareButton url={profileUrl(profile)} />

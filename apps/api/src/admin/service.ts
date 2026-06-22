@@ -442,7 +442,11 @@ function isoTime(value: string | null): number {
 }
 
 function latestDeviceCheckIn(device: AdminDeviceSnapshot): string | null {
-  return device.lastCheckInAt ?? device.lastSyncAt;
+  return (
+    [device.lastCheckInAt, device.lastSyncAt]
+      .filter((value): value is string => value !== null)
+      .sort((left, right) => isoTime(right) - isoTime(left))[0] ?? null
+  );
 }
 
 function deviceNeedsRepair(device: AdminDeviceSnapshot): boolean {

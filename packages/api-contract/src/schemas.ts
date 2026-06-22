@@ -314,13 +314,14 @@ const ProfileDailyGroupBy = Schema.Literals(["model", "source", "device"]);
 
 type ProfileDailyGroupBy = typeof ProfileDailyGroupBy.Type;
 
-/** One row per (date, key); `key` is the model/source/device the row groups by. */
+/**
+ * One row per (date, key); `key` is the model/source/device the row groups by.
+ * Only the fields the profile charts read are carried on the wire — input/cache
+ * token breakdowns are intentionally omitted to keep the profile payload small.
+ */
 const ProfileDailyRow = Schema.Struct({
-  cacheCreationTokens: Schema.Number,
-  cacheReadTokens: Schema.Number,
   costUsd: Schema.Number,
   date: Schema.String,
-  inputTokens: Schema.Number,
   key: Schema.String,
   outputTokens: Schema.Number,
   totalTokens: Schema.Number,

@@ -120,11 +120,8 @@ describe("profile daily responses", () => {
       Schema.decodeUnknownPromise(ProfileDailyResponse)({
         days: [
           {
-            cacheCreationTokens: 0,
-            cacheReadTokens: 0,
             costUsd: 12.34,
             date: "2026-06-19",
-            inputTokens: 100,
             key: "claude-opus-4",
             outputTokens: 200,
             totalTokens: 300,
@@ -138,11 +135,8 @@ describe("profile daily responses", () => {
     ).resolves.toEqual({
       days: [
         {
-          cacheCreationTokens: 0,
-          cacheReadTokens: 0,
           costUsd: 12.34,
           date: "2026-06-19",
-          inputTokens: 100,
           key: "claude-opus-4",
           outputTokens: 200,
           totalTokens: 300,
