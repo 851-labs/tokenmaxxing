@@ -60,8 +60,19 @@ function RootDocument() {
         <HeadContent />
       </head>
       <body className="min-h-screen antialiased">
+        {isOgCard ? null : (
+          <a
+            href="#content"
+            className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:border focus:border-border focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            Skip to content
+          </a>
+        )}
         {isOgCard ? null : <Nav />}
-        <main className={isOgCard ? "" : "mx-4 max-w-5xl border-x border-border lg:mx-auto"}>
+        <main
+          id="content"
+          className={isOgCard ? "" : "mx-4 max-w-5xl border-x border-border lg:mx-auto"}
+        >
           <Outlet />
         </main>
         {isOgCard ? null : <Footer />}
