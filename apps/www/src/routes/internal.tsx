@@ -33,6 +33,9 @@ const Route = createFileRoute("/internal")({
       throw error;
     }
   },
+  head: () => ({
+    meta: [{ content: "noindex, follow", name: "robots" }],
+  }),
   component: InternalPage,
   notFoundComponent: NotFoundPage,
 });

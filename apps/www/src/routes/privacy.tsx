@@ -2,13 +2,27 @@ import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import { Code } from "../components/ui/code";
+import { SITE_ORIGIN } from "../lib/og";
 
 const GITHUB_URL = "https://github.com/851-labs/tokenmaxxing";
 const DISCORD_URL = "https://discord.gg/WzX6BpfaRH";
 const CCUSAGE_URL = "https://ccusage.com/";
 
+const PRIVACY_TITLE = "Privacy Policy — tokenmaxxing.sh";
+const PRIVACY_DESCRIPTION =
+  "How tokenmaxxing handles your data: we collect only daily usage aggregates and never your prompts, code, or session content.";
+const PRIVACY_URL = new URL("/privacy", SITE_ORIGIN).toString();
+
 const Route = createFileRoute("/privacy")({
-  head: () => ({ meta: [{ title: "Privacy Policy — tokenmaxxing.sh" }] }),
+  head: () => ({
+    meta: [
+      { title: PRIVACY_TITLE },
+      { content: PRIVACY_DESCRIPTION, name: "description" },
+      { content: PRIVACY_TITLE, property: "og:title" },
+      { content: PRIVACY_DESCRIPTION, property: "og:description" },
+      { content: PRIVACY_URL, property: "og:url" },
+    ],
+  }),
   component: PrivacyPage,
 });
 

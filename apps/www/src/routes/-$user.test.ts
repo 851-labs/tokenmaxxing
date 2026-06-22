@@ -14,11 +14,8 @@ describe("deriveCharts", () => {
     };
     const rows: DailyRow[] = [
       {
-        cacheCreationTokens: 0,
-        cacheReadTokens: 0,
         costUsd: 12,
         date: "2026-06-19",
-        inputTokens: 100,
         key: "claude-opus-4",
         outputTokens: 200,
         totalTokens: 300,
@@ -115,11 +112,8 @@ function dailyRow({
   totalTokens: number;
 }): DailyRow {
   return {
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
     costUsd,
     date: "2026-06-21",
-    inputTokens: 0,
     key,
     outputTokens: 0,
     totalTokens,

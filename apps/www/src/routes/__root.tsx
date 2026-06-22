@@ -1,6 +1,7 @@
 import {
   createRootRouteWithContext,
   HeadContent,
+  Link,
   Outlet,
   Scripts,
   useRouterState,
@@ -59,7 +60,22 @@ function rootHead() {
 const Route = createRootRouteWithContext<RouterContext>()({
   head: rootHead,
   component: RootDocument,
+  notFoundComponent: NotFoundPage,
 });
+
+function NotFoundPage() {
+  return (
+    <div className="mx-auto mt-24 max-w-sm px-4 text-center">
+      <h1 className="text-xl font-semibold tracking-tight">Page not found</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        We couldn&apos;t find the page you were looking for.
+      </p>
+      <Link className="mt-6 inline-flex text-sm font-medium underline underline-offset-4" to="/">
+        Back to tokenmaxxing.sh
+      </Link>
+    </div>
+  );
+}
 
 function RootDocument() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -71,8 +87,19 @@ function RootDocument() {
         <HeadContent />
       </head>
       <body className="min-h-screen antialiased">
+        {isOgCard ? null : (
+          <a
+            href="#content"
+            className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:border focus:border-border focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            Skip to content
+          </a>
+        )}
         {isOgCard ? null : <Nav />}
-        <main className={isOgCard ? "" : "mx-4 max-w-5xl border-x border-border lg:mx-auto"}>
+        <main
+          id="content"
+          className={isOgCard ? "" : "mx-4 max-w-5xl border-x border-border lg:mx-auto"}
+        >
           <Outlet />
         </main>
         {isOgCard ? null : <Footer />}
