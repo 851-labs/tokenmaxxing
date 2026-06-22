@@ -32,6 +32,9 @@ const Route = createFileRoute("/settings")({
       throw error;
     }
   },
+  head: () => ({
+    meta: [{ content: "noindex, follow", name: "robots" }],
+  }),
   component: SettingsPage,
 });
 

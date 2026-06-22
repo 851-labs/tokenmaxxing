@@ -15,6 +15,9 @@ const loginSearchSchema = z.object({
 
 const Route = createFileRoute("/login")({
   validateSearch: loginSearchSchema,
+  head: () => ({
+    meta: [{ content: "noindex, follow", name: "robots" }],
+  }),
   component: LoginPage,
 });
 
