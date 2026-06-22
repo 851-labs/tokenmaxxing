@@ -195,7 +195,9 @@ interface ServiceAutoUpdateRuntime {
   commandExists?: ((command: string) => Effect.Effect<boolean, never>) | undefined;
   fetchLatestVersion?: (() => Effect.Effect<string | null, never>) | undefined;
   fetchRunnerRelease?:
-    | ((target: ServiceRunnerTarget) => Effect.Effect<ServiceRunnerRelease | null, never>)
+    | ((
+        target: ServiceRunnerTarget,
+      ) => Effect.Effect<ServiceRunnerRelease | null, ServiceRunnerUpdateError>)
     | undefined;
   installRunnerRelease?:
     | ((
@@ -538,55 +540,73 @@ function serviceInstallProgram(
     );
     yield* Effect.sync(() => installSpinner.stop("Found tokenmaxxing install"));
 
-    const runnerSpinner = yield* humanSpinner("Installing service runner", options);
-    const runner = yield* (runtime.installServiceRunner ?? installServiceRunner)(paths).pipe(
-      Effect.tap((installedRunner) =>
-        Effect.sync(() =>
-          runnerSpinner.stop(
-            `Service runner installed (${installedRunner.version}/${installedRunner.target})`,
+    const updateLock = yield* acquireServiceUpdateLock(
+      paths.updateLockPath,
+      runtime.now ?? new Date(),
+    ).pipe(Effect.mapError((cause) => new ServiceInstallError({ cause })));
+    if (updateLock._tag === "locked") {
+      return yield* Effect.fail(
+        new ServiceInstallError({
+          cause: new ServiceUpdateLockedError({ status: updateLock.status }),
+        }),
+      );
+    }
+
+    const runner = yield* Effect.gen(function* () {
+      const runnerSpinner = yield* humanSpinner("Installing service runner", options);
+      const installedRunner = yield* (runtime.installServiceRunner ?? installServiceRunner)(
+        paths,
+      ).pipe(
+        Effect.tap((value) =>
+          Effect.sync(() =>
+            runnerSpinner.stop(`Service runner installed (${value.version}/${value.target})`),
           ),
         ),
-      ),
-      Effect.tapError(() =>
-        Effect.sync(() => runnerSpinner.error("Failed installing service runner")),
-      ),
-      Effect.mapError((cause) => new ServiceInstallError({ cause })),
-    );
-    const serviceEnv = capturedServiceEnv(env);
-    const wrapper = renderServiceWrapper({
-      env: serviceEnv,
-      logPath: paths.logPath,
-      platform,
-      runnerPointerPath: paths.runnerPointerPath,
-    });
-    const metadata: ServiceMetadata = {
-      autoUpdateManager: "registry",
-      backend: paths.backend,
-      commandPath: runner.path,
-      installedAt: (runtime.now ?? new Date()).toISOString(),
-      runnerPackage: runner.packageName,
-      runnerPath: runner.path,
-      runnerTarget: runner.target,
-      runnerVersion: runner.version,
-      schedule: scheduleDescription(),
-      templateVersion: SERVICE_TEMPLATE_VERSION,
-      version: 1,
-    };
+        Effect.tapError(() =>
+          Effect.sync(() => runnerSpinner.error("Failed installing service runner")),
+        ),
+        Effect.mapError((cause) => new ServiceInstallError({ cause })),
+      );
+      const serviceEnv = capturedServiceEnv(env);
+      const wrapper = renderServiceWrapper({
+        env: serviceEnv,
+        logPath: paths.logPath,
+        platform,
+        runnerPointerPath: paths.runnerPointerPath,
+      });
+      const metadata: ServiceMetadata = {
+        autoUpdateManager: "registry",
+        backend: paths.backend,
+        commandPath: installedRunner.path,
+        installedAt: (runtime.now ?? new Date()).toISOString(),
+        runnerPackage: installedRunner.packageName,
+        runnerPath: installedRunner.path,
+        runnerTarget: installedRunner.target,
+        runnerVersion: installedRunner.version,
+        schedule: scheduleDescription(),
+        templateVersion: SERVICE_TEMPLATE_VERSION,
+        version: 1,
+      };
 
-    const filesSpinner = yield* humanSpinner("Writing service files", options);
-    yield* (runtime.writeFiles ?? writeServiceFiles)(paths, wrapper, metadata).pipe(
-      Effect.tap(() => Effect.sync(() => filesSpinner.stop("Service files written"))),
-      Effect.tapError(() => Effect.sync(() => filesSpinner.error("Failed writing service files"))),
-      Effect.mapError((cause) => new ServiceInstallError({ cause })),
-    );
-    const schedulerSpinner = yield* humanSpinner("Installing scheduler", options);
-    yield* (runtime.installScheduler ?? installNativeScheduler)(paths).pipe(
-      Effect.tap(() => Effect.sync(() => schedulerSpinner.stop("Scheduler installed"))),
-      Effect.tapError(() =>
-        Effect.sync(() => schedulerSpinner.error("Failed installing scheduler")),
-      ),
-      Effect.mapError((cause) => new ServiceInstallError({ cause })),
-    );
+      const filesSpinner = yield* humanSpinner("Writing service files", options);
+      yield* (runtime.writeFiles ?? writeServiceFiles)(paths, wrapper, metadata).pipe(
+        Effect.tap(() => Effect.sync(() => filesSpinner.stop("Service files written"))),
+        Effect.tapError(() =>
+          Effect.sync(() => filesSpinner.error("Failed writing service files")),
+        ),
+        Effect.mapError((cause) => new ServiceInstallError({ cause })),
+      );
+      const schedulerSpinner = yield* humanSpinner("Installing scheduler", options);
+      yield* (runtime.installScheduler ?? installNativeScheduler)(paths).pipe(
+        Effect.tap(() => Effect.sync(() => schedulerSpinner.stop("Scheduler installed"))),
+        Effect.tapError(() =>
+          Effect.sync(() => schedulerSpinner.error("Failed installing scheduler")),
+        ),
+        Effect.mapError((cause) => new ServiceInstallError({ cause })),
+      );
+
+      return installedRunner;
+    }).pipe(Effect.ensuring(releaseServiceRunLock(paths.updateLockPath, updateLock.lock.ownerId)));
 
     const autoUpdate = {
       enabled: true,
@@ -744,13 +764,24 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
         );
 
         const nativeStatus = yield* readNativeSchedulerStatus(paths);
+        const needsSchedulerInstall = serviceRepairNeedsSchedulerInstall({
+          reason: repairReason,
+          reloadRequired,
+          schedulerActive: nativeStatus.active,
+        });
+        if (!needsSchedulerInstall) {
+          return nativeStatus;
+        }
         if (
-          !serviceRepairNeedsSchedulerInstall({
-            reason: repairReason,
-            reloadRequired,
-            schedulerActive: nativeStatus.active,
-          })
+          !serviceRepairCanInstallScheduler({ backend: paths.backend, deferred: options.deferred })
         ) {
+          if (!nativeStatus.active) {
+            return yield* Effect.fail(
+              new ServiceRepairError({
+                cause: "launchd scheduler repair requires foreground tokenmaxxing service repair",
+              }),
+            );
+          }
           return nativeStatus;
         }
 
@@ -1457,6 +1488,13 @@ function serviceRepairNeedsSchedulerInstall(input: {
   schedulerActive: boolean;
 }): boolean {
   return input.reloadRequired === true || input.reason !== "auto-updated" || !input.schedulerActive;
+}
+
+function serviceRepairCanInstallScheduler(input: {
+  backend: ServiceBackend;
+  deferred?: boolean | undefined;
+}): boolean {
+  return !(input.backend === "launchd" && input.deferred === true);
 }
 
 function parseServiceRepairReason(value: string | undefined): ServiceRepairReasonValue | undefined {
@@ -2415,11 +2453,32 @@ function runServiceRunnerAutoUpdate(
         status: "failure",
       });
     }
+    const paths = options.paths;
 
     const fetchRunnerRelease = runtime.fetchRunnerRelease ?? fetchLatestServiceRunnerRelease;
     let release: ServiceRunnerRelease | null = null;
     for (const target of targets) {
-      const candidate = yield* fetchRunnerRelease(target);
+      const fetchResult = yield* fetchRunnerRelease(target).pipe(
+        Effect.match({
+          onFailure: (cause) => ({ _tag: "failure" as const, cause }),
+          onSuccess: (value) => ({ _tag: "success" as const, value }),
+        }),
+      );
+      if (fetchResult._tag === "failure") {
+        return serviceAutoUpdateReport({
+          attemptedAt,
+          completedAt: now().toISOString(),
+          currentVersion: options.currentVersion,
+          enabled: true,
+          error: formatAutoUpdateError(fetchResult.cause.cause),
+          latestVersion: null,
+          manager: "registry",
+          reason: fetchResult.cause.reason,
+          status: "failure",
+        });
+      }
+
+      const candidate = fetchResult.value;
       if (candidate !== null) {
         release = candidate;
         break;
@@ -2453,7 +2512,7 @@ function runServiceRunnerAutoUpdate(
       });
     }
 
-    const updateLock = yield* acquireServiceUpdateLock(options.paths.updateLockPath, now()).pipe(
+    const updateLock = yield* acquireServiceUpdateLock(paths.updateLockPath, now()).pipe(
       Effect.match({
         onFailure: (cause) => ({ _tag: "failure" as const, cause }),
         onSuccess: (lock) => ({ _tag: "success" as const, lock }),
@@ -2486,59 +2545,101 @@ function runServiceRunnerAutoUpdate(
       });
     }
 
-    const installed = yield* (runtime.installRunnerRelease ?? installServiceRunnerFromRegistry)(
-      release,
-      options.paths,
-    ).pipe(
-      Effect.ensuring(
-        releaseServiceRunLock(options.paths.updateLockPath, updateLock.lock.lock.ownerId),
-      ),
-      Effect.match({
-        onFailure: (cause) => ({ _tag: "failure" as const, cause }),
-        onSuccess: (value) => ({ _tag: "success" as const, value }),
-      }),
-    );
+    return yield* Effect.gen(function* () {
+      const installed = yield* (runtime.installRunnerRelease ?? stageServiceRunnerFromRegistry)(
+        release,
+        paths,
+      ).pipe(
+        Effect.match({
+          onFailure: (cause) => ({ _tag: "failure" as const, cause }),
+          onSuccess: (value) => ({ _tag: "success" as const, value }),
+        }),
+      );
 
-    if (installed._tag === "failure") {
-      if (!options.json) {
-        yield* Effect.sync(() => {
-          console.log("Auto-update failed; continuing with sync");
+      if (installed._tag === "failure") {
+        if (!options.json) {
+          yield* Effect.sync(() => {
+            console.log("Auto-update failed; continuing with sync");
+          });
+        }
+        const serviceError = serviceRunnerUpdateError(installed.cause);
+
+        return serviceAutoUpdateReport({
+          attemptedAt,
+          completedAt: now().toISOString(),
+          currentVersion: options.currentVersion,
+          enabled: true,
+          error: formatAutoUpdateError(serviceError?.cause ?? installed.cause),
+          latestVersion: release.version,
+          manager: "registry",
+          reason: serviceError?.reason ?? "install-failed",
+          status: "failure",
         });
       }
-      const serviceError = serviceRunnerUpdateError(installed.cause);
+
+      const metadataWrite = yield* writeServiceMetadataRunner(
+        paths.metadataPath,
+        metadata,
+        installed.value,
+      ).pipe(
+        Effect.match({
+          onFailure: (cause) => ({ _tag: "failure" as const, cause }),
+          onSuccess: () => ({ _tag: "success" as const }),
+        }),
+      );
+      if (metadataWrite._tag === "failure") {
+        return serviceAutoUpdateReport({
+          attemptedAt,
+          completedAt: now().toISOString(),
+          currentVersion: options.currentVersion,
+          enabled: true,
+          error: formatAutoUpdateError(metadataWrite.cause),
+          latestVersion: release.version,
+          manager: "registry",
+          reason: "install-failed",
+          status: "failure",
+        });
+      }
+
+      const pointerWrite = yield* writeServiceRunnerPointer(paths, installed.value.path).pipe(
+        Effect.match({
+          onFailure: (cause) => ({ _tag: "failure" as const, cause }),
+          onSuccess: () => ({ _tag: "success" as const }),
+        }),
+      );
+      if (pointerWrite._tag === "failure") {
+        return serviceAutoUpdateReport({
+          attemptedAt,
+          completedAt: now().toISOString(),
+          currentVersion: options.currentVersion,
+          enabled: true,
+          error: formatAutoUpdateError(pointerWrite.cause),
+          latestVersion: release.version,
+          manager: "registry",
+          reason: "install-failed",
+          status: "failure",
+        });
+      }
+
+      yield* cleanupServiceRunnerVersions(paths, [
+        installed.value.version,
+        metadata.runnerVersion,
+      ]).pipe(Effect.ignore);
 
       return serviceAutoUpdateReport({
         attemptedAt,
         completedAt: now().toISOString(),
         currentVersion: options.currentVersion,
         enabled: true,
-        error: formatAutoUpdateError(serviceError?.cause ?? installed.cause),
+        installedVersion: installed.value.version,
         latestVersion: release.version,
         manager: "registry",
-        reason: serviceError?.reason ?? "install-failed",
-        status: "failure",
+        reason: null,
+        status: "success",
       });
-    }
-
-    yield* writeServiceMetadataRunner(options.paths.metadataPath, metadata, installed.value).pipe(
-      Effect.ignore,
+    }).pipe(
+      Effect.ensuring(releaseServiceRunLock(paths.updateLockPath, updateLock.lock.lock.ownerId)),
     );
-    yield* cleanupServiceRunnerVersions(options.paths, [
-      installed.value.version,
-      metadata.runnerVersion,
-    ]).pipe(Effect.ignore);
-
-    return serviceAutoUpdateReport({
-      attemptedAt,
-      completedAt: now().toISOString(),
-      currentVersion: options.currentVersion,
-      enabled: true,
-      installedVersion: installed.value.version,
-      latestVersion: release.version,
-      manager: "registry",
-      reason: null,
-      status: "success",
-    });
   });
 }
 
@@ -2576,7 +2677,7 @@ function fetchLatestCliVersion(): Effect.Effect<string | null, never> {
 
 function fetchLatestServiceRunnerRelease(
   target: ServiceRunnerTarget,
-): Effect.Effect<ServiceRunnerRelease | null, never> {
+): Effect.Effect<ServiceRunnerRelease | null, ServiceRunnerUpdateError> {
   return Effect.tryPromise({
     try: async () => {
       const packageName = serviceRunnerPackageName(target);
@@ -2584,14 +2685,35 @@ function fetchLatestServiceRunnerRelease(
         headers: { accept: "application/json" },
         signal: AbortSignal.timeout(SERVICE_FETCH_TIMEOUT_MS),
       });
-      if (!response.ok) {
+      if (response.status === 404) {
         return null;
       }
+      if (!response.ok) {
+        throw new ServiceRunnerUpdateError({
+          cause: `registry returned ${response.status}`,
+          reason: "download-failed",
+        });
+      }
 
-      return serviceRunnerReleaseFromPackageJson(await response.json(), target, packageName);
+      const release = serviceRunnerReleaseFromPackageJson(
+        await response.json(),
+        target,
+        packageName,
+      );
+      if (release === null) {
+        throw new ServiceRunnerUpdateError({
+          cause: "registry response missing service runner release metadata",
+          reason: "download-failed",
+        });
+      }
+
+      return release;
     },
-    catch: (cause) => cause,
-  }).pipe(Effect.catch(() => Effect.succeed(null)));
+    catch: (cause) =>
+      cause instanceof ServiceRunnerUpdateError
+        ? cause
+        : new ServiceRunnerUpdateError({ cause, reason: "download-failed" }),
+  });
 }
 
 function npmRegistryPackageUrl(packageName: string): string {
@@ -2637,6 +2759,15 @@ function installServiceRunnerFromRegistry(
   release: ServiceRunnerRelease,
   paths: ServicePaths,
 ): Effect.Effect<ServiceRunnerInstall, unknown> {
+  return stageServiceRunnerFromRegistry(release, paths).pipe(
+    Effect.tap((install) => writeServiceRunnerPointer(paths, install.path)),
+  );
+}
+
+function stageServiceRunnerFromRegistry(
+  release: ServiceRunnerRelease,
+  paths: ServicePaths,
+): Effect.Effect<ServiceRunnerInstall, unknown> {
   return Effect.tryPromise({
     try: async () => {
       const tarballBytes = await downloadServiceRunnerTarball(release);
@@ -2660,6 +2791,7 @@ function installServiceRunnerFromRegistry(
         platform,
         sourceBytes: runnerBytes,
         target: release.target,
+        updatePointer: false,
         version: release.version,
       });
 
@@ -3234,7 +3366,9 @@ function installServiceRunnerFromRegistryCandidates(
   paths: ServicePaths,
   options: ServiceRunnerHostOptions & {
     fetchRunnerRelease?:
-      | ((target: ServiceRunnerTarget) => Effect.Effect<ServiceRunnerRelease | null, never>)
+      | ((
+          target: ServiceRunnerTarget,
+        ) => Effect.Effect<ServiceRunnerRelease | null, ServiceRunnerUpdateError>)
       | undefined;
     installRunnerRelease?:
       | ((
@@ -3357,6 +3491,7 @@ async function installServiceRunnerBinary(input: {
   sourceBytes?: Uint8Array | undefined;
   sourcePath?: string | undefined;
   target: ServiceRunnerTarget;
+  updatePointer?: boolean | undefined;
   version: string;
 }): Promise<void> {
   await mkdir(dirname(input.destinationPath), { recursive: true });
@@ -3367,7 +3502,19 @@ async function installServiceRunnerBinary(input: {
   } else {
     throw new Error("missing service runner source");
   }
-  await writeFileAtomic(input.paths.runnerPointerPath, `${input.destinationPath}\n`);
+  if (input.updatePointer !== false) {
+    await writeFileAtomic(input.paths.runnerPointerPath, `${input.destinationPath}\n`);
+  }
+}
+
+function writeServiceRunnerPointer(
+  paths: ServicePaths,
+  runnerPath: string,
+): Effect.Effect<void, unknown> {
+  return Effect.tryPromise({
+    try: () => writeFileAtomic(paths.runnerPointerPath, `${runnerPath}\n`),
+    catch: (cause) => cause,
+  });
 }
 
 function executableMode(platform: NodeJS.Platform): number | undefined {
@@ -3411,6 +3558,10 @@ ${renderPosixLogRotation(logPath)}
 
 {
   printf '\\n[%s] tokenmaxxing service sync\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [ ! -r ${shellQuote(runnerPointerPath)} ]; then
+    printf 'tokenmaxxing service runner pointer missing: %s\\n' ${shellQuote(runnerPointerPath)} >&2
+    exit 127
+  fi
   runner=$(tr -d '\\r\\n' < ${shellQuote(runnerPointerPath)})
   if [ -z "$runner" ] || [ ! -x "$runner" ]; then
     printf 'tokenmaxxing service runner missing or not executable: %s\\n' "$runner" >&2
@@ -4067,6 +4218,7 @@ export {
   runServiceAutoUpdate,
   scheduleDeferredServiceRepair,
   scheduleDescription,
+  serviceRepairCanInstallScheduler,
   serviceLockCanBeReplaced,
   serviceRepairNeedsSchedulerInstall,
   serviceRepairReason,

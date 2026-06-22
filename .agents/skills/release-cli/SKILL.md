@@ -23,7 +23,7 @@ If the working tree has unrelated changes, stop and ask before staging or commit
 
 Decide the bump from the requested change scope: `patch`, `minor`, `major`, or a prerelease variant when explicitly requested.
 
-Update only `apps/cli/package.json` for the new version unless the lockfile changes after install. Do not add generated service runner packages to the source workspace; release publishing generates those package manifests from the CLI version.
+Update only `apps/cli/package.json` for the new version unless the lockfile changes after install. Do not add generated service runner packages to the source workspace; release publishing generates those package manifests from the CLI version. For alpha/beta/rc releases, use a prerelease version such as `X.Y.Z-alpha.0`; the publish script derives the npm dist-tag from the prerelease identifier unless `--tag` is passed explicitly.
 
 ```sh
 $EDITOR apps/cli/package.json
@@ -80,7 +80,7 @@ git push origin main
 git push origin cli-vX.Y.Z
 ```
 
-The `cli-vX.Y.Z` tag starts the `Release CLI` GitHub Actions workflow. The workflow builds generated service runner packages first, publishes those packages, then publishes the generated `@851-labs/tokenmaxxing` package with matching optional dependencies.
+The `cli-vX.Y.Z` tag starts the `Release CLI` GitHub Actions workflow. The workflow builds generated service runner packages first, publishes those packages, then publishes the generated `@851-labs/tokenmaxxing` package with matching optional dependencies. Stable versions publish with `latest`; prerelease versions such as `X.Y.Z-alpha.0` publish with the matching dist-tag such as `alpha`.
 
 ## Step 6: Monitor Publish Workflow
 

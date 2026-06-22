@@ -42,6 +42,7 @@ import {
   runServiceAutoUpdate,
   scheduleDescription,
   serviceLockCanBeReplaced,
+  serviceRepairCanInstallScheduler,
   serviceRepairNeedsSchedulerInstall,
   serviceRepairReason,
   serviceRepairState,
@@ -212,7 +213,9 @@ function makeTestLayer(options: TestLayerOptions) {
   return { layer, state };
 }
 
-function makeInstallRuntime(options: { install?: CommandInstall } = {}) {
+function makeInstallRuntime(
+  options: { env?: Record<string, string | undefined>; install?: CommandInstall } = {},
+) {
   const commandInstall: CommandInstall = options.install ?? {
     autoUpdateManager: "npm" as const,
     commandPath: "/usr/local/bin/tokenmaxxing",
@@ -237,6 +240,7 @@ function makeInstallRuntime(options: { install?: CommandInstall } = {}) {
       env: {
         PATH: "/usr/local/bin:/usr/bin",
         TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing",
+        ...options.env,
       },
       findCommandInstall: () => Effect.succeed(commandInstall),
       home: "/Users/alex",
@@ -437,6 +441,7 @@ describe("renderServiceWrapper", () => {
     expect(wrapper).toContain(
       "runner=$(tr -d '\\r\\n' < '/home/alex/.config/tokenmaxxing/service-runner-current')",
     );
+    expect(wrapper).toContain("[ ! -r '/home/alex/.config/tokenmaxxing/service-runner-current' ]");
     expect(wrapper).toContain('"$runner" service run --scheduled');
     expect(wrapper).not.toContain("bun update");
     expect(wrapper).not.toContain("npm install");
@@ -668,6 +673,15 @@ describe("service repair helpers", () => {
         reason: "reload-required",
         schedulerActive: true,
       }),
+    ).toBe(true);
+  });
+
+  it("does not allow deferred launchd repairs to reinstall the scheduler", () => {
+    expect(serviceRepairCanInstallScheduler({ backend: "launchd", deferred: true })).toBe(false);
+    expect(serviceRepairCanInstallScheduler({ backend: "launchd", deferred: false })).toBe(true);
+    expect(serviceRepairCanInstallScheduler({ backend: "systemd", deferred: true })).toBe(true);
+    expect(
+      serviceRepairCanInstallScheduler({ backend: "windows-task-scheduler", deferred: true }),
     ).toBe(true);
   });
 
@@ -1028,6 +1042,43 @@ describe("service auto-update reports", () => {
     }
   });
 
+  it("does not fallback when preferred registry runner metadata fetch fails", async () => {
+    const paths = servicePaths({
+      env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
+      home: "/Users/alex",
+      platform: "darwin",
+    });
+    const fetchedTargets: string[] = [];
+
+    await expect(
+      runAutoUpdate(
+        registryMetadata,
+        {
+          fetchRunnerRelease: (target) => {
+            fetchedTargets.push(target);
+            return Effect.fail(
+              new ServiceRunnerUpdateError({
+                cause: "registry returned 500",
+                reason: "download-failed",
+              }),
+            );
+          },
+          now,
+          runnerTargetCandidates: () => ["darwin-x64", "darwin-x64-baseline"],
+        },
+        "0.4.12",
+        paths!,
+      ),
+    ).resolves.toMatchObject({
+      error: "registry returned 500",
+      latestVersion: null,
+      manager: "registry",
+      reason: "download-failed",
+      status: "failure",
+    });
+    expect(fetchedTargets).toEqual(["darwin-x64"]);
+  });
+
   it("does not silently fallback after an integrity mismatch for a selected registry package", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-registry-update-"));
 
@@ -1073,6 +1124,62 @@ describe("service auto-update reports", () => {
         status: "failure",
       });
       expect(fetchedTargets).toEqual(["darwin-x64"]);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("does not advance the runner pointer when registry update metadata write fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-registry-update-"));
+
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: dir },
+        home: "/Users/alex",
+        platform: "darwin",
+      })!;
+      const oldRunnerPath = join(
+        dir,
+        "service-runners",
+        "0.4.12",
+        "darwin-arm64",
+        "tokenmaxxing-service",
+      );
+      const newRunnerPath = join(
+        dir,
+        "service-runners",
+        "0.4.13",
+        "darwin-arm64",
+        "tokenmaxxing-service",
+      );
+      await mkdir(dirname(oldRunnerPath), { recursive: true });
+      await writeFile(oldRunnerPath, "#!/bin/sh\n");
+      await writeFile(paths.runnerPointerPath, `${oldRunnerPath}\n`);
+      await mkdir(paths.metadataPath, { recursive: true });
+
+      await expect(
+        runAutoUpdate(
+          registryMetadata,
+          {
+            fetchRunnerRelease: () => Effect.succeed(registryRelease("0.4.13")),
+            installRunnerRelease: (release) =>
+              Effect.succeed({
+                packageName: release.packageName,
+                path: newRunnerPath,
+                target: release.target,
+                version: release.version,
+              }),
+            now,
+          },
+          "0.4.12",
+          paths,
+        ),
+      ).resolves.toMatchObject({
+        manager: "registry",
+        reason: "install-failed",
+        status: "failure",
+      });
+      await expect(readFile(paths.runnerPointerPath, "utf8")).resolves.toBe(`${oldRunnerPath}\n`);
     } finally {
       await rm(dir, { force: true, recursive: true });
     }
@@ -1700,6 +1807,45 @@ describe("serviceInstallProgram", () => {
     expect(state.writtenTokens).toEqual([]);
     expect(written).toEqual([]);
     expect(installed).toEqual([]);
+  });
+
+  it("does not install while a service repair or runner update lock is active", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-install-lock-"));
+
+    try {
+      await writeFile(
+        join(dir, "service-update.lock"),
+        `${JSON.stringify({
+          acquiredAt: new Date().toISOString(),
+          ownerId: "test-lock",
+          pid: process.pid,
+          version: 1,
+        })}\n`,
+      );
+      const { layer } = makeTestLayer({
+        initialConfig: {
+          apiUrl: "https://api.tokenmaxxing.example",
+          token: "tmx_existing",
+          wwwUrl: "https://tokenmaxxing.example",
+        },
+      });
+      const { installed, runtime, written } = makeInstallRuntime({
+        env: { TOKENMAXXING_CONFIG_DIR: dir },
+      });
+
+      const exit = await Effect.runPromiseExit(
+        serviceInstallProgram({ force: false, refresh: false }, runtime).pipe(
+          Effect.provide(layer),
+        ),
+      );
+
+      expect(exit._tag).toBe("Failure");
+      expect(failureTag(exit)).toBe("ServiceInstallError");
+      expect(written).toEqual([]);
+      expect(installed).toEqual([]);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
   });
 
   it("does not install when login cannot run in a non-interactive shell", async () => {

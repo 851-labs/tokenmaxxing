@@ -9,6 +9,11 @@ import { fileURLToPath } from "node:url";
 import packageJson from "../package.json";
 import { assertSafeOutputDir, buildServiceRunners } from "./build-service-runners";
 import {
+  npmDistTagForVersion,
+  parsePublishCliArgs,
+  type PublishCliOptions,
+} from "./publish-options";
+import {
   platformForServiceRunnerTarget,
   serviceRunnerBinaryName,
   serviceRunnerOptionalDependencies,
@@ -18,12 +23,6 @@ import {
   serviceRunnerTargets,
   type ServiceRunnerTarget,
 } from "../src/service-runner-targets";
-
-interface PublishCliOptions {
-  dryRun?: boolean | undefined;
-  outDir?: string | undefined;
-  provenance?: boolean | undefined;
-}
 
 const cliDir = fileURLToPath(new URL("..", import.meta.url));
 const repoDir = resolve(cliDir, "../..");
@@ -44,12 +43,13 @@ async function publishCli(options: PublishCliOptions = {}): Promise<void> {
   await smokeTestHostRunner(outDir);
 
   const packagePaths = packagePublishPaths(outDir);
+  const tag = options.tag ?? npmDistTagForVersion(packageJson.version);
   for (const packageName of serviceRunnerPublishOrder(packageJson.name)) {
     const packagePath = packagePaths[packageName];
     if (packagePath === undefined) {
       throw new Error(`missing generated package ${packageName}`);
     }
-    await publishPackage(packagePath, packageName, packageJson.version, options);
+    await publishPackage(packagePath, packageName, packageJson.version, { ...options, tag });
   }
 }
 
@@ -128,6 +128,7 @@ async function publishPackage(
   if (options.provenance !== false) {
     args.push("--provenance");
   }
+  args.push("--tag", options.tag ?? npmDistTagForVersion(version));
   if (options.dryRun === true) {
     args.push("--dry-run");
   }
@@ -144,34 +145,6 @@ async function packageVersionIsPublished(packageName: string, version: string): 
   );
 }
 
-function parsePublishCliArgs(argv: readonly string[]): PublishCliOptions {
-  const options: PublishCliOptions = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--dry-run") {
-      options.dryRun = true;
-      continue;
-    }
-    if (arg === "--no-provenance") {
-      options.provenance = false;
-      continue;
-    }
-    if (arg === "--out-dir") {
-      const value = argv[index + 1];
-      if (value === undefined) {
-        throw new Error("--out-dir requires a value");
-      }
-      options.outDir = value;
-      index += 1;
-      continue;
-    }
-
-    throw new Error(`unknown argument ${arg}`);
-  }
-
-  return options;
-}
-
 async function main(): Promise<void> {
   await publishCli(parsePublishCliArgs(process.argv.slice(2)));
 }
@@ -183,7 +156,6 @@ if (import.meta.main) {
 export {
   createMainPackageJson,
   packagePublishPaths,
-  parsePublishCliArgs,
   publishCli,
   serviceRunnerPackageBinaryPath,
   smokeTestHostRunner,
