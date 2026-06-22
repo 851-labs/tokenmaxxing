@@ -13,6 +13,7 @@ import { Route as TermsRouteImport } from './routes/terms'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
 import { Route as InternalRouteImport } from './routes/internal'
 import { Route as DesignRouteImport } from './routes/design'
 import { Route as UserRouteImport } from './routes/$user'
@@ -39,6 +40,11 @@ const PrivacyRoute = PrivacyRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LlmsDottxtRoute = LlmsDottxtRouteImport.update({
+  id: '/llms.txt',
+  path: '/llms.txt',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InternalRoute = InternalRouteImport.update({
@@ -83,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
   '/internal': typeof InternalRoute
+  '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
   '/settings': typeof SettingsRoute
@@ -96,6 +103,7 @@ export interface FileRoutesByTo {
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
   '/internal': typeof InternalRoute
+  '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
   '/settings': typeof SettingsRoute
@@ -110,6 +118,7 @@ export interface FileRoutesById {
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
   '/internal': typeof InternalRoute
+  '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
   '/settings': typeof SettingsRoute
@@ -125,6 +134,7 @@ export interface FileRouteTypes {
     | '/$user'
     | '/design'
     | '/internal'
+    | '/llms.txt'
     | '/login'
     | '/privacy'
     | '/settings'
@@ -138,6 +148,7 @@ export interface FileRouteTypes {
     | '/$user'
     | '/design'
     | '/internal'
+    | '/llms.txt'
     | '/login'
     | '/privacy'
     | '/settings'
@@ -151,6 +162,7 @@ export interface FileRouteTypes {
     | '/$user'
     | '/design'
     | '/internal'
+    | '/llms.txt'
     | '/login'
     | '/privacy'
     | '/settings'
@@ -165,6 +177,7 @@ export interface RootRouteChildren {
   UserRoute: typeof UserRoute
   DesignRoute: typeof DesignRoute
   InternalRoute: typeof InternalRoute
+  LlmsDottxtRoute: typeof LlmsDottxtRoute
   LoginRoute: typeof LoginRoute
   PrivacyRoute: typeof PrivacyRoute
   SettingsRoute: typeof SettingsRoute
@@ -202,6 +215,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/llms.txt': {
+      id: '/llms.txt'
+      path: '/llms.txt'
+      fullPath: '/llms.txt'
+      preLoaderRoute: typeof LlmsDottxtRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/internal': {
@@ -261,6 +281,7 @@ const rootRouteChildren: RootRouteChildren = {
   UserRoute: UserRoute,
   DesignRoute: DesignRoute,
   InternalRoute: InternalRoute,
+  LlmsDottxtRoute: LlmsDottxtRoute,
   LoginRoute: LoginRoute,
   PrivacyRoute: PrivacyRoute,
   SettingsRoute: SettingsRoute,

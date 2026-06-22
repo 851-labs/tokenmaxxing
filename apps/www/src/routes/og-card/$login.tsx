@@ -15,6 +15,9 @@ const Route = createFileRoute("/og-card/$login")({
       data,
     };
   },
+  head: () => ({
+    meta: [{ content: "noindex", name: "robots" }],
+  }),
   component: OgCardPage,
 });
 

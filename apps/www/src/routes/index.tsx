@@ -288,14 +288,29 @@ function LeaderboardPage() {
             </p>
           ) : (
             <table className="w-full text-sm">
+              <caption className="sr-only">
+                Leaderboard of top users by LLM token spend and usage
+              </caption>
               <thead>
                 <tr className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
-                  <th className="w-12 p-3 font-medium">#</th>
-                  <th className="p-3 font-medium">User</th>
-                  <th className="p-3 text-right font-medium">Spend</th>
-                  <th className="p-3 text-right font-medium">Tokens</th>
-                  <th className="hidden p-3 text-right font-medium sm:table-cell">Active days</th>
-                  <th className="hidden p-3 text-right font-medium sm:table-cell">Last active</th>
+                  <th className="w-12 p-3 font-medium" scope="col">
+                    #
+                  </th>
+                  <th className="p-3 font-medium" scope="col">
+                    User
+                  </th>
+                  <th className="p-3 text-right font-medium" scope="col">
+                    Spend
+                  </th>
+                  <th className="p-3 text-right font-medium" scope="col">
+                    Tokens
+                  </th>
+                  <th className="hidden p-3 text-right font-medium sm:table-cell" scope="col">
+                    Active days
+                  </th>
+                  <th className="hidden p-3 text-right font-medium sm:table-cell" scope="col">
+                    Last active
+                  </th>
                 </tr>
               </thead>
               <tbody>

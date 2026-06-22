@@ -28,6 +28,7 @@ const Route = createFileRoute("/login")({
       { content: LOGIN_TITLE, property: "og:title" },
       { content: LOGIN_DESCRIPTION, property: "og:description" },
       { content: LOGIN_URL, property: "og:url" },
+      { content: "noindex, follow", name: "robots" },
     ],
   }),
   component: LoginPage,
