@@ -23,6 +23,7 @@ import { Avatar } from "../components/ui/avatar";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Code } from "../components/ui/code";
+import { publicHtmlCacheHeaders } from "../lib/cache-headers";
 import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_WIDTH,
@@ -42,6 +43,8 @@ const Route = createFileRoute("/$user")({
 
     return { daily, profile };
   },
+  headers: () =>
+    publicHtmlCacheHeaders("public, max-age=0, s-maxage=120, stale-while-revalidate=300"),
   head: ({ loaderData }) => {
     if (loaderData === undefined) {
       return {};

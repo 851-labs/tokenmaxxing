@@ -11,6 +11,7 @@ import { formatTokens, formatUsd } from "../components/charts/scale";
 import { Avatar } from "../components/ui/avatar";
 import { Code } from "../components/ui/code";
 import { Tabs } from "../components/ui/tabs";
+import { publicHtmlCacheHeaders } from "../lib/cache-headers";
 import { cn } from "../lib/cn";
 import { leaderboardQueryOptions } from "../lib/queries";
 
@@ -38,6 +39,8 @@ const Route = createFileRoute("/")({
   loader: async ({ context, deps }) => {
     await context.queryClient.ensureQueryData(leaderboardQueryOptions(deps.metric, deps.window));
   },
+  headers: () =>
+    publicHtmlCacheHeaders("public, max-age=0, s-maxage=60, stale-while-revalidate=300"),
   component: LeaderboardPage,
 });
 
