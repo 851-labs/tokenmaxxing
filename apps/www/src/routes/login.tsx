@@ -3,6 +3,12 @@ import { z } from "zod";
 
 import { LOGIN_OAUTH_PROVIDERS, OAuthProviderButtons } from "../components/oauth-providers";
 import { Card } from "../components/ui/card";
+import { SITE_ORIGIN } from "../lib/og";
+
+const LOGIN_TITLE = "Sign in — tokenmaxxing.sh";
+const LOGIN_DESCRIPTION =
+  "Sign in to tokenmaxxing.sh to sync your LLM agent usage and track your spot on the leaderboard.";
+const LOGIN_URL = new URL("/login", SITE_ORIGIN).toString();
 
 const loginRedirectSchema = z.preprocess(
   (value) => (typeof value === "string" ? sanitizeLoginRedirectPath(value) : undefined),
@@ -15,6 +21,15 @@ const loginSearchSchema = z.object({
 
 const Route = createFileRoute("/login")({
   validateSearch: loginSearchSchema,
+  head: () => ({
+    meta: [
+      { title: LOGIN_TITLE },
+      { content: LOGIN_DESCRIPTION, name: "description" },
+      { content: LOGIN_TITLE, property: "og:title" },
+      { content: LOGIN_DESCRIPTION, property: "og:description" },
+      { content: LOGIN_URL, property: "og:url" },
+    ],
+  }),
   component: LoginPage,
 });
 

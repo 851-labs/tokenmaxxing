@@ -2,12 +2,26 @@ import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import { Code } from "../components/ui/code";
+import { SITE_ORIGIN } from "../lib/og";
 
 const GITHUB_URL = "https://github.com/851-labs/tokenmaxxing";
 const DISCORD_URL = "https://discord.gg/WzX6BpfaRH";
 
+const TERMS_TITLE = "Terms of Service — tokenmaxxing.sh";
+const TERMS_DESCRIPTION =
+  "The terms for using tokenmaxxing.sh, the public leaderboard for LLM agent usage, provided as-is and free of charge.";
+const TERMS_URL = new URL("/terms", SITE_ORIGIN).toString();
+
 const Route = createFileRoute("/terms")({
-  head: () => ({ meta: [{ title: "Terms of Service — tokenmaxxing.sh" }] }),
+  head: () => ({
+    meta: [
+      { title: TERMS_TITLE },
+      { content: TERMS_DESCRIPTION, name: "description" },
+      { content: TERMS_TITLE, property: "og:title" },
+      { content: TERMS_DESCRIPTION, property: "og:description" },
+      { content: TERMS_URL, property: "og:url" },
+    ],
+  }),
   component: TermsPage,
 });
 
