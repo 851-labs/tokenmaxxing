@@ -311,7 +311,11 @@ function LeaderboardPage() {
                         params={{ user: entry.user.login }}
                         to="/$user"
                       >
-                        <Avatar size={24} src={entry.user.avatarUrl} />
+                        <Avatar
+                          alt={`${entry.user.login} avatar`}
+                          size={24}
+                          src={entry.user.avatarUrl}
+                        />
                         {entry.user.login}
                       </Link>
                     </td>
