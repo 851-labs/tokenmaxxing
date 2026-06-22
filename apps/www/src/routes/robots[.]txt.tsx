@@ -6,18 +6,7 @@ const ROBOTS_CACHE_CONTROL = "public, max-age=3600";
 
 function buildRobotsTxt(): string {
   const sitemapUrl = new URL("/sitemap.xml", SITE_ORIGIN).toString();
-  return [
-    "User-agent: *",
-    "Allow: /",
-    "Disallow: /settings",
-    "Disallow: /internal",
-    "Disallow: /login",
-    "Disallow: /login_.cli",
-    "Disallow: /og-card/",
-    "",
-    `Sitemap: ${sitemapUrl}`,
-    "",
-  ].join("\n");
+  return ["User-agent: *", "Allow: /", "", `Sitemap: ${sitemapUrl}`, ""].join("\n");
 }
 
 function handleRobotsTxtRequest(): Response {
