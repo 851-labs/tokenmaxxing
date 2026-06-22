@@ -78,19 +78,61 @@ function formatCount(value: number): string {
   return countFormatter.format(value);
 }
 
+const activityDateFormatter = new Intl.DateTimeFormat("en-US", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+  year: "numeric",
+});
+
+function formatActivityDate(date: string): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return date;
+  }
+
+  return activityDateFormatter.format(parsed);
+}
+
+function activityRecencyLabel(stats: {
+  activeDays: number;
+  firstDate: string | null;
+  lastDate: string | null;
+}): string | null {
+  if (stats.activeDays === 0 || stats.firstDate === null || stats.lastDate === null) {
+    return null;
+  }
+
+  const days = `${formatCount(stats.activeDays)} active ${stats.activeDays === 1 ? "day" : "days"}`;
+  const range =
+    stats.firstDate === stats.lastDate
+      ? formatActivityDate(stats.firstDate)
+      : `${formatActivityDate(stats.firstDate)} – ${formatActivityDate(stats.lastDate)}`;
+
+  return `Active ${range} · ${days}`;
+}
+
 function ProfilePage() {
   const { user } = Route.useParams();
   const { data: profile } = useSuspenseQuery(profileQueryOptions(user));
   const { data: daily } = useSuspenseQuery(profileDailyQueryOptions(user));
   const { stats } = profile;
   const owner = profile.user;
+  const activityRecency = activityRecencyLabel(stats);
 
   return (
     <>
       <header className="flex items-center justify-between gap-4 px-4 py-8">
         <div className="flex min-w-0 items-center gap-4">
           <Avatar size={56} src={owner.avatarUrl} />
-          <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{owner.login}</h1>
+          <div className="min-w-0">
+            <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">
+              {owner.login}
+            </h1>
+            {activityRecency !== null ? (
+              <p className="truncate text-sm text-muted-foreground">{activityRecency}</p>
+            ) : null}
+          </div>
         </div>
         <ProfileShareButton url={profileUrl(profile)} />
       </header>
