@@ -23,6 +23,7 @@ import { Avatar } from "../components/ui/avatar";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Code } from "../components/ui/code";
+import { breadcrumbSchema, profilePageSchema } from "../lib/jsonld";
 import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_WIDTH,
@@ -66,6 +67,16 @@ const Route = createFileRoute("/$user")({
         { property: "og:image:height", content: String(OG_IMAGE_HEIGHT) },
         { name: "twitter:card", content: "summary_large_image" },
         { name: "twitter:image", content: image },
+      ],
+      scripts: [
+        {
+          type: "application/ld+json",
+          children: JSON.stringify(profilePageSchema(profile)),
+        },
+        {
+          type: "application/ld+json",
+          children: JSON.stringify(breadcrumbSchema(profile.user.login, url)),
+        },
       ],
     };
   },

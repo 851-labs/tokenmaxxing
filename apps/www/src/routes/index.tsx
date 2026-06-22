@@ -12,6 +12,7 @@ import { Avatar } from "../components/ui/avatar";
 import { Code } from "../components/ui/code";
 import { Tabs } from "../components/ui/tabs";
 import { cn } from "../lib/cn";
+import { faqPageSchema, softwareApplicationSchema } from "../lib/jsonld";
 import { leaderboardQueryOptions } from "../lib/queries";
 
 const LEADERBOARD_METRIC_VALUES = ["spend", "tokens"] as const;
@@ -38,6 +39,22 @@ const Route = createFileRoute("/")({
   loader: async ({ context, deps }) => {
     await context.queryClient.ensureQueryData(leaderboardQueryOptions(deps.metric, deps.window));
   },
+  head: () => ({
+    scripts: [
+      {
+        type: "application/ld+json",
+        children: JSON.stringify(softwareApplicationSchema()),
+      },
+      {
+        type: "application/ld+json",
+        children: JSON.stringify(
+          faqPageSchema(
+            FAQ_ITEMS.map((item) => ({ answerText: item.answerText, question: item.question })),
+          ),
+        ),
+      },
+    ],
+  }),
   component: LeaderboardPage,
 });
 
@@ -80,10 +97,12 @@ const SUPPORTED_AGENTS = [
   { icon: <GeminiIcon />, label: "Gemini CLI" },
 ] as const;
 
-const FAQ_ITEMS: { answer: ReactNode; question: string }[] = [
+const FAQ_ITEMS: { answer: ReactNode; answerText: string; question: string }[] = [
   {
     question: "What is tokenmaxxing?",
     answer:
+      "tokenmaxxing is a public leaderboard for LLM agent usage. It syncs your local usage from supported coding agents, turns it into daily token and spend totals, and lets you compare with other users.",
+    answerText:
       "tokenmaxxing is a public leaderboard for LLM agent usage. It syncs your local usage from supported coding agents, turns it into daily token and spend totals, and lets you compare with other users.",
   },
   {
@@ -102,6 +121,8 @@ const FAQ_ITEMS: { answer: ReactNode; question: string }[] = [
         </span>
       </>
     ),
+    answerText:
+      "Install the CLI, then run the bootstrap command. Run `npm install -g @851-labs/tokenmaxxing`, then `tokenmaxxing bootstrap`. Bootstrap signs you in, syncs your usage, and can set up automatic syncing.",
   },
   {
     question: "Which agents does it support?",
@@ -119,20 +140,28 @@ const FAQ_ITEMS: { answer: ReactNode; question: string }[] = [
         to parse local usage from Claude Code, Codex, OpenCode, Gemini CLI, and Copilot CLI.
       </>
     ),
+    answerText:
+      "tokenmaxxing uses ccusage to parse local usage from Claude Code, Codex, OpenCode, Gemini CLI, and Copilot CLI.",
   },
   {
     question: "What data gets uploaded?",
     answer:
+      "Only daily aggregates: date, model name, agent source, token counts, and API-equivalent cost. Prompts, file paths, project names, and session content are never uploaded.",
+    answerText:
       "Only daily aggregates: date, model name, agent source, token counts, and API-equivalent cost. Prompts, file paths, project names, and session content are never uploaded.",
   },
   {
     question: "Why is usage data missing?",
     answer:
       "tokenmaxxing only reads usage data that still exists on your local computer. Some agents clean up old local logs automatically; for example, Claude Code can retain logs for only 30 days by default. If older local data has already been deleted, tokenmaxxing cannot recover or upload it.",
+    answerText:
+      "tokenmaxxing only reads usage data that still exists on your local computer. Some agents clean up old local logs automatically; for example, Claude Code can retain logs for only 30 days by default. If older local data has already been deleted, tokenmaxxing cannot recover or upload it.",
   },
   {
     question: "Are profiles public?",
     answer:
+      "Yes. Profiles and leaderboard totals are public. Device hostnames are shown only to you in settings and in your own per-device breakdown.",
+    answerText:
       "Yes. Profiles and leaderboard totals are public. Device hostnames are shown only to you in settings and in your own per-device breakdown.",
   },
   {
@@ -143,6 +172,8 @@ const FAQ_ITEMS: { answer: ReactNode; question: string }[] = [
         across devices, and sync is idempotent, so you can run it as often as you want.
       </>
     ),
+    answerText:
+      "Yes. Run `tokenmaxxing bootstrap` on each machine. Your profile aggregates usage across devices, and sync is idempotent, so you can run it as often as you want.",
   },
   {
     question: "How can I sync usage automatically?",
@@ -154,6 +185,8 @@ const FAQ_ITEMS: { answer: ReactNode; question: string }[] = [
         auto-update settings, and recent logs.
       </>
     ),
+    answerText:
+      "Run `tokenmaxxing service install` to install an optional background service that syncs every 5 minutes. Use `tokenmaxxing service status` to check the last run and `tokenmaxxing service doctor` to inspect scheduler files, auth, locks, auto-update settings, and recent logs.",
   },
   {
     question: "Can I delete or revoke access?",
@@ -164,10 +197,14 @@ const FAQ_ITEMS: { answer: ReactNode; question: string }[] = [
         settings page.
       </>
     ),
+    answerText:
+      "Yes. CLI tokens do not expire automatically, but you can revoke them with `tokenmaxxing logout` or from settings. You can also remove device data from your settings page.",
   },
   {
     question: "How is spend calculated?",
     answer:
+      "Spend is an API-equivalent estimate from the parsed usage data. It is meant for leaderboard comparison and usage tracking, not billing reconciliation.",
+    answerText:
       "Spend is an API-equivalent estimate from the parsed usage data. It is meant for leaderboard comparison and usage tracking, not billing reconciliation.",
   },
   {
@@ -179,6 +216,8 @@ const FAQ_ITEMS: { answer: ReactNode; question: string }[] = [
         <Code>--sources claude,codex</Code>.
       </>
     ),
+    answerText:
+      "Yes. Run `tokenmaxxing sync --dry-run` to see what would be pushed. You can also limit the range with `--since YYYY-MM-DD` or choose sources with flags like `--sources claude,codex`.",
   },
 ];
 

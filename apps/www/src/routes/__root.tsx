@@ -9,6 +9,7 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import { Footer } from "../components/footer";
 import { Nav } from "../components/nav";
+import { organizationSchema, webSiteSchema } from "../lib/jsonld";
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SITE_ORIGIN } from "../lib/og";
 import styles from "../styles.css?url";
 
@@ -42,6 +43,16 @@ function rootHead() {
       { name: "twitter:image", content: DEFAULT_OG_IMAGE_URL },
     ],
     links: [{ rel: "stylesheet", href: styles }],
+    scripts: [
+      {
+        type: "application/ld+json",
+        children: JSON.stringify(organizationSchema()),
+      },
+      {
+        type: "application/ld+json",
+        children: JSON.stringify(webSiteSchema()),
+      },
+    ],
   };
 }
 
