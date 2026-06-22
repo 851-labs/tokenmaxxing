@@ -511,6 +511,7 @@ function serviceInstallProgram(
       wrapper: string,
       metadata: ServiceMetadata,
     ) => Effect.Effect<void, unknown>;
+    writeRunnerPointer?: (paths: ServicePaths, runnerPath: string) => Effect.Effect<void, unknown>;
   } = {},
 ) {
   return Effect.gen(function* () {
@@ -554,9 +555,10 @@ function serviceInstallProgram(
 
     const runner = yield* Effect.gen(function* () {
       const runnerSpinner = yield* humanSpinner("Installing service runner", options);
-      const installedRunner = yield* (runtime.installServiceRunner ?? installServiceRunner)(
-        paths,
-      ).pipe(
+      const installedRunner = yield* (
+        runtime.installServiceRunner ??
+        ((servicePaths) => installServiceRunner(servicePaths, { updatePointer: false }))
+      )(paths).pipe(
         Effect.tap((value) =>
           Effect.sync(() =>
             runnerSpinner.stop(`Service runner installed (${value.version}/${value.target})`),
@@ -590,6 +592,9 @@ function serviceInstallProgram(
 
       const filesSpinner = yield* humanSpinner("Writing service files", options);
       yield* (runtime.writeFiles ?? writeServiceFiles)(paths, wrapper, metadata).pipe(
+        Effect.flatMap(() =>
+          (runtime.writeRunnerPointer ?? writeServiceRunnerPointer)(paths, installedRunner.path),
+        ),
         Effect.tap(() => Effect.sync(() => filesSpinner.stop("Service files written"))),
         Effect.tapError(() =>
           Effect.sync(() => filesSpinner.error("Failed writing service files")),
@@ -720,7 +725,7 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
 
       return yield* Effect.gen(function* () {
         const runnerSpinner = yield* humanSpinner("Installing service runner", options);
-        const runner = yield* installServiceRunnerForRepair(paths).pipe(
+        const runner = yield* installServiceRunnerForRepair(paths, { updatePointer: false }).pipe(
           Effect.tap((installedRunner) =>
             Effect.sync(() =>
               runnerSpinner.stop(
@@ -756,6 +761,7 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
 
         const filesSpinner = yield* humanSpinner("Writing service files", options);
         yield* writeServiceFiles(paths, wrapper, metadata).pipe(
+          Effect.flatMap(() => writeServiceRunnerPointer(paths, runner.path)),
           Effect.tap(() => Effect.sync(() => filesSpinner.stop("Service files written"))),
           Effect.tapError(() =>
             Effect.sync(() => filesSpinner.error("Failed writing service files")),
@@ -3296,6 +3302,7 @@ function installServiceRunnerFromOptionalPackage(
   paths: ServicePaths,
   options: ServiceRunnerHostOptions & {
     resolvePackageJson?: ((packageName: string) => string | null) | undefined;
+    updatePointer?: boolean | undefined;
   } = {},
 ): Effect.Effect<ServiceRunnerInstall, unknown> {
   return Effect.tryPromise({
@@ -3345,6 +3352,7 @@ function installServiceRunnerFromOptionalPackage(
           platform: targetPlatform,
           sourcePath,
           target,
+          updatePointer: options.updatePointer,
           version,
         });
 
@@ -3376,6 +3384,7 @@ function installServiceRunnerFromRegistryCandidates(
           paths: ServicePaths,
         ) => Effect.Effect<ServiceRunnerInstall, unknown>)
       | undefined;
+    updatePointer?: boolean | undefined;
   } = {},
 ): Effect.Effect<ServiceRunnerInstall, unknown> {
   return Effect.gen(function* () {
@@ -3396,7 +3405,11 @@ function installServiceRunnerFromRegistryCandidates(
     }
 
     const fetchRunnerRelease = options.fetchRunnerRelease ?? fetchLatestServiceRunnerRelease;
-    const installRunnerRelease = options.installRunnerRelease ?? installServiceRunnerFromRegistry;
+    const installRunnerRelease =
+      options.installRunnerRelease ??
+      (options.updatePointer === false
+        ? stageServiceRunnerFromRegistry
+        : installServiceRunnerFromRegistry);
     const missingPackageNames: string[] = [];
     for (const target of targets) {
       const release = yield* fetchRunnerRelease(target);
@@ -3430,13 +3443,14 @@ function installServiceRunner(
 
 function installServiceRunnerForRepair(
   paths: ServicePaths,
+  options: Parameters<typeof installServiceRunner>[1] = {},
 ): Effect.Effect<ServiceRunnerInstall, unknown> {
-  return installServiceRunnerFromOptionalPackage(paths).pipe(
+  return installServiceRunnerFromOptionalPackage(paths, options).pipe(
     Effect.catch((optionalCause) =>
       readCurrentServiceRunnerInstall(paths).pipe(
         Effect.catch(() =>
           optionalCause instanceof ServiceRunnerPackageMissingError
-            ? installServiceRunnerFromRegistryCandidates(paths)
+            ? installServiceRunnerFromRegistryCandidates(paths, options)
             : Effect.fail(optionalCause),
         ),
       ),

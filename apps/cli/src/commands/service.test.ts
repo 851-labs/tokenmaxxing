@@ -228,6 +228,7 @@ function makeInstallRuntime(
     version: "0.4.17",
   };
   const installed: ServicePaths[] = [];
+  const pointerWrites: Array<{ paths: ServicePaths; runnerPath: string }> = [];
   const written: Array<{
     metadata: ServiceMetadata;
     paths: ServicePaths;
@@ -255,7 +256,12 @@ function makeInstallRuntime(
         Effect.sync(() => {
           written.push({ metadata, paths, wrapper });
         }),
+      writeRunnerPointer: (paths: ServicePaths, runnerPath: string): Effect.Effect<void, never> =>
+        Effect.sync(() => {
+          pointerWrites.push({ paths, runnerPath });
+        }),
     },
+    pointerWrites,
     runner,
     written,
   };
@@ -1494,6 +1500,38 @@ describe("service runner installation", () => {
     }
   });
 
+  it("can stage an installed optional runner package without advancing the pointer", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-runner-install-"));
+
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: join(dir, "config") },
+        home: "/Users/alex",
+        platform: "darwin",
+      })!;
+      const packageName = serviceRunnerPackageName("darwin-arm64");
+      const packageJsonPath = await writeFakeRunnerPackage(
+        dir,
+        packageName,
+        "tokenmaxxing-service",
+      );
+
+      const installed = await Effect.runPromise(
+        installServiceRunnerFromOptionalPackage(paths, {
+          cpuArch: "arm64",
+          platform: "darwin",
+          resolvePackageJson: (name) => (name === packageName ? packageJsonPath : null),
+          updatePointer: false,
+        }),
+      );
+
+      await expect(readFile(installed.path, "utf8")).resolves.toBe("#!/bin/sh\n");
+      await expect(readFile(paths.runnerPointerPath, "utf8")).rejects.toThrow();
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
   it("falls back when the preferred optional package is absent but a candidate package exists", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-runner-install-"));
 
@@ -1664,7 +1702,7 @@ describe("serviceInstallProgram", () => {
         wwwUrl: "https://tokenmaxxing.example",
       },
     });
-    const { installed, runtime, written } = makeInstallRuntime();
+    const { installed, pointerWrites, runtime, runner, written } = makeInstallRuntime();
 
     const exit = await Effect.runPromiseExit(
       serviceInstallProgram({ force: false, refresh: false }, runtime).pipe(Effect.provide(layer)),
@@ -1688,6 +1726,7 @@ describe("serviceInstallProgram", () => {
     ]);
     expect(written).toHaveLength(1);
     expect(installed).toEqual([written[0]?.paths]);
+    expect(pointerWrites).toEqual([{ paths: written[0]?.paths, runnerPath: runner.path }]);
     expect(written[0]?.metadata).toMatchObject({
       autoUpdateManager: "registry",
       commandPath: "/tmp/tokenmaxxing/service-runners/0.4.17/darwin-arm64/tokenmaxxing-service",
