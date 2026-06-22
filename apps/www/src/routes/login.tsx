@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { LOGIN_OAUTH_PROVIDERS, OAuthProviderButtons } from "../components/oauth-providers";
 import { Card } from "../components/ui/card";
+import { SITE_ORIGIN } from "../lib/og";
 
 const loginRedirectSchema = z.preprocess(
   (value) => (typeof value === "string" ? sanitizeLoginRedirectPath(value) : undefined),
@@ -14,6 +15,9 @@ const loginSearchSchema = z.object({
 });
 
 const Route = createFileRoute("/login")({
+  head: () => ({
+    links: [{ rel: "canonical", href: new URL("/login", SITE_ORIGIN).toString() }],
+  }),
   validateSearch: loginSearchSchema,
   component: LoginPage,
 });

@@ -54,6 +54,7 @@ const Route = createFileRoute("/$user")({
     const url = profileUrl(profile);
 
     return {
+      links: [{ rel: "canonical", href: url }],
       meta: [
         { title },
         { name: "description", content: description },

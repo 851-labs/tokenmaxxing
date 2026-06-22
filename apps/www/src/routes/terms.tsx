@@ -2,12 +2,16 @@ import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import { Code } from "../components/ui/code";
+import { SITE_ORIGIN } from "../lib/og";
 
 const GITHUB_URL = "https://github.com/851-labs/tokenmaxxing";
 const DISCORD_URL = "https://discord.gg/WzX6BpfaRH";
 
 const Route = createFileRoute("/terms")({
-  head: () => ({ meta: [{ title: "Terms of Service — tokenmaxxing.sh" }] }),
+  head: () => ({
+    links: [{ rel: "canonical", href: new URL("/terms", SITE_ORIGIN).toString() }],
+    meta: [{ title: "Terms of Service — tokenmaxxing.sh" }],
+  }),
   component: TermsPage,
 });
 

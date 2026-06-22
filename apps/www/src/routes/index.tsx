@@ -12,6 +12,7 @@ import { Avatar } from "../components/ui/avatar";
 import { Code } from "../components/ui/code";
 import { Tabs } from "../components/ui/tabs";
 import { cn } from "../lib/cn";
+import { SITE_ORIGIN } from "../lib/og";
 import { leaderboardQueryOptions } from "../lib/queries";
 
 const LEADERBOARD_METRIC_VALUES = ["spend", "tokens"] as const;
@@ -30,6 +31,7 @@ const DEFAULT_LEADERBOARD_SEARCH = {
 } as const satisfies LeaderboardSearch;
 
 const Route = createFileRoute("/")({
+  head: () => ({ links: [{ rel: "canonical", href: `${SITE_ORIGIN}/` }] }),
   validateSearch: leaderboardSearchSchema,
   search: {
     middlewares: [stripSearchParams<LeaderboardSearch>(DEFAULT_LEADERBOARD_SEARCH)],
