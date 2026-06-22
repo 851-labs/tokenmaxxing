@@ -3,5 +3,5 @@
   "compilerOptions": {
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts", "package.json"]
+  "include": ["script/**/*.ts", "src/**/*.ts", "package.json"]
 }

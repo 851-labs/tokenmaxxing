@@ -57,6 +57,13 @@
       "when": 1782090684021,
       "tag": "0007_bright_tiger_shark",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1782161119531,
+      "tag": "0008_slimy_wither",
+      "breakpoints": true
     }
   ]
 }

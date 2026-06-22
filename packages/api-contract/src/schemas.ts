@@ -152,7 +152,7 @@ const ServiceCheckInStatus = Schema.Literals(["started", "success", "failure"]);
 
 type ServiceCheckInStatusValue = typeof ServiceCheckInStatus.Type;
 
-const ServiceAutoUpdateManager = Schema.Literals(["bun", "npm", "pnpm", "yarn"]);
+const ServiceAutoUpdateManager = Schema.Literals(["bun", "npm", "pnpm", "registry", "yarn"]);
 
 type ServiceAutoUpdateManagerValue = typeof ServiceAutoUpdateManager.Type;
 
@@ -162,11 +162,15 @@ type ServiceAutoUpdateStatusValue = typeof ServiceAutoUpdateStatus.Type;
 
 const ServiceAutoUpdateReason = Schema.Literals([
   "disabled",
+  "download-failed",
+  "integrity-mismatch",
+  "install-failed",
   "latest-unknown",
   "manager-missing",
   "manager-not-found",
   "metadata-missing",
   "package-manager-failed",
+  "platform-package-missing",
   "version-unchanged",
 ]);
 
@@ -215,6 +219,8 @@ const UsageCheckInInput = Schema.Struct({
     repairError: Schema.optional(Schema.String),
     repairReason: Schema.optional(ServiceRepairReason),
     repairStatus: Schema.optional(ServiceRepairStatus),
+    runnerTarget: Schema.optional(Schema.String),
+    runnerVersion: Schema.optional(Schema.String),
     schedulerActive: Schema.optional(Schema.Boolean),
     status: ServiceCheckInStatus,
     templateVersion: Schema.optional(Schema.Number),
@@ -380,6 +386,8 @@ const AdminLatestDevice = Schema.Struct({
   serviceRepairError: Schema.NullOr(Schema.String),
   serviceRepairReason: Schema.NullOr(ServiceRepairReason),
   serviceRepairStatus: Schema.NullOr(ServiceRepairStatus),
+  serviceRunnerTarget: Schema.NullOr(Schema.String),
+  serviceRunnerVersion: Schema.NullOr(Schema.String),
   serviceSchedulerActive: Schema.NullOr(Schema.Boolean),
   serviceStatus: Schema.NullOr(ServiceCheckInStatus),
   serviceTemplateVersion: Schema.NullOr(Schema.Number),

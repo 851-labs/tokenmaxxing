@@ -44,6 +44,8 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
               serviceRepairError: service.repairError ?? null,
               serviceRepairReason: service.repairReason ?? null,
               serviceRepairStatus: service.repairStatus ?? null,
+              serviceRunnerTarget: service.runnerTarget ?? null,
+              serviceRunnerVersion: service.runnerVersion ?? null,
               serviceSchedulerActive: service.schedulerActive ?? null,
               serviceStatus: service.status,
               serviceTemplateVersion: service.templateVersion ?? null,

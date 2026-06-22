@@ -239,6 +239,11 @@ function serviceStatusTitle(row: AdminUsersData["devices"][number]): string | un
     device.serviceAutoUpdateInstalledVersion === null
       ? undefined
       : `auto-update installed: ${formatVersion(device.serviceAutoUpdateInstalledVersion)}`,
+    device.serviceRunnerVersion === null
+      ? undefined
+      : `runner: ${formatVersion(device.serviceRunnerVersion)}${
+          device.serviceRunnerTarget === null ? "" : ` (${device.serviceRunnerTarget})`
+        }`,
     device.serviceAutoUpdateError === null
       ? undefined
       : `auto-update error: ${device.serviceAutoUpdateError}`,

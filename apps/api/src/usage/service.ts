@@ -82,6 +82,8 @@ interface UsageServiceCheckIn {
   repairError?: string | undefined;
   repairReason?: ServiceRepairReasonValue | undefined;
   repairStatus?: ServiceRepairStatusValue | undefined;
+  runnerTarget?: string | undefined;
+  runnerVersion?: string | undefined;
   schedulerActive?: boolean | undefined;
   status: ServiceCheckInStatusValue;
   templateVersion?: number | undefined;

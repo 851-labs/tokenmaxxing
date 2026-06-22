@@ -85,6 +85,8 @@ const makeD1AdminRepository = Effect.fn("makeD1AdminRepository")(function* () {
               serviceRepairError: devices.serviceRepairError,
               serviceRepairReason: devices.serviceRepairReason,
               serviceRepairStatus: devices.serviceRepairStatus,
+              serviceRunnerTarget: devices.serviceRunnerTarget,
+              serviceRunnerVersion: devices.serviceRunnerVersion,
               serviceSchedulerActive: devices.serviceSchedulerActive,
               serviceStatus: devices.serviceStatus,
               serviceTemplateVersion: devices.serviceTemplateVersion,
@@ -199,6 +201,8 @@ const makeD1AdminRepository = Effect.fn("makeD1AdminRepository")(function* () {
                 device.serviceRepairReason as AdminUserSnapshot["devices"][number]["serviceRepairReason"],
               serviceRepairStatus:
                 device.serviceRepairStatus as AdminUserSnapshot["devices"][number]["serviceRepairStatus"],
+              serviceRunnerTarget: device.serviceRunnerTarget,
+              serviceRunnerVersion: device.serviceRunnerVersion,
               serviceSchedulerActive: device.serviceSchedulerActive,
               serviceStatus:
                 device.serviceStatus as AdminUserSnapshot["devices"][number]["serviceStatus"],

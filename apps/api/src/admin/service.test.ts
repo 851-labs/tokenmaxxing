@@ -52,6 +52,8 @@ function device(input: Partial<AdminDeviceSnapshot> = {}): AdminDeviceSnapshot {
     serviceRepairError: null,
     serviceRepairReason: null,
     serviceRepairStatus: null,
+    serviceRunnerTarget: null,
+    serviceRunnerVersion: null,
     serviceSchedulerActive: null,
     serviceStatus: null,
     serviceTemplateVersion: null,

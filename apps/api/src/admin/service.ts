@@ -63,6 +63,8 @@ interface AdminDeviceSnapshot {
   serviceRepairError: string | null;
   serviceRepairReason: ServiceRepairReasonValue | null;
   serviceRepairStatus: ServiceRepairStatusValue | null;
+  serviceRunnerTarget: string | null;
+  serviceRunnerVersion: string | null;
   serviceSchedulerActive: boolean | null;
   serviceStatus: ServiceCheckInStatusValue | null;
   serviceTemplateVersion: number | null;

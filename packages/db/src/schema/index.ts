@@ -134,6 +134,8 @@ const devices = sqliteTable(
     serviceRepairError: text("service_repair_error"),
     serviceRepairReason: text("service_repair_reason"),
     serviceRepairStatus: text("service_repair_status"),
+    serviceRunnerTarget: text("service_runner_target"),
+    serviceRunnerVersion: text("service_runner_version"),
     serviceSchedulerActive: integer("service_scheduler_active", { mode: "boolean" }),
     serviceStatus: text("service_status"),
     serviceTemplateVersion: integer("service_template_version"),
