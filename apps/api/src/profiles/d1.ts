@@ -148,11 +148,8 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
         const rows = yield* database.use((db) => {
           const base = db
             .select({
-              cacheCreationTokens: sql<number>`sum(${usageDays.cacheCreationTokens})`,
-              cacheReadTokens: sql<number>`sum(${usageDays.cacheReadTokens})`,
               costUsd: sql<number>`sum(${usageDays.costUsd})`,
               date: usageDays.date,
-              inputTokens: sql<number>`sum(${usageDays.inputTokens})`,
               key: sql<string>`${key}`.as("group_key"),
               outputTokens: sql<number>`sum(${usageDays.outputTokens})`,
               totalTokens: sql<number>`sum(${usageDays.totalTokens})`,
