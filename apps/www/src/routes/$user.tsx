@@ -89,7 +89,7 @@ function ProfilePage() {
     <>
       <header className="flex items-center justify-between gap-4 px-4 py-8">
         <div className="flex min-w-0 items-center gap-4">
-          <Avatar size={56} src={owner.avatarUrl} />
+          <Avatar priority size={56} src={owner.avatarUrl} />
           <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{owner.login}</h1>
         </div>
         <ProfileShareButton url={profileUrl(profile)} />
