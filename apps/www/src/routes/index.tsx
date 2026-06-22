@@ -29,6 +29,8 @@ const DEFAULT_LEADERBOARD_SEARCH = {
   window: "30d",
 } as const satisfies LeaderboardSearch;
 
+const HOMEPAGE_TITLE = "Token usage leaderboard for Claude Code, Codex & Cursor — tokenmaxxing.sh";
+
 const Route = createFileRoute("/")({
   validateSearch: leaderboardSearchSchema,
   search: {
@@ -38,6 +40,9 @@ const Route = createFileRoute("/")({
   loader: async ({ context, deps }) => {
     await context.queryClient.ensureQueryData(leaderboardQueryOptions(deps.metric, deps.window));
   },
+  head: () => ({
+    meta: [{ title: HOMEPAGE_TITLE }, { property: "og:title", content: HOMEPAGE_TITLE }],
+  }),
   component: LeaderboardPage,
 });
 
@@ -365,10 +370,12 @@ function HeroSection() {
   return (
     <section className="border-b border-border px-4 py-10 sm:py-14" aria-labelledby="hero-title">
       <h1 className="max-w-3xl text-2xl font-semibold tracking-tight" id="hero-title">
-        The best place to track your token usage
+        tokenmaxxing — the social leaderboard for LLM token usage
       </h1>
       <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-        Sync local agent usage, publish your profile, and climb the leaderboard.
+        tokenmaxxing is a public leaderboard for AI coding agent usage. Sync local token and spend
+        data from Claude Code, Codex, Cursor, OpenCode, and Gemini CLI, then compare your profile
+        with everyone else.
       </p>
       <div className="mt-6 max-w-3xl">
         <div className="overflow-hidden border border-border bg-muted/40">
