@@ -10,6 +10,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { Footer } from "../components/footer";
 import { Nav } from "../components/nav";
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SITE_ORIGIN } from "../lib/og";
+import geistSans400 from "@fontsource/geist-sans/files/geist-sans-latin-400-normal.woff2?url";
 import styles from "../styles.css?url";
 
 interface RouterContext {
@@ -41,7 +42,16 @@ function rootHead() {
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:image", content: DEFAULT_OG_IMAGE_URL },
     ],
-    links: [{ rel: "stylesheet", href: styles }],
+    links: [
+      {
+        rel: "preload",
+        as: "font",
+        type: "font/woff2",
+        href: geistSans400,
+        crossOrigin: "anonymous" as const,
+      },
+      { rel: "stylesheet", href: styles },
+    ],
   };
 }
 
