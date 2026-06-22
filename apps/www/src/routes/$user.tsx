@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, notFound } from "@tanstack/react-router";
 import type { ProfileDailyResponse, ProfileDailyRow } from "@tokenmaxxing/api-contract";
 
 type DailyRow = typeof ProfileDailyRow.Type;
@@ -23,6 +23,7 @@ import { Avatar } from "../components/ui/avatar";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Code } from "../components/ui/code";
+import { isApiError } from "../lib/api";
 import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_WIDTH,
@@ -35,12 +36,20 @@ import { profileDailyQueryOptions, profileQueryOptions } from "../lib/queries";
 
 const Route = createFileRoute("/$user")({
   loader: async ({ context, params }) => {
-    const [profile, daily] = await Promise.all([
-      context.queryClient.ensureQueryData(profileQueryOptions(params.user)),
-      context.queryClient.ensureQueryData(profileDailyQueryOptions(params.user)),
-    ]);
+    try {
+      const [profile, daily] = await Promise.all([
+        context.queryClient.ensureQueryData(profileQueryOptions(params.user)),
+        context.queryClient.ensureQueryData(profileDailyQueryOptions(params.user)),
+      ]);
 
-    return { daily, profile };
+      return { daily, profile };
+    } catch (error) {
+      if (isApiError(error, "UserNotFound")) {
+        throw notFound();
+      }
+
+      throw error;
+    }
   },
   head: ({ loaderData }) => {
     if (loaderData === undefined) {
