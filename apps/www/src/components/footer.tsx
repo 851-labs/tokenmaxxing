@@ -29,6 +29,8 @@ function useGithubStars() {
     },
     queryKey: ["github-stars", GITHUB_REPO],
     staleTime: 1000 * 60 * 60,
+    gcTime: 1000 * 60 * 60 * 24,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -40,9 +42,10 @@ function Footer() {
     <footer className="mx-4 mb-16 max-w-5xl border-x border-border lg:mx-auto -mt-px grid grid-cols-2 gap-px border-y bg-border font-mono sm:grid-cols-4">
       <FooterLink href={GITHUB_URL}>
         GitHub
-        {stars.data === undefined ? null : (
-          <span className="text-muted-foreground">[{starsFormatter.format(stars.data)}]</span>
-        )}
+        {/* Reserve a fixed-width slot so the badge never shifts layout when it loads. */}
+        <span className="inline-block w-10 text-left text-muted-foreground">
+          {stars.data === undefined ? null : `[${starsFormatter.format(stars.data)}]`}
+        </span>
       </FooterLink>
       <FooterLink href={LINKS.changelog}>Changelog</FooterLink>
       <FooterLink href={LINKS.discord}>Discord</FooterLink>
