@@ -221,11 +221,8 @@ function daily(): Daily {
   return {
     days: [
       {
-        cacheCreationTokens: 0,
-        cacheReadTokens: 0,
         costUsd: 12.34,
         date: "2026-06-21",
-        inputTokens: 100,
         key: "claude-opus",
         outputTokens: 200,
         totalTokens: 300,
