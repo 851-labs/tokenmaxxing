@@ -35,8 +35,8 @@ function PrivacyPage() {
 
         <Section title="How data is sourced">
           The CLI uses <ExternalLink href={CCUSAGE_URL}>ccusage</ExternalLink> to parse usage
-          locally from supported coding agents (Claude Code, Codex, OpenCode, Gemini CLI, and
-          Copilot CLI). It only reads usage data that still exists on your computer; if an agent has
+          locally from supported coding agents (Claude Code, OpenAI Codex, Cursor, OpenCode, and
+          Gemini CLI). It only reads usage data that still exists on your computer; if an agent has
           already cleaned up its local logs, that data cannot be recovered or uploaded. You can
           preview exactly what would be sent with <Code>tokenmaxxing sync --dry-run</Code>.
         </Section>

@@ -80,6 +80,17 @@ const SUPPORTED_AGENTS = [
   { icon: <GeminiIcon />, label: "Gemini CLI" },
 ] as const;
 
+const SUPPORTED_AGENT_LABELS = SUPPORTED_AGENTS.map((agent) => agent.label);
+
+// "A, B, C, and D" — keeps the visible agent prose in sync with the icon strip.
+function formatAgentList(labels: readonly string[]) {
+  if (labels.length <= 1) {
+    return labels.join("");
+  }
+
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
 const FAQ_ITEMS: { answer: ReactNode; question: string }[] = [
   {
     question: "What is tokenmaxxing?",
@@ -116,7 +127,7 @@ const FAQ_ITEMS: { answer: ReactNode; question: string }[] = [
         >
           ccusage
         </a>{" "}
-        to parse local usage from Claude Code, Codex, OpenCode, Gemini CLI, and Copilot CLI.
+        to parse local usage from {formatAgentList(SUPPORTED_AGENT_LABELS)}.
       </>
     ),
   },
@@ -429,6 +440,9 @@ function HeroSection() {
             </li>
           ))}
         </ul>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+          Works with {formatAgentList(SUPPORTED_AGENT_LABELS)} — parsed locally via ccusage.
+        </p>
       </div>
     </section>
   );
