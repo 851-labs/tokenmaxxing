@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dailyCcusageCommand, sessionCcusageCommand } from "./runner";
+import { ccusageCommandInvocations, dailyCcusageCommand, sessionCcusageCommand } from "./runner";
 
 const codex = { source: "codex", subcommand: "codex" };
 
@@ -22,6 +22,15 @@ describe("ccusage commands", () => {
       "--json",
       "--mode",
       "calculate",
+    ]);
+  });
+});
+
+describe("ccusageCommandInvocations", () => {
+  it("uses executable commands instead of shell aliases on Windows", () => {
+    expect(ccusageCommandInvocations(["codex", "daily"], "win32")).toEqual([
+      { args: ["x", "ccusage@^20.0.17", "codex", "daily"], command: "bun" },
+      { args: ["-y", "ccusage@^20.0.17", "codex", "daily"], command: "npx.cmd" },
     ]);
   });
 });

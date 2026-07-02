@@ -7,8 +7,8 @@ import { decodeDailyReport, decodeSessionReport } from "./schema";
 import type { CcusageSource } from "./sources";
 
 /**
- * Shells out to `bunx ccusage@^20.0.17 <source> daily --json --breakdown` (npx
- * fallback only when bunx itself is missing). A source that fails, is not
+ * Shells out to `bun x ccusage@^20.0.17 <source> daily --json --breakdown` (npx
+ * fallback only when bun itself is missing). A source that fails, is not
  * installed, or has no local data resolves to none — one broken agent must
  * never abort the whole sync.
  */
@@ -24,6 +24,11 @@ class CcusageRunError extends Data.TaggedError("CcusageRunError")<{
 interface RunOptions {
   /** YYYY-MM-DD; forwarded to ccusage as compact YYYYMMDD. */
   since?: string | undefined;
+}
+
+interface CcusageCommandInvocation {
+  args: string[];
+  command: string;
 }
 
 function runCcusageDailyReport(
@@ -115,13 +120,23 @@ function execCcusage(args: string[], source: string): Effect.Effect<string, Ccus
       });
     });
 
-  return run("bunx", [CCUSAGE_SPEC, ...args]).pipe(
+  const [primary, fallback] = ccusageCommandInvocations(args);
+
+  return run(primary.command, primary.args).pipe(
     Effect.catch((error: CcusageRunError) =>
-      isMissingCommand(error.cause)
-        ? run("npx", ["-y", CCUSAGE_SPEC, ...args])
-        : Effect.fail(error),
+      isMissingCommand(error.cause) ? run(fallback.command, fallback.args) : Effect.fail(error),
     ),
   );
+}
+
+function ccusageCommandInvocations(
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): [CcusageCommandInvocation, CcusageCommandInvocation] {
+  return [
+    { args: ["x", CCUSAGE_SPEC, ...args], command: "bun" },
+    { args: ["-y", CCUSAGE_SPEC, ...args], command: platform === "win32" ? "npx.cmd" : "npx" },
+  ];
 }
 
 function isMissingCommand(cause: unknown): boolean {
@@ -129,6 +144,7 @@ function isMissingCommand(cause: unknown): boolean {
 }
 
 export {
+  ccusageCommandInvocations,
   dailyCcusageCommand,
   runCcusageDailyReport,
   runCcusageSessionReport,
