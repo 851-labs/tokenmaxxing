@@ -102,6 +102,28 @@ describe("native preinstall package selection", () => {
     }
   });
 
+  it("fallback launcher resolves the preinstall binary when optional packages are absent", () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "tokenmaxxing-native-launcher-"));
+    try {
+      const binaryPath = path.join(temp, "bin", "tokenmaxxing.exe");
+      fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+      fs.writeFileSync(binaryPath, "#!/bin/sh\nexit 0\n");
+
+      expect(
+        findNativeBinary({
+          arch: "arm64",
+          packageDir: temp,
+          platform: "darwin",
+        }),
+      ).toEqual({
+        packageName: "@851-labs/tokenmaxxing",
+        path: fs.realpathSync(binaryPath),
+      });
+    } finally {
+      fs.rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
   it("fallback launcher recovery message explains shadowed and script-blocked installs", () => {
     const message = recoveryMessage({ arch: "arm64", platform: "darwin" });
 
