@@ -10,14 +10,14 @@ function createMainPackageJson() {
     license: packageJson.license,
     repository: packageJson.repository,
     bin: {
-      tokenmaxxing: "./bin/tokenmaxxing.exe",
+      tokenmaxxing: "./native-bin-launcher.cjs",
     },
-    // npm links Windows shims after preinstall and before postinstall. Keep
-    // native installation here so shims see the final .exe instead of Node JS.
+    // Keep native installation in preinstall so package managers that skip
+    // optional dependencies still get one chance to materialize the host binary.
     scripts: {
       preinstall: "bun ./install-native.mjs || node ./install-native.mjs",
     },
-    files: ["bin", "native-bin-launcher.cjs", "install-native.mjs", "README.md", "LICENSE"],
+    files: ["native-bin-launcher.cjs", "install-native.mjs", "README.md", "LICENSE"],
     os: ["darwin", "linux", "win32"],
     cpu: ["arm64", "x64"],
     publishConfig: packageJson.publishConfig,

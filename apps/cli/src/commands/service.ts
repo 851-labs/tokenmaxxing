@@ -15,7 +15,7 @@ import {
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { arch, homedir, hostname } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join, posix, win32 } from "node:path";
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 
@@ -95,6 +95,7 @@ const LEGACY_SCHEDULE_TIMES: readonly ScheduleTime[] = [
 type ServiceBackend = "launchd" | "systemd" | "windows-task-scheduler";
 type AutoUpdateManager = "bun" | "npm" | "pnpm" | "yarn";
 type ServiceMetadataAutoUpdateManager = AutoUpdateManager | "registry";
+type PathModule = typeof posix;
 
 interface CommandInstall {
   autoUpdateManager: AutoUpdateManager | null;
@@ -3346,24 +3347,26 @@ function servicePaths({
     return null;
   }
 
-  const configDir = dirname(getConfigPath(env));
-  const wrapperPath = join(
+  const configDir = serviceConfigDir(env, home, platform);
+  const configPath = pathModuleForPath(configDir, platform);
+  const platformPath = servicePathModule(platform);
+  const wrapperPath = configPath.join(
     configDir,
     platform === "win32" ? WINDOWS_WRAPPER_NAME : POSIX_WRAPPER_NAME,
   );
-  const logPath = join(configDir, "service.log");
-  const lockPath = join(configDir, "service.lock");
-  const metadataPath = join(configDir, "service.json");
-  const runnerPointerPath = join(configDir, SERVICE_RUNNER_POINTER_NAME);
-  const runnersDir = join(configDir, SERVICE_RUNNER_DIR_NAME);
-  const statePath = join(configDir, "service-state.json");
-  const updateLockPath = join(configDir, "service-update.lock");
+  const logPath = configPath.join(configDir, "service.log");
+  const lockPath = configPath.join(configDir, "service.lock");
+  const metadataPath = configPath.join(configDir, "service.json");
+  const runnerPointerPath = configPath.join(configDir, SERVICE_RUNNER_POINTER_NAME);
+  const runnersDir = configPath.join(configDir, SERVICE_RUNNER_DIR_NAME);
+  const statePath = configPath.join(configDir, "service-state.json");
+  const updateLockPath = configPath.join(configDir, "service-update.lock");
 
   if (backend === "launchd") {
     return {
       backend,
       configDir,
-      definitionPath: join(home, "Library", "LaunchAgents", `${SERVICE_LABEL}.plist`),
+      definitionPath: platformPath.join(home, "Library", "LaunchAgents", `${SERVICE_LABEL}.plist`),
       lockPath,
       logPath,
       metadataPath,
@@ -3376,11 +3379,15 @@ function servicePaths({
   }
 
   if (backend === "systemd") {
-    const systemdDir = join(env["XDG_CONFIG_HOME"] ?? join(home, ".config"), "systemd", "user");
+    const systemdDir = platformPath.join(
+      env["XDG_CONFIG_HOME"] ?? platformPath.join(home, ".config"),
+      "systemd",
+      "user",
+    );
     return {
       backend,
       configDir,
-      definitionPath: join(systemdDir, `${SYSTEMD_NAME}.service`),
+      definitionPath: platformPath.join(systemdDir, `${SYSTEMD_NAME}.service`),
       lockPath,
       logPath,
       metadataPath,
@@ -3407,6 +3414,33 @@ function servicePaths({
   };
 }
 
+function serviceConfigDir(
+  env: Record<string, string | undefined>,
+  home: string,
+  platform: NodeJS.Platform,
+): string {
+  if (env["TOKENMAXXING_ENV"] === "development") {
+    return dirname(getConfigPath(env));
+  }
+
+  return (
+    env["TOKENMAXXING_CONFIG_DIR"] ??
+    servicePathModule(platform).join(home, ".config", "tokenmaxxing")
+  );
+}
+
+function servicePathModule(platform: NodeJS.Platform): PathModule {
+  return platform === "win32" ? win32 : posix;
+}
+
+function pathModuleForPath(path: string, platform: NodeJS.Platform = process.platform): PathModule {
+  if (/^[A-Za-z]:[\\/]/.test(path) || path.includes("\\")) {
+    return win32;
+  }
+
+  return path.startsWith("/") ? posix : servicePathModule(platform);
+}
+
 function backendForPlatform(platform: NodeJS.Platform): ServiceBackend | null {
   if (platform === "darwin") {
     return "launchd";
@@ -3429,7 +3463,12 @@ function serviceRunnerPath(
   target: ServiceRunnerTarget,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  return join(paths.runnersDir, version, target, serviceRunnerBinaryName(platform));
+  return pathModuleForPath(paths.runnersDir).join(
+    paths.runnersDir,
+    version,
+    target,
+    serviceRunnerBinaryName(platform),
+  );
 }
 
 function installServiceRunnerFromOptionalPackage(
@@ -3975,7 +4014,10 @@ function legacyServiceWrapperPaths(paths: ServicePaths): string[] {
     return [];
   }
 
-  const legacyWrapperPath = join(paths.configDir, LEGACY_POSIX_WRAPPER_NAME);
+  const legacyWrapperPath = pathModuleForPath(paths.configDir).join(
+    paths.configDir,
+    LEGACY_POSIX_WRAPPER_NAME,
+  );
 
   return legacyWrapperPath === paths.wrapperPath ? [] : [legacyWrapperPath];
 }

@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 
 import { $ } from "bun";
-import { chmod, cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import packageJson from "../package.json";
 import { assertSafeOutputDir, buildServiceRunners } from "./build-service-runners";
-import { createMainPackageJson } from "./publish-manifest";
+import { writeMainPackage } from "./publish-main-package";
 import {
   npmDistTagForVersion,
   parsePublishCliArgs,
@@ -26,7 +26,6 @@ import {
 } from "../src/service-runner-targets";
 
 const cliDir = fileURLToPath(new URL("..", import.meta.url));
-const repoDir = resolve(cliDir, "../..");
 
 async function publishCli(options: PublishCliOptions = {}): Promise<void> {
   const outDir =
@@ -62,26 +61,6 @@ function packagePublishPaths(outDir: string): Record<string, string> {
     }),
     [packageJson.name, join(outDir, packageJson.name)],
   ]);
-}
-
-async function writeMainPackage(outDir: string): Promise<void> {
-  const packageDir = join(outDir, packageJson.name);
-  const binDir = join(packageDir, "bin");
-  await mkdir(packageDir, { recursive: true });
-  await mkdir(binDir, { recursive: true });
-  await cp(join(repoDir, "LICENSE"), join(packageDir, "LICENSE"));
-  await cp(join(cliDir, "README.md"), join(packageDir, "README.md"));
-  await cp(join(cliDir, "script", "install-native.mjs"), join(packageDir, "install-native.mjs"));
-  await cp(
-    join(cliDir, "script", "native-bin-launcher.cjs"),
-    join(packageDir, "native-bin-launcher.cjs"),
-  );
-  await cp(join(cliDir, "script", "native-bin-launcher.cjs"), join(binDir, "tokenmaxxing.exe"));
-  await chmod(join(binDir, "tokenmaxxing.exe"), 0o755);
-  await Bun.write(
-    join(packageDir, "package.json"),
-    `${JSON.stringify(createMainPackageJson(), null, 2)}\n`,
-  );
 }
 
 async function smokeTestHostRunner(outDir: string): Promise<void> {
