@@ -1335,12 +1335,22 @@ describe("service auto-update reports", () => {
 });
 
 describe("serviceScheduledSyncSince", () => {
-  it("uses the previous successful local date for scheduled syncs", () => {
+  it("uses the previous successful date for scheduled syncs", () => {
+    // Bucket key injected so the assertion is stable regardless of host timezone;
+    // runtime uses localDateKey (the default) to bucket in the device's local time.
+    const utcDateKey = (date: Date): string =>
+      [
+        date.getUTCFullYear(),
+        String(date.getUTCMonth() + 1).padStart(2, "0"),
+        String(date.getUTCDate()).padStart(2, "0"),
+      ].join("-");
+
     expect(
       serviceScheduledSyncSince(
         { lastSuccessAt: "2026-06-16T23:30:00.000Z", version: 1 },
         new Date("2026-06-17T00:05:00.000Z"),
         true,
+        utcDateKey,
       ),
     ).toBe("2026-06-16");
   });

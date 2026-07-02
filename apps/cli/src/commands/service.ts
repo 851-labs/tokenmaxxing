@@ -1948,6 +1948,8 @@ function serviceScheduledSyncSince(
   state: ServiceState,
   now: Date,
   scheduled: boolean,
+  /** Local-time bucket key by default; injectable for timezone-stable tests. */
+  toKey: (date: Date) => string = localDateKey,
 ): string | undefined {
   if (!scheduled) {
     return undefined;
@@ -1956,11 +1958,11 @@ function serviceScheduledSyncSince(
   if (state.lastSuccessAt !== undefined) {
     const lastSuccessAt = new Date(state.lastSuccessAt);
     if (!Number.isNaN(lastSuccessAt.getTime()) && lastSuccessAt.getTime() <= now.getTime()) {
-      return localDateKey(lastSuccessAt);
+      return toKey(lastSuccessAt);
     }
   }
 
-  const today = localDateKey(now);
+  const today = toKey(now);
   if (
     state.lastSuccessDate !== undefined &&
     isLocalDateKey(state.lastSuccessDate) &&
@@ -1969,7 +1971,7 @@ function serviceScheduledSyncSince(
     return state.lastSuccessDate;
   }
 
-  return previousLocalDateKey(now);
+  return previousDateKey(today);
 }
 
 function localDateKey(date: Date): string {
@@ -1980,8 +1982,15 @@ function localDateKey(date: Date): string {
   ].join("-");
 }
 
-function previousLocalDateKey(date: Date): string {
-  return localDateKey(new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1));
+/** Calendar day before a `YYYY-MM-DD` key. UTC normalization keeps it timezone-independent. */
+function previousDateKey(key: string): string {
+  const [year, month, day] = key.split("-").map(Number) as [number, number, number];
+  const previous = new Date(Date.UTC(year, month - 1, day - 1));
+  return [
+    previous.getUTCFullYear(),
+    String(previous.getUTCMonth() + 1).padStart(2, "0"),
+    String(previous.getUTCDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 function isLocalDateKey(value: string): boolean {
