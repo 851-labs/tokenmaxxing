@@ -57,6 +57,12 @@ const CcusageDailyReport = Schema.Struct({
 
 type CcusageDailyReport = typeof CcusageDailyReport.Type;
 
+/**
+ * Session entries stay `Unknown` at decode time because each source emits a
+ * different dialect and only the count is read locally. They are NEVER
+ * uploaded as-is: `sanitizeSessionReport` (./sanitize.ts) reduces them to an
+ * allowlisted aggregate shape with a hashed session identifier first.
+ */
 const CcusageSessionReport = Schema.Struct({
   sessions: Schema.Array(Schema.Unknown),
 });

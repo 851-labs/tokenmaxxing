@@ -17,6 +17,7 @@ import {
   runCcusageSessionReport,
   sessionCcusageCommand,
 } from "../ccusage/runner";
+import { sanitizeSessionReport } from "../ccusage/sanitize";
 import { DEFAULT_SOURCE_NAMES, resolveSources } from "../ccusage/sources";
 import {
   ApiClientService,
@@ -278,7 +279,9 @@ function syncProgram(options: SyncProgramOptions) {
       if (options.since === undefined && Option.isSome(sessionReport)) {
         rawReports.push({
           command: sessionCcusageCommand(source),
-          payload: sessionReport.value,
+          // Session entries embed path-derived identifiers (project dirs,
+          // rollout file names); only allowlisted aggregates may upload.
+          payload: sanitizeSessionReport(sessionReport.value),
           reportKind: "session",
           source: source.source,
         });
