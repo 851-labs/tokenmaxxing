@@ -1,5 +1,5 @@
 import { Context } from "effect";
-import { Data, Effect } from "effect";
+import { Effect } from "effect";
 import { Option } from "effect";
 
 import type { DatabaseError } from "../database";
@@ -37,17 +37,13 @@ interface UserAccountSummary {
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-class AccountLinkConflict extends Data.TaggedError("AccountLinkConflict")<{
-  readonly provider: OAuthProviderId;
-}> {}
-
 interface AuthServiceShape {
   /** Resolves or links a provider identity, then mints a browser session.
    * Returns the RAW token (stored hashed). */
   signInWithProvider(
     profile: OAuthProfile,
     options?: { currentUser?: CurrentUser | undefined },
-  ): Effect.Effect<{ token: string; user: CurrentUser }, AccountLinkConflict | DatabaseError, any>;
+  ): Effect.Effect<{ token: string; user: CurrentUser }, DatabaseError, any>;
   resolveSession(rawToken: string): Effect.Effect<Option.Option<CurrentUser>, DatabaseError, any>;
   signOut(rawToken: string): Effect.Effect<void, DatabaseError, any>;
   listAccounts(userId: string): Effect.Effect<UserAccountSummary[], DatabaseError, any>;
@@ -119,15 +115,9 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
         );
         if (Option.isSome(existing)) {
           if (options?.currentUser !== undefined && options.currentUser.id !== existing.value.id) {
-            const canMerge = yield* canMergeVerifiedEmailConflict(
-              profile,
-              existing.value,
-              options.currentUser,
-            );
-            if (!canMerge) {
-              return yield* Effect.fail(new AccountLinkConflict({ provider: profile.provider }));
-            }
-
+            // A signed-in session plus a fresh OAuth callback proves control
+            // of both profiles; merge the existing provider profile into the
+            // current profile so usage follows the connected account.
             yield* repository.mergeUsers({
               sourceUserId: existing.value.id,
               targetUserId: options.currentUser.id,
@@ -188,19 +178,6 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
     return Effect.gen(function* () {
       const users = yield* repository.findUsersByVerifiedEmail(profile.email!);
       return [...new Map(users.map((user) => [user.id, user])).values()];
-    });
-  }
-
-  function canMergeVerifiedEmailConflict(
-    profile: OAuthProfile,
-    source: CurrentUser,
-    target: CurrentUser,
-  ) {
-    return Effect.gen(function* () {
-      const users = yield* verifiedEmailUsers(profile);
-      const userIds = new Set(users.map((user) => user.id));
-
-      return userIds.has(source.id) && userIds.has(target.id);
     });
   }
 
@@ -281,7 +258,7 @@ function slugifyLogin(value: string): string {
   return slug.length === 0 ? "user" : slug;
 }
 
-export { AccountLinkConflict, AuthRepository, AuthService, makeAuthService };
+export { AuthRepository, AuthService, makeAuthService };
 
 export type {
   AuthRepositoryShape,

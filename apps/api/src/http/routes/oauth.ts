@@ -95,9 +95,6 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
         const signedIn = yield* auth.signInWithProvider(profile, options);
         return { _tag: "success" as const, ...signedIn };
       }).pipe(
-        Effect.catchTag("AccountLinkConflict", () =>
-          Effect.succeed({ _tag: "conflict" as const, provider }),
-        ),
         Effect.catchCause((cause) =>
           Effect.sync(() => {
             console.error(`${provider} oauth callback failed`, String(cause).slice(0, 500));
@@ -107,16 +104,6 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
       );
 
       switch (result._tag) {
-        case "conflict":
-          return HttpServerResponse.jsonUnsafe(
-            {
-              error: {
-                code: "oauth_account_conflict",
-                message: `That ${providerLabel(provider)} account is already connected to another tokenmaxxing profile.`,
-              },
-            },
-            { status: 409 },
-          );
         case "failed":
           return HttpServerResponse.jsonUnsafe(
             {

@@ -51,4 +51,24 @@ describe("oauthProviderLinks", () => {
     expect(githubUrl.pathname).toBe("/auth/github/start");
     expect(githubUrl.searchParams.get("redirect")).toBe("/login/cli?code=ABCD-1234");
   });
+
+  it("builds account connection links", () => {
+    const links = oauthProviderLinks({
+      action: "connect",
+      providers: ["google"],
+      redirect: "/settings",
+    });
+    const [google] = links;
+    if (google === undefined) {
+      throw new Error("expected Google provider");
+    }
+
+    const googleUrl = new URL(google.href);
+
+    expect(links).toHaveLength(1);
+    expect(google.id).toBe("google");
+    expect(google.label).toBe("Connect Google");
+    expect(googleUrl.pathname).toBe("/auth/google/start");
+    expect(googleUrl.searchParams.get("redirect")).toBe("/settings");
+  });
 });

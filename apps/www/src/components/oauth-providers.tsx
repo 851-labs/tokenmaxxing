@@ -3,6 +3,7 @@ import { cn } from "../lib/cn";
 import { resolveApiUrl } from "../lib/config";
 
 type OAuthProviderId = "github" | "google";
+type OAuthProviderAction = "connect" | "continue";
 
 const OAUTH_PROVIDERS = [
   { id: "github", name: "GitHub" },
@@ -18,6 +19,7 @@ interface OAuthProviderLink {
 }
 
 interface OAuthProviderOptions {
+  action?: OAuthProviderAction | undefined;
   providers?: readonly OAuthProviderId[] | undefined;
   redirect?: string | undefined;
 }
@@ -57,10 +59,15 @@ function GoogleMark({ className }: { className?: string }) {
   );
 }
 
-function OAuthProviderButtons({ className, providers, redirect }: OAuthProviderButtonsProps) {
+function OAuthProviderButtons({
+  action,
+  className,
+  providers,
+  redirect,
+}: OAuthProviderButtonsProps) {
   return (
     <div className={cn("flex w-full flex-col gap-3", className)}>
-      {oauthProviderLinks({ providers, redirect }).map((provider) => (
+      {oauthProviderLinks({ action, providers, redirect }).map((provider) => (
         <a
           className={buttonClassName({ variant: "primary", size: "md", fullWidth: true })}
           href={provider.href}
@@ -75,6 +82,7 @@ function OAuthProviderButtons({ className, providers, redirect }: OAuthProviderB
 }
 
 function oauthProviderLinks({
+  action = "continue",
   providers,
   redirect,
 }: OAuthProviderOptions = {}): OAuthProviderLink[] {
@@ -92,9 +100,18 @@ function oauthProviderLinks({
     return {
       href: url.toString(),
       id: provider.id,
-      label: `Continue with ${provider.name}`,
+      label: oauthProviderActionLabel(action, provider.name),
     };
   });
+}
+
+function oauthProviderActionLabel(action: OAuthProviderAction, providerName: string): string {
+  switch (action) {
+    case "connect":
+      return `Connect ${providerName}`;
+    case "continue":
+      return `Continue with ${providerName}`;
+  }
 }
 
 function providerIcon(provider: OAuthProviderId) {
@@ -112,4 +129,4 @@ function oauthProviderLabel(provider: OAuthProviderId): string {
 
 export { LOGIN_OAUTH_PROVIDERS, OAuthProviderButtons, oauthProviderLabel, oauthProviderLinks };
 
-export type { OAuthProviderId };
+export type { OAuthProviderAction, OAuthProviderId };

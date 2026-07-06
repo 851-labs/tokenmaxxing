@@ -3,7 +3,6 @@ import { Effect } from "effect";
 import { Option } from "effect";
 
 import {
-  AccountLinkConflict,
   AuthRepository,
   makeAuthService,
   type CurrentUser,
@@ -117,7 +116,7 @@ describe("AuthService provider linking", () => {
     expect(store.accounts.get(accountKey("google", "google_123"))?.userId).toBe(user.id);
   });
 
-  it("rejects linking a provider account that belongs to another user", async () => {
+  it("merges a provider account owned by another profile into the current session user", async () => {
     const { service, store } = await makeTestAuth();
     const current = currentUser({ id: "current", login: "current" });
     const other = currentUser({ id: "other", login: "other" });
@@ -128,13 +127,15 @@ describe("AuthService provider linking", () => {
       userId: other.id,
     });
 
-    await expect(
-      runAuth(
-        service.signInWithProvider(googleProfile({ email: "other@example.com" }), {
-          currentUser: current,
-        }),
-      ),
-    ).rejects.toBeInstanceOf(AccountLinkConflict);
+    const result = await runAuth(
+      service.signInWithProvider(googleProfile({ email: "other@example.com" }), {
+        currentUser: current,
+      }),
+    );
+
+    expect(result.user.id).toBe(current.id);
+    expect(store.users.has(other.id)).toBe(false);
+    expect(store.accounts.get(accountKey("google", "google_123"))?.userId).toBe(current.id);
   });
 
   it("merges an existing provider duplicate into the current session user", async () => {

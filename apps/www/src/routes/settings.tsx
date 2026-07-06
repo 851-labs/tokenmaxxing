@@ -1,15 +1,28 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { DeviceSummary } from "@tokenmaxxing/api-contract";
-import { Key, Laptop } from "@phosphor-icons/react/ssr";
+import { DeviceSummary, UserAccountSummary } from "@tokenmaxxing/api-contract";
+import { Key, Laptop, LinkSimple } from "@phosphor-icons/react/ssr";
 
+import {
+  OAuthProviderButtons,
+  oauthProviderLabel,
+  type OAuthProviderId,
+} from "../components/oauth-providers";
+import { Avatar } from "../components/ui/avatar";
 import { Button } from "../components/ui/button";
 import { Code } from "../components/ui/code";
 import { errorMessage, isApiError, runApi } from "../lib/api";
-import { devicesQueryOptions, meQueryOptions, tokensQueryOptions } from "../lib/queries";
+import {
+  accountsQueryOptions,
+  devicesQueryOptions,
+  meQueryOptions,
+  tokensQueryOptions,
+} from "../lib/queries";
 
 const SETTINGS_PATH = "/settings";
+const ACCOUNT_PROVIDERS = ["github", "google"] as const satisfies readonly OAuthProviderId[];
 
+type Account = typeof UserAccountSummary.Type;
 type Device = typeof DeviceSummary.Type;
 type DeviceDeleteInvalidationKey = readonly unknown[];
 
@@ -18,6 +31,7 @@ const Route = createFileRoute("/settings")({
     try {
       await context.queryClient.ensureQueryData(meQueryOptions);
       await Promise.all([
+        context.queryClient.ensureQueryData(accountsQueryOptions),
         context.queryClient.ensureQueryData(devicesQueryOptions),
         context.queryClient.ensureQueryData(tokensQueryOptions),
       ]);
@@ -44,10 +58,76 @@ function SettingsPage() {
   return (
     <div className="flex flex-col gap-10 px-4 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+      <AccountsSection />
       <DevicesSection login={me.user.login} />
       <TokensSection />
     </div>
   );
+}
+
+function AccountsSection() {
+  const { data } = useSuspenseQuery(accountsQueryOptions);
+  const connectedProviders = new Set(data.accounts.map((account) => account.provider));
+  const missingProviders = ACCOUNT_PROVIDERS.filter(
+    (provider) => !connectedProviders.has(provider),
+  );
+
+  return (
+    <section>
+      <h2 className="flex items-center gap-2 text-lg font-medium">
+        <LinkSimple className="size-4" /> Connected accounts
+      </h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Linked accounts share one public profile; existing usage, devices, and CLI tokens move here
+        when profiles merge.
+      </p>
+      <div className="-mx-4 mt-4 overflow-hidden border-y border-border">
+        <table className="w-full text-sm">
+          <tbody>
+            {data.accounts.map((account) => (
+              <tr
+                className="border-b border-border last:border-b-0"
+                key={`${account.provider}:${account.providerAccountId}`}
+              >
+                <td className="p-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar alt={accountLabel(account)} size="sm" src={account.avatarUrl} />
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{accountLabel(account)}</p>
+                      <p className="truncate text-muted-foreground">{accountSecondary(account)}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="p-3 text-right text-muted-foreground">
+                  {oauthProviderLabel(account.provider)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {missingProviders.length > 0 ? (
+        <OAuthProviderButtons
+          action="connect"
+          className="mt-4 max-w-sm"
+          providers={missingProviders}
+          redirect={SETTINGS_PATH}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function accountLabel(account: Account): string {
+  return account.login ?? account.name ?? account.email ?? oauthProviderLabel(account.provider);
+}
+
+function accountSecondary(account: Account): string {
+  if (account.email !== null) {
+    return account.emailVerified ? `${account.email} verified` : account.email;
+  }
+
+  return account.providerAccountId;
 }
 
 function DevicesSection({ login }: { login: string }) {
