@@ -19,7 +19,7 @@ const stack = Stack(
     const bucket = yield* Bucket;
     const db = yield* Database;
 
-    const www = yield* Cloudflare.Vite("www", {
+    const www = yield* Cloudflare.Website.Vite("www", {
       name: "tokenmaxxing-www",
       rootDir: "./apps/www",
       url: false,

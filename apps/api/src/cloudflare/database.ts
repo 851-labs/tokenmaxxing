@@ -8,7 +8,7 @@ function databaseNameForStage(stage: string): string {
   return `tokenmaxxing-${stageNameForResource(stage)}`;
 }
 
-const Database = Cloudflare.D1Database(
+const Database = Cloudflare.D1.Database(
   "DB",
   Stack.useSync(({ stage }) => ({
     name: databaseNameForStage(stage),
