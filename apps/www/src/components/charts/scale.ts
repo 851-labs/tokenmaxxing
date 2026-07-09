@@ -62,6 +62,7 @@ const CLAUDE_SERIES_ORDER = [
 ] as const;
 
 const MODEL_SERIES_RULES: readonly [RegExp, string][] = [
+  [/^gpt-5\.6/i, "GPT-5.6"],
   [/^gpt-5\.5/i, "GPT-5.5"],
   [/^gpt-5\.4/i, "GPT-5.4"],
   [/^gpt-5/i, "GPT-5"],
@@ -72,6 +73,7 @@ const MODEL_SERIES_RULES: readonly [RegExp, string][] = [
 ];
 
 const MODEL_SERIES_ORDER = [
+  "GPT-5.6",
   "GPT-5.5",
   "GPT-5.4",
   "GPT-5",
@@ -133,6 +135,7 @@ const MODEL_SERIES_COLORS = {
   "GPT-5": "#8b5cf6",
   "GPT-5.4": "#22c55e",
   "GPT-5.5": "#f97316",
+  "GPT-5.6": "#e11d48",
   "OpenAI o-series": "#84cc16",
   Other: "#9ca3af",
 } as const satisfies Record<string, string>;

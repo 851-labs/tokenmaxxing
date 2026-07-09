@@ -8,6 +8,7 @@ describe("modelSeriesLabel", () => {
     ["claude-haiku-4-5-20251001", "Claude Haiku 4.5"],
     ["claude-fable-5", "Claude Fable 5"],
     ["claude-opus", "Claude Opus"],
+    ["gpt-5.6-sol", "GPT-5.6"],
     ["gpt-5.5", "GPT-5.5"],
     ["gpt-5.4", "GPT-5.4"],
     ["gpt-5", "GPT-5"],
