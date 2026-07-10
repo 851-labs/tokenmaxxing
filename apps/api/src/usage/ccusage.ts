@@ -88,14 +88,19 @@ function parseRawUsageReports(
   });
 }
 
+function normalizeCcusageModelName(model: string): string {
+  return model.replace(/^\[[^\]]+\]\s*/, "");
+}
+
 function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInput[] {
   const merged = new Map<string, UsageDayInput>();
 
   const add = (row: UsageDayInput) => {
-    const key = `${row.date} ${row.model}`;
+    const model = normalizeCcusageModelName(row.model);
+    const key = `${row.date} ${model}`;
     const existing = merged.get(key);
     if (existing === undefined) {
-      merged.set(key, row);
+      merged.set(key, { ...row, model });
       return;
     }
 
