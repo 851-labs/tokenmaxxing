@@ -596,7 +596,7 @@ describe("native scheduler templates", () => {
       "/MO",
       "5",
       "/TR",
-      '"C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync.cmd"',
+      '"C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing\\service-sync.cmd"',
       "/F",
     ]);
   });
@@ -1012,21 +1012,21 @@ describe("service auto-update reports", () => {
     });
   });
 
-  it("fetches registry runner updates from the current release channel", async () => {
-    const paths = servicePaths({
-      env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
-      home: "/Users/alex",
-      platform: "darwin",
-    })!;
-    const cases = [
-      { currentVersion: "0.4.12", nextVersion: "0.4.13", specifier: "latest" },
-      { currentVersion: "0.4.18-alpha.1", nextVersion: "0.4.18-alpha.2", specifier: "alpha" },
-      { currentVersion: "0.4.18-beta.1", nextVersion: "0.4.18-beta.2", specifier: "beta" },
-      { currentVersion: "0.4.18-rc.0", nextVersion: "0.4.18-rc.1", specifier: "rc" },
-    ];
+  it.each([
+    { currentVersion: "0.4.12", nextVersion: "0.4.13", specifier: "latest" },
+    { currentVersion: "0.4.18-alpha.1", nextVersion: "0.4.18-alpha.2", specifier: "alpha" },
+    { currentVersion: "0.4.18-beta.1", nextVersion: "0.4.18-beta.2", specifier: "beta" },
+    { currentVersion: "0.4.18-rc.0", nextVersion: "0.4.18-rc.1", specifier: "rc" },
+  ])("fetches registry runner updates from the $specifier release channel", async (testCase) => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-registry-channel-"));
 
-    for (const testCase of cases) {
+    try {
       const fetchedSpecifiers: string[] = [];
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: dir },
+        home: "/Users/alex",
+        platform: "darwin",
+      })!;
 
       await expect(
         runAutoUpdate(
@@ -1039,7 +1039,7 @@ describe("service auto-update reports", () => {
             installRunnerRelease: (release) =>
               Effect.succeed({
                 packageName: release.packageName,
-                path: `/tmp/tokenmaxxing/service-runners/${release.version}/darwin-arm64/tokenmaxxing`,
+                path: join(paths.runnersDir, release.version, "darwin-arm64", "tokenmaxxing"),
                 target: release.target,
                 version: release.version,
               }),
@@ -1056,6 +1056,8 @@ describe("service auto-update reports", () => {
         status: "success",
       });
       expect(fetchedSpecifiers).toEqual([testCase.specifier]);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
     }
   });
 
@@ -1114,30 +1116,36 @@ describe("service auto-update reports", () => {
   });
 
   it("reports registry runner install failures without blocking sync", async () => {
-    const paths = servicePaths({
-      env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
-      home: "/Users/alex",
-      platform: "darwin",
-    });
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-registry-failure-"));
 
-    await expect(
-      runAutoUpdate(
-        registryMetadata,
-        {
-          fetchRunnerRelease: () => Effect.succeed(registryRelease("0.4.13")),
-          installRunnerRelease: () => Effect.fail(new Error("disk full")),
-          now,
-        },
-        "0.4.12",
-        paths!,
-      ),
-    ).resolves.toMatchObject({
-      error: "disk full",
-      latestVersion: "0.4.13",
-      manager: "registry",
-      reason: "install-failed",
-      status: "failure",
-    });
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: dir },
+        home: "/Users/alex",
+        platform: "darwin",
+      });
+
+      await expect(
+        runAutoUpdate(
+          registryMetadata,
+          {
+            fetchRunnerRelease: () => Effect.succeed(registryRelease("0.4.13")),
+            installRunnerRelease: () => Effect.fail(new Error("disk full")),
+            now,
+          },
+          "0.4.12",
+          paths!,
+        ),
+      ).resolves.toMatchObject({
+        error: "disk full",
+        latestVersion: "0.4.13",
+        manager: "registry",
+        reason: "install-failed",
+        status: "failure",
+      });
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
   });
 
   it("falls back when preferred registry runner package metadata is missing", async () => {
@@ -1336,13 +1344,10 @@ describe("service auto-update reports", () => {
 
 describe("serviceScheduledSyncSince", () => {
   it("uses the previous successful local date for scheduled syncs", () => {
-    expect(
-      serviceScheduledSyncSince(
-        { lastSuccessAt: "2026-06-16T23:30:00.000Z", version: 1 },
-        new Date("2026-06-17T00:05:00.000Z"),
-        true,
-      ),
-    ).toBe("2026-06-16");
+    const lastSuccessAt = new Date(2026, 5, 16, 23, 30).toISOString();
+    const now = new Date(2026, 5, 17, 0, 5);
+
+    expect(serviceScheduledSyncSince({ lastSuccessAt, version: 1 }, now, true)).toBe("2026-06-16");
   });
 
   it("falls back to the legacy success date when no timestamp marker exists", () => {

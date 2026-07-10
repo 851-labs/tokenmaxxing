@@ -4,6 +4,15 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const cliRoot = resolve(import.meta.dirname, "../..");
+const jsonHelpCommands = [
+  ["upgrade", "--help"],
+  ["service", "install", "--help"],
+  ["service", "uninstall", "--help"],
+  ["service", "status", "--help"],
+  ["service", "doctor", "--help"],
+  ["service", "repair", "--help"],
+  ["service", "run", "--help"],
+].map((args) => [args.join(" "), args] as const);
 
 function runCli(args: readonly string[]) {
   const result = spawnSync("bun", ["src/index.ts", ...args], {
@@ -37,21 +46,11 @@ describe("root command", () => {
     expect(result.output).toContain("upgrade      Upgrade the globally installed CLI");
   });
 
-  it("exposes --json on all service subcommands and upgrade", () => {
-    for (const args of [
-      ["upgrade", "--help"],
-      ["service", "install", "--help"],
-      ["service", "uninstall", "--help"],
-      ["service", "status", "--help"],
-      ["service", "doctor", "--help"],
-      ["service", "repair", "--help"],
-      ["service", "run", "--help"],
-    ]) {
-      const result = runCli(args);
+  it.each(jsonHelpCommands)("exposes --json on %s", (_name, args) => {
+    const result = runCli(args);
 
-      expect(result.status).toBe(0);
-      expect(result.output).toContain("--json");
-    }
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("--json");
   });
 
   it("exposes bootstrap as a human-only onboarding command", () => {

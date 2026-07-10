@@ -183,6 +183,14 @@ function findNativeBinary(options = {}) {
     }
   }
 
+  const fallbackPath = path.join(options.packageDir ?? __dirname, "bin", "tokenmaxxing.exe");
+  if (fs.existsSync(fallbackPath)) {
+    return {
+      packageName: "@851-labs/tokenmaxxing",
+      path: fs.realpathSync(fallbackPath),
+    };
+  }
+
   return null;
 }
 
