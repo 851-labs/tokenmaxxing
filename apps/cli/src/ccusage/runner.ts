@@ -7,13 +7,13 @@ import { decodeDailyReport, decodeSessionReport } from "./schema";
 import type { CcusageSource } from "./sources";
 
 /**
- * Shells out to `bunx ccusage@^20 <source> daily --json --breakdown` (npx
+ * Shells out to `bunx ccusage@^20.0.17 <source> daily --json --breakdown` (npx
  * fallback only when bunx itself is missing). A source that fails, is not
  * installed, or has no local data resolves to none — one broken agent must
  * never abort the whole sync.
  */
 
-const CCUSAGE_SPEC = "ccusage@^20";
+const CCUSAGE_SPEC = "ccusage@^20.0.17";
 const RUN_TIMEOUT_MS = 180_000;
 
 class CcusageRunError extends Data.TaggedError("CcusageRunError")<{

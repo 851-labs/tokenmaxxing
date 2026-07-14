@@ -207,6 +207,32 @@ describe("aggregateDays", () => {
     });
   });
 
+  it("preserves GPT-5.6 tier model names and calculated cost", () => {
+    const rows = aggregateDays("codex", [
+      {
+        costUSD: 58.78,
+        date: "2026-07-11",
+        models: {
+          "gpt-5.6-sol": {
+            cacheReadTokens: 23_162_112,
+            inputTokens: 1_799_323,
+            outputTokens: 79_159,
+            totalTokens: 25_040_594,
+          },
+        },
+      },
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      cacheReadTokens: 23_162_112,
+      model: "gpt-5.6-sol",
+      source: "codex",
+      totalTokens: 25_040_594,
+    });
+    expect(rows[0]?.costUsd).toBeCloseTo(58.78);
+  });
+
   it("attributes opencode day totals to the single used model, unknown when ambiguous", async () => {
     const report = await Effect.runPromise(decodeDailyReport(opencodeFixture));
     const rows = aggregateDays("opencode", report.daily);
