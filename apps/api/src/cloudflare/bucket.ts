@@ -8,7 +8,7 @@ function bucketNameForStage(stage: string): string {
   return `tokenmaxxing-${stageNameForResource(stage)}`;
 }
 
-const Bucket = Cloudflare.R2Bucket(
+const Bucket = Cloudflare.R2.Bucket(
   "BUCKET",
   Stack.useSync(({ stage }) => ({
     name: bucketNameForStage(stage),

@@ -51,8 +51,8 @@ const ApiWorker = Cloudflare.Worker(
     },
   },
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
-    const connection = yield* Cloudflare.D1Connection.bind(Database);
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
+    const connection = yield* Cloudflare.D1.QueryDatabase(Database);
 
     // Config reads stay in this outer Effect so alchemy's deploy-time
     // binding discovery sees them (secrets bind as secret_text).
@@ -128,12 +128,7 @@ const ApiWorker = Cloudflare.Worker(
       }).pipe(Effect.map((apiHttpEffect) => apiHttpEffect.pipe(Effect.provide(rawRouteServices)))),
     };
   }).pipe(
-    Effect.provide([
-      Cloudflare.D1ConnectionLive,
-      Cloudflare.D1ConnectionPolicyLive,
-      Cloudflare.R2BucketBindingLive,
-      Cloudflare.R2BucketBindingPolicyLive,
-    ]),
+    Effect.provide([Cloudflare.D1.QueryDatabaseBinding, Cloudflare.R2.ReadWriteBucketBinding]),
   ),
 );
 
