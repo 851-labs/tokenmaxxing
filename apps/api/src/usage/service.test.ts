@@ -47,7 +47,7 @@ const rawReports: RawUsageReportInput[] = [
           costUSD: 12.34,
           date: "2026-06-15",
           models: {
-            "GPT-5.5": {
+            "[pi] GPT-5.5": {
               inputTokens: 100,
               outputTokens: 200,
               totalTokens: 300,

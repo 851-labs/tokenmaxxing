@@ -272,6 +272,29 @@ describe("aggregateDays", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ costUsd: 1.5, inputTokens: 15 });
   });
+
+  it("normalizes ccusage source prefixes before merging model rows", () => {
+    const rows = aggregateDays("pi", [
+      {
+        date: "2026-06-10",
+        modelBreakdowns: [{ modelName: "[pi] gpt-5.5", inputTokens: 10, cost: 1 }],
+      },
+      {
+        date: "2026-06-10",
+        models: { "[openclaw] gpt-5.5": { outputTokens: 5 } },
+        totalCost: 2,
+      },
+      {
+        date: "2026-06-10",
+        modelsUsed: ["gpt-5.5"],
+        totalCost: 3,
+        totalTokens: 7,
+      },
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ costUsd: 6, model: "gpt-5.5", totalTokens: 22 });
+  });
 });
 
 describe("summarize", () => {
