@@ -176,6 +176,7 @@ interface UploadUsageReportsOptions {
   };
   options: Pick<SyncProgramOptions, "json" | "silent">;
   rawReports: RawUsageReportInput[];
+  sourceStats?: SourceUsageStatsInput[] | undefined;
   uploadPolicy?: UploadRetryPolicy | undefined;
 }
 
@@ -323,6 +324,7 @@ function syncProgram(options: SyncProgramOptions) {
       device,
       options,
       rawReports,
+      sourceStats: options.since === undefined ? sourceStatsForSync(sourceResults) : undefined,
       uploadPolicy: options.uploadPolicy,
     });
     upserted = response.upserted;
@@ -344,11 +346,12 @@ function uploadUsageReports({
   device,
   options,
   rawReports,
+  sourceStats,
   uploadPolicy,
 }: UploadUsageReportsOptions) {
   return Effect.gen(function* () {
     const spinner = yield* humanSpinner("Uploading usage", options);
-    const upload = uploadUsageReportsOnce({ auth, device, rawReports }, uploadPolicy);
+    const upload = uploadUsageReportsOnce({ auth, device, rawReports, sourceStats }, uploadPolicy);
 
     return yield* upload.pipe(
       Effect.tap(() => Effect.sync(() => spinner.stop("Usage uploaded"))),
@@ -359,15 +362,38 @@ function uploadUsageReports({
 }
 
 function uploadUsageReportsOnce(
-  input: Pick<UploadUsageReportsOptions, "auth" | "device" | "rawReports">,
+  input: Pick<UploadUsageReportsOptions, "auth" | "device" | "rawReports" | "sourceStats">,
   uploadPolicy: UploadRetryPolicy | undefined,
 ) {
   const upload = () =>
-    input.auth.client.usage.ingest({
-      payload: {
-        device: input.device,
-        reports: input.rawReports,
-      },
+    Effect.gen(function* () {
+      const reports = input.rawReports.flatMap(chunkRawUsageReport);
+      const batches = reports.length === 0 ? [[]] : reports.map((report) => [report]);
+      let received = 0;
+      let syncedAt = "";
+      let upserted = 0;
+
+      for (const batch of batches) {
+        const response = yield* input.auth.client.usage.ingest({
+          payload: { device: input.device, reports: batch },
+        });
+        received += response.received;
+        syncedAt = response.syncedAt;
+        upserted += response.upserted;
+      }
+
+      if (input.sourceStats !== undefined) {
+        const response = yield* input.auth.client.usage.sync({
+          payload: {
+            days: [],
+            device: input.device,
+            sourceStats: input.sourceStats,
+          },
+        });
+        syncedAt = response.syncedAt;
+      }
+
+      return { received, syncedAt, upserted };
     });
 
   if (uploadPolicy === undefined) {
@@ -375,6 +401,34 @@ function uploadUsageReportsOnce(
   }
 
   return uploadWithRetry(upload, uploadPolicy);
+}
+
+const SESSION_REPORT_CHUNK_SIZE = 5_000;
+
+function chunkRawUsageReport(report: RawUsageReportInput): RawUsageReportInput[] {
+  if (report.reportKind !== "session") {
+    return [report];
+  }
+
+  const payload = report.payload;
+  if (typeof payload !== "object" || payload === null) {
+    return [report];
+  }
+
+  const sessions = (payload as { sessions?: unknown }).sessions;
+  if (!Array.isArray(sessions) || sessions.length <= SESSION_REPORT_CHUNK_SIZE) {
+    return [report];
+  }
+
+  const chunks: RawUsageReportInput[] = [];
+  for (let offset = 0; offset < sessions.length; offset += SESSION_REPORT_CHUNK_SIZE) {
+    chunks.push({
+      ...report,
+      payload: { ...payload, sessions: sessions.slice(offset, offset + SESSION_REPORT_CHUNK_SIZE) },
+    });
+  }
+
+  return chunks;
 }
 
 function uploadWithRetry<A, E, R>(

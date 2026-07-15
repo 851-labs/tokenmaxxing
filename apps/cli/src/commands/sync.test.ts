@@ -196,12 +196,32 @@ type TestUsageIngest = (
   request: TestUsageIngestRequest,
 ) => Effect.Effect<{ received: number; syncedAt: string; upserted: number }, unknown>;
 
-function makeUploadAuth(ingest: TestUsageIngest): SyncAuth {
+interface TestUsageSyncRequest {
+  payload: {
+    days: unknown[];
+    device: {
+      name: string;
+      platform: NodeJS.Platform;
+    };
+    sourceStats?: unknown[] | undefined;
+  };
+}
+
+type TestUsageSync = (
+  request: TestUsageSyncRequest,
+) => Effect.Effect<{ received: number; syncedAt: string; upserted: number }, unknown>;
+
+function makeUploadAuth(
+  ingest: TestUsageIngest,
+  sync: TestUsageSync = () =>
+    Effect.succeed({ received: 0, syncedAt: "2026-06-15T00:00:00.000Z", upserted: 0 }),
+): SyncAuth {
   return {
     authSource: "stored",
     client: {
       usage: {
         ingest,
+        sync,
       },
     } as unknown as TokenmaxxingApiClient,
     config: {
@@ -348,6 +368,59 @@ describe("uploadUsageReports", () => {
     expect(payloads).toEqual([{ device: { name: "Mac.local", platform: "darwin" }, reports: [] }]);
     expect(state.logs).toEqual(["Uploading usage", "Usage uploaded"]);
     expect(state.errors).toEqual([]);
+  });
+
+  it("bounds session uploads and restores the total session count", async () => {
+    const { layer } = makeConsoleLayer();
+    const ingestPayloads: TestUsageIngestRequest["payload"][] = [];
+    const syncPayloads: TestUsageSyncRequest["payload"][] = [];
+    const auth = makeUploadAuth(
+      (request) =>
+        Effect.sync(() => {
+          ingestPayloads.push(request.payload);
+          return {
+            received: request.payload.reports.length,
+            syncedAt: "2026-06-15T00:00:00.000Z",
+            upserted: 0,
+          };
+        }),
+      (request) =>
+        Effect.sync(() => {
+          syncPayloads.push(request.payload);
+          return { received: 0, syncedAt: "2026-06-15T00:00:01.000Z", upserted: 0 };
+        }),
+    );
+
+    await Effect.runPromise(
+      uploadUsageReports({
+        auth,
+        device: { name: "Windows.local", platform: "win32" },
+        options: { json: true },
+        rawReports: [
+          {
+            command: ["ccusage@^20.0.17", "codex", "session", "--json"],
+            payload: { sessions: Array.from({ length: 5_001 }, (_, id) => ({ id })) },
+            reportKind: "session",
+            source: "codex",
+          },
+        ],
+        sourceStats: [{ sessionCount: 5_001, source: "codex" }],
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(
+      ingestPayloads.map(
+        (payload) =>
+          (payload.reports[0] as { payload: { sessions: unknown[] } }).payload.sessions.length,
+      ),
+    ).toEqual([5_000, 1]);
+    expect(syncPayloads).toEqual([
+      {
+        days: [],
+        device: { name: "Windows.local", platform: "win32" },
+        sourceStats: [{ sessionCount: 5_001, source: "codex" }],
+      },
+    ]);
   });
 
   it("marks the upload row as failed when ingest fails", async () => {
