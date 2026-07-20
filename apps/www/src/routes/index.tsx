@@ -92,7 +92,6 @@ type BootstrapPackageManager = (typeof BOOTSTRAP_COMMANDS)[number]["value"];
 const SUPPORTED_AGENTS = [
   { icon: <ClaudeCodeIcon />, label: "Claude Code" },
   { icon: <OpenAICodexIcon />, label: "OpenAI Codex" },
-  { icon: <CursorIcon />, label: "Cursor" },
   { icon: <OpenCodeIcon />, label: "OpenCode" },
   { icon: <GeminiIcon />, label: "Gemini CLI" },
 ] as const;
@@ -254,14 +253,6 @@ function OpenCodeIcon() {
     <svg aria-hidden="true" className="size-5" fill="none" viewBox="0 6 24 30">
       <path d="M18 30H6V18H18V30Z" fill="currentColor" opacity="0.45" />
       <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="currentColor" fillRule="evenodd" />
-    </svg>
-  );
-}
-
-function CursorIcon() {
-  return (
-    <svg aria-hidden="true" className="size-5" fill="currentColor" viewBox="0 0 24 24">
-      <path d="M21.2629 6.20722L12.4558 1.12249C12.173 0.959171 11.824 0.959171 11.5412 1.12249L2.73452 6.20722C2.49678 6.34449 2.35001 6.59835 2.35001 6.8733V17.1267C2.35001 17.4016 2.49678 17.6555 2.73452 17.7928L11.5416 22.8775C11.8244 23.0408 12.1734 23.0408 12.4562 22.8775L21.2633 17.7928C21.5011 17.6555 21.6478 17.4016 21.6478 17.1267V6.8733C21.6478 6.59835 21.5011 6.34449 21.2633 6.20722H21.2629ZM20.7097 7.28428L12.2077 22.0101C12.1502 22.1093 11.9985 22.0688 11.9985 21.9538V12.3115C11.9985 12.1189 11.8956 11.9407 11.7285 11.8439L3.37828 7.02298C3.27905 6.9655 3.31957 6.81376 3.43451 6.81376H20.4385C20.6799 6.81376 20.8308 7.07548 20.7101 7.2847H20.7097V7.28428Z" />
     </svg>
   );
 }
