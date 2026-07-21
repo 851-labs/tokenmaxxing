@@ -4,7 +4,6 @@ import { Data, Effect, Option } from "effect";
 
 import type { CcusageDailyReport, CcusageSessionReport } from "./schema";
 import { decodeDailyReport, decodeSessionReport } from "./schema";
-import type { CcusageSource } from "./sources";
 
 /**
  * Shells out to `bunx ccusage@^20.0.17 <source> daily --json --breakdown` (npx
@@ -12,6 +11,14 @@ import type { CcusageSource } from "./sources";
  * installed, or has no local data resolves to none — one broken agent must
  * never abort the whole sync.
  */
+
+/** Minimal shape of a ccusage-backed source (see sources.ts). */
+interface CcusageSource {
+  /** The source tag stored server-side and shown on profiles. */
+  source: string;
+  /** ccusage subcommand. */
+  subcommand: string;
+}
 
 const CCUSAGE_SPEC = "ccusage@^20.0.17";
 const RUN_TIMEOUT_MS = 180_000;

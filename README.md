@@ -1,11 +1,12 @@
 # tokenmaxxing
 
 The social leaderboard for LLM token usage. Sync your local agent usage
-(Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI), climb the board at
+(Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI, Kimi, Grok CLI,
+Antigravity), climb the board at
 [tokenmaxxing.sh](https://tokenmaxxing.sh).
 
 Built on [ccusage](https://github.com/ryoppippi/ccusage) for local usage
-parsing, [Effect](https://effect.website) v4 end to end, and deployed to
+parsing (plus native collectors for Grok CLI and Antigravity), [Effect](https://effect.website) v4 end to end, and deployed to
 Cloudflare (Workers + D1) with [Alchemy](https://alchemy.run) v2.
 
 ## Quick start

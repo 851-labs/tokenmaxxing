@@ -22,13 +22,16 @@ tokenmaxxing bootstrap
 
 ## Supported agents
 
-Usage is parsed locally via [ccusage](https://ccusage.com/). Only daily aggregates (date, model name, agent source, token counts, and API-equivalent cost) are uploaded — prompts, file paths, project names, and session content are never uploaded.
+Usage is parsed locally via [ccusage](https://ccusage.com/) and native collectors. Only daily aggregates (date, model name, agent source, token counts, and API-equivalent cost) are uploaded — prompts, file paths, project names, and session content are never uploaded.
 
 - Claude Code
 - OpenAI Codex
-- Cursor
 - OpenCode
 - Gemini CLI
+- GitHub Copilot CLI
+- Kimi
+- Grok CLI
+- Antigravity
 
 ## Links
 

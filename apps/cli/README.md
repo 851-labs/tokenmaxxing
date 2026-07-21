@@ -2,9 +2,10 @@
 
 CLI for [tokenmaxxing](https://tokenmaxxing.sh) — the social leaderboard
 for LLM token usage. Parses your local agent usage (Claude Code, Codex,
-OpenCode, Gemini CLI, Copilot CLI) via
-[ccusage](https://github.com/ryoppippi/ccusage) and pushes daily aggregates
-to your public profile.
+OpenCode, Gemini CLI, Copilot CLI, Kimi) via
+[ccusage](https://github.com/ryoppippi/ccusage), reads Grok CLI and
+Antigravity (`agy`) usage from their local data files, and pushes daily
+aggregates to your public profile.
 
 ## Usage
 

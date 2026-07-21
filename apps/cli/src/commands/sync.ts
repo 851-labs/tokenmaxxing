@@ -17,7 +17,9 @@ import {
   runCcusageSessionReport,
   sessionCcusageCommand,
 } from "../ccusage/runner";
-import { DEFAULT_SOURCE_NAMES, resolveSources } from "../ccusage/sources";
+import type { CcusageDailyReport, CcusageSessionReport } from "../ccusage/schema";
+import { DEFAULT_SOURCE_NAMES, resolveSources, type UsageSource } from "../ccusage/sources";
+import { localDailyCommand, localSessionCommand, runLocalUsageReport } from "../local";
 import {
   ApiClientService,
   BrowserService,
@@ -106,7 +108,7 @@ const syncCommand = Command.make(
       since: Option.getOrUndefined(since),
       sources: Option.getOrUndefined(sources),
     }),
-).pipe(Command.withDescription("Aggregate local agent usage via ccusage and push it"));
+).pipe(Command.withDescription("Aggregate local agent usage and push it"));
 
 interface SyncOptions {
   dryRun: boolean;
@@ -249,10 +251,10 @@ function syncProgram(options: SyncProgramOptions) {
     const renderInlineResults = shouldRenderInlineSync(options);
     for (const source of sources) {
       const spinner = yield* humanSpinner(`Syncing ${source.source}`, options);
-      const dailyReport = yield* runCcusageDailyReport(source, { since: options.since }).pipe(
+      const reports = yield* collectSourceReports(source, { since: options.since }).pipe(
         Effect.tapError(() => Effect.sync(() => spinner.error(`Failed syncing ${source.source}`))),
       );
-      if (Option.isNone(dailyReport) || dailyReport.value.daily.length === 0) {
+      if (reports.daily === null) {
         const result = { source: source.source, summary: null };
         sourceSummaries[source.source] = result.summary;
         sourceResults.push(result);
@@ -260,25 +262,19 @@ function syncProgram(options: SyncProgramOptions) {
         continue;
       }
 
-      const sourceRows = aggregateDays(source.source, dailyReport.value.daily);
+      const sourceRows = aggregateDays(source.source, reports.daily.report.daily);
       rawReports.push({
-        command: dailyCcusageCommand(source, { since: options.since }),
-        payload: dailyReport.value,
+        command: reports.daily.command,
+        payload: reports.daily.report,
         reportKind: "daily",
         source: source.source,
       });
 
-      const sessionReport = yield* runCcusageSessionReport(source, { since: options.since }).pipe(
-        Effect.tapError(() => Effect.sync(() => spinner.error(`Failed syncing ${source.source}`))),
-      );
-      const sessionCount = Option.match(sessionReport, {
-        onNone: () => null,
-        onSome: (report) => report.sessions.length,
-      });
-      if (options.since === undefined && Option.isSome(sessionReport)) {
+      const sessionCount = reports.session === null ? null : reports.session.report.sessions.length;
+      if (options.since === undefined && reports.session !== null) {
         rawReports.push({
-          command: sessionCcusageCommand(source),
-          payload: sessionReport.value,
+          command: reports.session.command,
+          payload: reports.session.report,
           reportKind: "session",
           source: source.source,
         });
@@ -337,6 +333,62 @@ function syncProgram(options: SyncProgramOptions) {
       upserted,
     };
   });
+}
+
+interface SourceReports {
+  daily: { command: string[]; report: CcusageDailyReport } | null;
+  session: { command: string[]; report: CcusageSessionReport } | null;
+}
+
+/**
+ * One collection pass per source. ccusage sources shell out per report
+ * kind; local sources (grok, antigravity) scan their data files once and
+ * derive both. A source with no daily data yields null for both — matching
+ * the historical behavior of not counting sessions for absent agents.
+ */
+function collectSourceReports(
+  source: UsageSource,
+  options: { since?: string | undefined },
+): Effect.Effect<SourceReports, unknown> {
+  if (source.collector === "ccusage") {
+    return Effect.gen(function* () {
+      const daily = yield* runCcusageDailyReport(source, { since: options.since });
+      if (Option.isNone(daily) || daily.value.daily.length === 0) {
+        return { daily: null, session: null };
+      }
+
+      const session = yield* runCcusageSessionReport(source, { since: options.since });
+      return {
+        daily: {
+          command: dailyCcusageCommand(source, { since: options.since }),
+          report: daily.value,
+        },
+        session: Option.match(session, {
+          onNone: () => null,
+          onSome: (report) => ({ command: sessionCcusageCommand(source), report }),
+        }),
+      };
+    });
+  }
+
+  return runLocalUsageReport(source, { since: options.since }).pipe(
+    Effect.map((report) => {
+      if (Option.isNone(report) || report.value.days.length === 0) {
+        return { daily: null, session: null };
+      }
+
+      return {
+        daily: {
+          command: localDailyCommand(source, { since: options.since }),
+          report: { daily: report.value.days },
+        },
+        session: {
+          command: localSessionCommand(source),
+          report: { sessions: report.value.sessionIds.map((id) => ({ id })) },
+        },
+      };
+    }),
+  );
 }
 
 function uploadUsageReports({
