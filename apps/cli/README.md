@@ -2,8 +2,9 @@
 
 CLI for [tokenmaxxing](https://tokenmaxxing.sh) — the social leaderboard
 for LLM token usage. Parses your local agent usage (Claude Code, Codex,
-OpenCode, Gemini CLI, Copilot CLI) via
-[ccusage](https://github.com/ryoppippi/ccusage) and pushes daily aggregates
+OpenCode, Antigravity CLI, legacy Gemini CLI, Copilot CLI) via
+[ccusage](https://github.com/ryoppippi/ccusage) and a dedicated local
+Antigravity collector, then pushes daily aggregates
 to your public profile.
 
 ## Usage
@@ -30,6 +31,11 @@ doctor` to inspect scheduler files, auth, auto-update, locks, and recent logs.
 Run `sync` as often as you like, from as many machines as you like —
 profiles aggregate across devices. Useful flags: `--dry-run`,
 `--since YYYY-MM-DD`, `--sources claude,codex`, `--json`.
+
+Antigravity CLI usage is read locally from current SQLite conversations under
+`~/.gemini/antigravity-cli/conversations/` and stored as `antigravity-cli`.
+Deprecated Gemini CLI history remains a separate `gemini` source. You can select
+either explicitly with `--sources antigravity-cli,gemini`.
 
 ### What gets uploaded (privacy)
 

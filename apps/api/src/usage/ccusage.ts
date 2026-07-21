@@ -5,7 +5,7 @@ import type {
 } from "@tokenmaxxing/api-contract";
 import { Effect, Option, Schema } from "effect";
 
-const PARSER_VERSION = "ccusage-v20-raw-1";
+const PARSER_VERSION = "ccusage-v20-raw-2";
 
 const CcusageModelBreakdown = Schema.Struct({
   cacheCreationTokens: Schema.optional(Schema.Number),
@@ -14,6 +14,8 @@ const CcusageModelBreakdown = Schema.Struct({
   inputTokens: Schema.optional(Schema.Number),
   modelName: Schema.String,
   outputTokens: Schema.optional(Schema.Number),
+  reasoningTokens: Schema.optional(Schema.Number),
+  totalTokens: Schema.optional(Schema.Number),
 });
 
 type CcusageModelBreakdown = typeof CcusageModelBreakdown.Type;
@@ -23,6 +25,7 @@ const CcusageModelEntry = Schema.Struct({
   cacheReadTokens: Schema.optional(Schema.Number),
   inputTokens: Schema.optional(Schema.Number),
   outputTokens: Schema.optional(Schema.Number),
+  reasoningTokens: Schema.optional(Schema.Number),
   totalTokens: Schema.optional(Schema.Number),
 });
 
@@ -101,12 +104,12 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
 
     merged.set(key, {
       ...existing,
-      cacheCreationTokens: existing.cacheCreationTokens + row.cacheCreationTokens,
-      cacheReadTokens: existing.cacheReadTokens + row.cacheReadTokens,
+      cacheCreationTokens: addTokens(existing.cacheCreationTokens, row.cacheCreationTokens),
+      cacheReadTokens: addTokens(existing.cacheReadTokens, row.cacheReadTokens),
       costUsd: existing.costUsd + row.costUsd,
-      inputTokens: existing.inputTokens + row.inputTokens,
-      outputTokens: existing.outputTokens + row.outputTokens,
-      totalTokens: existing.totalTokens + row.totalTokens,
+      inputTokens: addTokens(existing.inputTokens, row.inputTokens),
+      outputTokens: addTokens(existing.outputTokens, row.outputTokens),
+      totalTokens: addTokens(existing.totalTokens, row.totalTokens),
     });
   };
 
@@ -115,22 +118,33 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
     const entries = collectModelEntries(day);
 
     if (entries.length === 0) {
+      const inputTokens = tokenCount(day.inputTokens);
+      const outputTokens = tokenCount(day.outputTokens);
+      const cacheCreationTokens = tokenCount(day.cacheCreationTokens);
+      const cacheReadTokens = tokenCount(day.cacheReadTokens);
+      const componentTokens = addTokens(
+        inputTokens,
+        outputTokens,
+        cacheCreationTokens,
+        cacheReadTokens,
+      );
       add({
-        cacheCreationTokens: day.cacheCreationTokens ?? 0,
-        cacheReadTokens: day.cacheReadTokens ?? 0,
+        cacheCreationTokens,
+        cacheReadTokens,
         costUsd: dayCost,
         date: day.date,
-        inputTokens: day.inputTokens ?? 0,
+        inputTokens,
         model: day.modelsUsed?.length === 1 ? day.modelsUsed[0]! : "unknown",
-        outputTokens: day.outputTokens ?? 0,
+        outputTokens,
         source,
-        totalTokens: day.totalTokens ?? 0,
+        totalTokens: Math.max(tokenCount(day.totalTokens), componentTokens),
       });
       continue;
     }
 
-    const tokensOf = (entry: ModelTotals) =>
-      entry.inputTokens + entry.outputTokens + entry.cacheCreationTokens + entry.cacheReadTokens;
+    distributeDayTotal(entries, day.totalTokens);
+
+    const tokensOf = (entry: ModelTotals) => entry.totalTokens;
     const knownCost = entries.reduce((sum, entry) => sum + (entry.cost ?? 0), 0);
     const unpriced = entries.filter((entry) => entry.cost === undefined);
     const unpricedWeight = unpriced.reduce((sum, entry) => sum + tokensOf(entry), 0);
@@ -151,7 +165,7 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
         model: entry.model,
         outputTokens: entry.outputTokens,
         source,
-        totalTokens: tokensOf(entry),
+        totalTokens: entry.totalTokens,
       });
     }
   }
@@ -168,35 +182,105 @@ interface ModelTotals {
   inputTokens: number;
   model: string;
   outputTokens: number;
+  totalTokens: number;
 }
 
 function collectModelEntries(day: CcusageDay): ModelTotals[] {
   const entries: ModelTotals[] = [];
   if (day.modelBreakdowns !== undefined && day.modelBreakdowns.length > 0) {
     for (const breakdown of day.modelBreakdowns) {
+      const inputTokens = tokenCount(breakdown.inputTokens);
+      const outputTokens = tokenCount(breakdown.outputTokens);
+      const cacheCreationTokens = tokenCount(breakdown.cacheCreationTokens);
+      const cacheReadTokens = tokenCount(breakdown.cacheReadTokens);
+      const componentTokens = addTokens(
+        inputTokens,
+        outputTokens,
+        cacheCreationTokens,
+        cacheReadTokens,
+        tokenCount(breakdown.reasoningTokens),
+      );
       entries.push({
-        cacheCreationTokens: breakdown.cacheCreationTokens ?? 0,
-        cacheReadTokens: breakdown.cacheReadTokens ?? 0,
+        cacheCreationTokens,
+        cacheReadTokens,
         cost: breakdown.cost,
-        inputTokens: breakdown.inputTokens ?? 0,
+        inputTokens,
         model: breakdown.modelName,
-        outputTokens: breakdown.outputTokens ?? 0,
+        outputTokens,
+        totalTokens: Math.max(tokenCount(breakdown.totalTokens), componentTokens),
       });
     }
   } else if (day.models !== undefined && Object.keys(day.models).length > 0) {
     for (const [model, entry] of Object.entries(day.models)) {
+      const inputTokens = tokenCount(entry.inputTokens);
+      const outputTokens = tokenCount(entry.outputTokens);
+      const cacheCreationTokens = tokenCount(entry.cacheCreationTokens);
+      const cacheReadTokens = tokenCount(entry.cacheReadTokens);
+      const componentTokens = addTokens(
+        inputTokens,
+        outputTokens,
+        cacheCreationTokens,
+        cacheReadTokens,
+        tokenCount(entry.reasoningTokens),
+      );
       entries.push({
-        cacheCreationTokens: entry.cacheCreationTokens ?? 0,
-        cacheReadTokens: entry.cacheReadTokens ?? 0,
+        cacheCreationTokens,
+        cacheReadTokens,
         cost: undefined,
-        inputTokens: entry.inputTokens ?? 0,
+        inputTokens,
         model,
-        outputTokens: entry.outputTokens ?? 0,
+        outputTokens,
+        totalTokens: Math.max(tokenCount(entry.totalTokens), componentTokens),
       });
     }
   }
 
   return entries;
+}
+
+function distributeDayTotal(entries: ModelTotals[], dayTotal: number | undefined): void {
+  const resolvedDayTotal = tokenCount(dayTotal);
+  const knownTotal = entries.reduce((sum, entry) => addTokens(sum, entry.totalTokens), 0);
+  const extra = Math.max(resolvedDayTotal - knownTotal, 0);
+  let remainder = extra;
+  if (remainder === 0) {
+    return;
+  }
+
+  for (const [index, entry] of entries.entries()) {
+    const isLast = index === entries.length - 1;
+    const share = isLast
+      ? remainder
+      : Math.min(
+          remainder,
+          knownTotal > 0
+            ? Math.floor(extra * (entry.totalTokens / knownTotal))
+            : Math.floor(extra / entries.length),
+        );
+    entry.totalTokens = addTokens(entry.totalTokens, share);
+    remainder -= share;
+  }
+}
+
+function tokenCount(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.min(Math.trunc(value), Number.MAX_SAFE_INTEGER);
+}
+
+function addTokens(...values: readonly number[]): number {
+  let total = 0;
+  for (const value of values) {
+    const normalized = tokenCount(value);
+    if (normalized >= Number.MAX_SAFE_INTEGER - total) {
+      return Number.MAX_SAFE_INTEGER;
+    }
+    total += normalized;
+  }
+
+  return total;
 }
 
 export { parseRawUsageReports, PARSER_VERSION };

@@ -20,7 +20,8 @@
     "tokenmaxxing": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "type": "module",
   "exports": "./dist/index.js",

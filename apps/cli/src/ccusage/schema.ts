@@ -6,6 +6,7 @@ import { Schema } from "effect";
  * by `period` and mixes agents). Each source emits a different dialect:
  *
  *   claude    totalCost + modelBreakdowns[{modelName, …, cost}]
+ *   gemini    totalCost + modelBreakdowns; reasoning can live only in day total
  *   codex     costUSD   + models{name: {tokens…}} (no per-model cost)
  *   opencode  totalCost + modelsUsed[] only (day totals, no breakdown)
  *
@@ -20,6 +21,8 @@ const CcusageModelBreakdown = Schema.Struct({
   inputTokens: Schema.optional(Schema.Number),
   modelName: Schema.String,
   outputTokens: Schema.optional(Schema.Number),
+  reasoningTokens: Schema.optional(Schema.Number),
+  totalTokens: Schema.optional(Schema.Number),
 });
 
 type CcusageModelBreakdown = typeof CcusageModelBreakdown.Type;
@@ -30,6 +33,7 @@ const CcusageModelEntry = Schema.Struct({
   cacheReadTokens: Schema.optional(Schema.Number),
   inputTokens: Schema.optional(Schema.Number),
   outputTokens: Schema.optional(Schema.Number),
+  reasoningTokens: Schema.optional(Schema.Number),
   totalTokens: Schema.optional(Schema.Number),
 });
 

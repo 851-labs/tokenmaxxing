@@ -1,11 +1,11 @@
 # tokenmaxxing
 
 The social leaderboard for LLM token usage. Sync your local agent usage
-(Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI), climb the board at
+(Claude Code, Codex, OpenCode, Antigravity CLI, legacy Gemini CLI, Copilot CLI), climb the board at
 [tokenmaxxing.sh](https://tokenmaxxing.sh).
 
-Built on [ccusage](https://github.com/ryoppippi/ccusage) for local usage
-parsing, [Effect](https://effect.website) v4 end to end, and deployed to
+Built on [ccusage](https://github.com/ryoppippi/ccusage) plus a dedicated
+local Antigravity CLI collector, [Effect](https://effect.website) v4 end to end, and deployed to
 Cloudflare (Workers + D1) with [Alchemy](https://alchemy.run) v2.
 
 ## Quick start
@@ -13,7 +13,7 @@ Cloudflare (Workers + D1) with [Alchemy](https://alchemy.run) v2.
 ```bash
 npm install -g @851-labs/tokenmaxxing@latest
 tokenmaxxing login              # sign in with OAuth, approves this device
-tokenmaxxing sync               # parse local usage via ccusage and push it
+tokenmaxxing sync               # parse local usage and push it
 tokenmaxxing service install    # optional: sync automatically every 5 minutes
 tokenmaxxing upgrade            # upgrade the global CLI and refresh the service
 ```
@@ -35,6 +35,12 @@ doctor` to inspect scheduler files, auth, auto-update, locks, and recent logs.
 often as you like, from as many machines as you like; profiles aggregate
 across all your devices. `--dry-run` shows what would be pushed, `--since
 YYYY-MM-DD` bounds the range, `--sources claude,codex` picks agents.
+
+Antigravity CLI usage is read locally from current conversation databases under
+`~/.gemini/antigravity-cli/conversations/` and stored as the distinct
+`antigravity-cli` source. Deprecated Gemini CLI history remains available as the
+separate `gemini` source through ccusage. Antigravity's older opaque `.pb` files
+cannot be reconstructed; the collector tracks its current SQLite-backed history.
 
 ### What gets uploaded (privacy)
 

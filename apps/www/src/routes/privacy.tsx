@@ -48,11 +48,13 @@ function PrivacyPage() {
         </Section>
 
         <Section title="How data is sourced">
-          The CLI uses <ExternalLink href={CCUSAGE_URL}>ccusage</ExternalLink> to parse usage
-          locally from supported coding agents (Claude Code, Codex, OpenCode, Gemini CLI, and
-          Copilot CLI). It only reads usage data that still exists on your computer; if an agent has
-          already cleaned up its local logs, that data cannot be recovered or uploaded. You can
-          preview exactly what would be sent with <Code>tokenmaxxing sync --dry-run</Code>.
+          The CLI parses everything locally. It uses{" "}
+          <ExternalLink href={CCUSAGE_URL}>ccusage</ExternalLink> for Claude Code, Codex, OpenCode,
+          legacy Gemini CLI, and Copilot CLI, plus a dedicated read-only collector for Antigravity
+          CLI conversation databases. It only reads usage data that still exists on your computer;
+          if an agent has already cleaned up its local logs, that data cannot be recovered or
+          uploaded. You can preview exactly what would be sent with{" "}
+          <Code>tokenmaxxing sync --dry-run</Code>.
         </Section>
 
         <Section title="What is public and what is private">

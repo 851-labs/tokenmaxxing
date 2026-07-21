@@ -5,6 +5,14 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Added
+
+- Added zero-config Antigravity CLI usage tracking from local SQLite conversation metadata while retaining deprecated Gemini CLI history as a separate source.
+
+### Fixed
+
+- Preserved Gemini reasoning tokens in per-model totals.
+
 ## 0.4.23 - 2026-07-14
 
 ### Added

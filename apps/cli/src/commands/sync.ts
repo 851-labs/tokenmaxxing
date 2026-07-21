@@ -10,6 +10,11 @@ import type {
 } from "@tokenmaxxing/api-contract";
 
 import packageJson from "../../package.json";
+import {
+  antigravityDailyCommand,
+  antigravitySessionCommand,
+  runAntigravityReports,
+} from "../antigravity/runner";
 import { aggregateDays, summarize, type SourceSummary } from "../ccusage/aggregate";
 import {
   dailyCcusageCommand,
@@ -17,6 +22,7 @@ import {
   runCcusageSessionReport,
   sessionCcusageCommand,
 } from "../ccusage/runner";
+import type { CcusageDailyReport, CcusageSessionReport } from "../ccusage/schema";
 import { DEFAULT_SOURCE_NAMES, resolveSources } from "../ccusage/sources";
 import {
   ApiClientService,
@@ -106,7 +112,7 @@ const syncCommand = Command.make(
       since: Option.getOrUndefined(since),
       sources: Option.getOrUndefined(sources),
     }),
-).pipe(Command.withDescription("Aggregate local agent usage via ccusage and push it"));
+).pipe(Command.withDescription("Aggregate local agent usage and push it"));
 
 interface SyncOptions {
   dryRun: boolean;
@@ -249,9 +255,19 @@ function syncProgram(options: SyncProgramOptions) {
     const renderInlineResults = shouldRenderInlineSync(options);
     for (const source of sources) {
       const spinner = yield* humanSpinner(`Syncing ${source.source}`, options);
-      const dailyReport = yield* runCcusageDailyReport(source, { since: options.since }).pipe(
-        Effect.tapError(() => Effect.sync(() => spinner.error(`Failed syncing ${source.source}`))),
-      );
+      let dailyReport: Option.Option<CcusageDailyReport>;
+      let directSessionReport: Option.Option<CcusageSessionReport> = Option.none();
+      if (source.kind === "antigravity") {
+        const reports = yield* runAntigravityReports({ since: options.since });
+        dailyReport = reports.daily;
+        directSessionReport = reports.session;
+      } else {
+        dailyReport = yield* runCcusageDailyReport(source, { since: options.since }).pipe(
+          Effect.tapError(() =>
+            Effect.sync(() => spinner.error(`Failed syncing ${source.source}`)),
+          ),
+        );
+      }
       if (Option.isNone(dailyReport) || dailyReport.value.daily.length === 0) {
         const result = { source: source.source, summary: null };
         sourceSummaries[source.source] = result.summary;
@@ -262,22 +278,33 @@ function syncProgram(options: SyncProgramOptions) {
 
       const sourceRows = aggregateDays(source.source, dailyReport.value.daily);
       rawReports.push({
-        command: dailyCcusageCommand(source, { since: options.since }),
+        command:
+          source.kind === "antigravity"
+            ? antigravityDailyCommand({ since: options.since })
+            : dailyCcusageCommand(source, { since: options.since }),
         payload: dailyReport.value,
         reportKind: "daily",
         source: source.source,
       });
 
-      const sessionReport = yield* runCcusageSessionReport(source, { since: options.since }).pipe(
-        Effect.tapError(() => Effect.sync(() => spinner.error(`Failed syncing ${source.source}`))),
-      );
+      const sessionReport =
+        source.kind === "antigravity"
+          ? directSessionReport
+          : yield* runCcusageSessionReport(source, { since: options.since }).pipe(
+              Effect.tapError(() =>
+                Effect.sync(() => spinner.error(`Failed syncing ${source.source}`)),
+              ),
+            );
       const sessionCount = Option.match(sessionReport, {
         onNone: () => null,
         onSome: (report) => report.sessions.length,
       });
       if (options.since === undefined && Option.isSome(sessionReport)) {
         rawReports.push({
-          command: sessionCcusageCommand(source),
+          command:
+            source.kind === "antigravity"
+              ? antigravitySessionCommand()
+              : sessionCcusageCommand(source),
           payload: sessionReport.value,
           reportKind: "session",
           source: source.source,

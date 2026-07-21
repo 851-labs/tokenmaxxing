@@ -94,7 +94,9 @@ const SUPPORTED_AGENTS = [
   { icon: <OpenAICodexIcon />, label: "OpenAI Codex" },
   { icon: <CursorIcon />, label: "Cursor" },
   { icon: <OpenCodeIcon />, label: "OpenCode" },
-  { icon: <GeminiIcon />, label: "Gemini CLI" },
+  { icon: <GeminiIcon />, label: "Antigravity CLI" },
+  { icon: <GeminiIcon />, label: "Gemini CLI (legacy)" },
+  { icon: <CopilotIcon />, label: "Copilot CLI" },
 ] as const;
 
 const FAQ_ITEMS: { answer: ReactNode; answerText: string; question: string }[] = [
@@ -137,11 +139,12 @@ const FAQ_ITEMS: { answer: ReactNode; answerText: string; question: string }[] =
         >
           ccusage
         </a>{" "}
-        to parse local usage from Claude Code, Codex, OpenCode, Gemini CLI, and Copilot CLI.
+        for Claude Code, Codex, OpenCode, legacy Gemini CLI, and Copilot CLI, plus a dedicated local
+        reader for Antigravity CLI.
       </>
     ),
     answerText:
-      "tokenmaxxing uses ccusage to parse local usage from Claude Code, Codex, OpenCode, Gemini CLI, and Copilot CLI.",
+      "tokenmaxxing supports Claude Code, Codex, OpenCode, Antigravity CLI, legacy Gemini CLI, and Copilot CLI. It parses everything locally using ccusage plus a dedicated Antigravity CLI reader.",
   },
   {
     question: "What data gets uploaded?",
@@ -262,6 +265,20 @@ function CursorIcon() {
   return (
     <svg aria-hidden="true" className="size-5" fill="currentColor" viewBox="0 0 24 24">
       <path d="M21.2629 6.20722L12.4558 1.12249C12.173 0.959171 11.824 0.959171 11.5412 1.12249L2.73452 6.20722C2.49678 6.34449 2.35001 6.59835 2.35001 6.8733V17.1267C2.35001 17.4016 2.49678 17.6555 2.73452 17.7928L11.5416 22.8775C11.8244 23.0408 12.1734 23.0408 12.4562 22.8775L21.2633 17.7928C21.5011 17.6555 21.6478 17.4016 21.6478 17.1267V6.8733C21.6478 6.59835 21.5011 6.34449 21.2633 6.20722H21.2629ZM20.7097 7.28428L12.2077 22.0101C12.1502 22.1093 11.9985 22.0688 11.9985 21.9538V12.3115C11.9985 12.1189 11.8956 11.9407 11.7285 11.8439L3.37828 7.02298C3.27905 6.9655 3.31957 6.81376 3.43451 6.81376H20.4385C20.6799 6.81376 20.8308 7.07548 20.7101 7.2847H20.7097V7.28428Z" />
+    </svg>
+  );
+}
+
+function CopilotIcon() {
+  return (
+    <svg aria-hidden="true" className="size-5" fill="none" viewBox="0 0 24 24">
+      <path
+        d="M8 8.5 4.5 12 8 15.5M16 8.5l3.5 3.5-3.5 3.5M14 5l-4 14"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
     </svg>
   );
 }
@@ -426,7 +443,7 @@ function HeroSection() {
         The best place to track token usage
       </h1>
       <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-        A local CLI, built on ccusage, that syncs your token usage with everyone else.
+        A local-first CLI that syncs your token usage with everyone else.
       </p>
       <div className="mt-6 max-w-3xl">
         <div className="overflow-hidden border border-border bg-muted/40">

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { dailyCcusageCommand, sessionCcusageCommand } from "./runner";
 
-const codex = { source: "codex", subcommand: "codex" };
+const codex = { kind: "ccusage", source: "codex", subcommand: "codex" } as const;
 
 describe("ccusage commands", () => {
   it("uses the minimum v20 release verified for GPT-5.6", () => {

@@ -17,7 +17,14 @@ function createMainPackageJson() {
     scripts: {
       preinstall: "bun ./install-native.mjs || node ./install-native.mjs",
     },
-    files: ["bin", "native-bin-launcher.cjs", "install-native.mjs", "README.md", "LICENSE"],
+    files: [
+      "bin",
+      "native-bin-launcher.cjs",
+      "install-native.mjs",
+      "README.md",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
+    ],
     os: ["darwin", "linux", "win32"],
     cpu: ["arm64", "x64"],
     publishConfig: packageJson.publishConfig,

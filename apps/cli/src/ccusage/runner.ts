@@ -22,6 +22,7 @@ class CcusageRunError extends Data.TaggedError("CcusageRunError")<{
 }> {}
 
 interface RunOptions {
+  environment?: NodeJS.ProcessEnv | undefined;
   /** YYYY-MM-DD; forwarded to ccusage as compact YYYYMMDD. */
   since?: string | undefined;
 }
@@ -36,7 +37,7 @@ function runCcusageDailyReport(
   const args = dailyCcusageArgs(source, options);
 
   return Effect.gen(function* () {
-    const stdout = yield* execCcusage(args, source.source);
+    const stdout = yield* execCcusage(args, source.source, options.environment);
     const report = yield* decodeDailyReport(JSON.parse(stdout)).pipe(
       Effect.mapError((cause) => new CcusageRunError({ cause, source: source.source })),
     );
@@ -55,7 +56,7 @@ function runCcusageSessionReport(
   const args = sessionCcusageArgs(source, options);
 
   return Effect.gen(function* () {
-    const stdout = yield* execCcusage(args, source.source);
+    const stdout = yield* execCcusage(args, source.source, options.environment);
     const report = yield* decodeSessionReport(JSON.parse(stdout)).pipe(
       Effect.mapError((cause) => new CcusageRunError({ cause, source: source.source })),
     );
@@ -94,13 +95,21 @@ function sessionCcusageArgs(source: CcusageSource, options: RunOptions = {}): st
   return args;
 }
 
-function execCcusage(args: string[], source: string): Effect.Effect<string, CcusageRunError> {
+function execCcusage(
+  args: string[],
+  source: string,
+  environment: NodeJS.ProcessEnv | undefined,
+): Effect.Effect<string, CcusageRunError> {
   const run = (command: string, commandArgs: string[]) =>
     Effect.callback<string, CcusageRunError>((resume) => {
       const child = execFile(
         command,
         commandArgs,
-        { maxBuffer: 256 * 1024 * 1024, timeout: RUN_TIMEOUT_MS },
+        {
+          env: environment === undefined ? process.env : { ...process.env, ...environment },
+          maxBuffer: 256 * 1024 * 1024,
+          timeout: RUN_TIMEOUT_MS,
+        },
         (error, stdout) => {
           if (error) {
             resume(Effect.fail(new CcusageRunError({ cause: error, source })));

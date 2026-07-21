@@ -1,0 +1,22 @@
+# Antigravity and Gemini CLI integration papercuts
+
+- 2026-07-21: Supported-source lists drift across the landing-page strip, README, FAQ, and privacy copy, which makes the actual integration surface difficult to audit.
+- 2026-07-21: The ccusage runner applies one shared flag set to every adapter even though current adapter CLIs expose different options; Gemini does not advertise `--breakdown` or `--mode`, and source failures are silently converted to "no data."
+- 2026-07-21: A diagnostic shell snippet used zsh's read-only `status` parameter for an exit code; use a task-specific name such as `ccusage_exit_code` in zsh automation.
+- 2026-07-21: ccusage's rendered Source Support Q&A link led to a GitHub 404; the authoritative page had to be read from `docs/guide/source-support-qa.md` in a local clone.
+- 2026-07-21: Antigravity v1.1.5 mixes legacy opaque `.pb` conversations with newer SQLite `.db` conversations, so local token recovery is complete only for the newer database format.
+- 2026-07-21: Usage schema decoding and aggregation are duplicated in the CLI and API, so a token-dialect fix must be implemented and tested twice.
+- 2026-07-21: Runner failures are collapsed to `None`, making permission, malformed-output, missing-tool, and genuine no-data states indistinguishable; the outer error tap is effectively unreachable.
+- 2026-07-21: Raw-ingest provenance is ccusage-specific (`ccusageCommand`, `/ccusage/`, one parser version), which makes adding a trustworthy direct collector unnecessarily awkward.
+- 2026-07-21: Source discovery has no focused registry test, and sync runners are hardwired, so end-to-end source behavior is difficult to unit-test without executing subprocesses.
+- 2026-07-21: The checkout had no installed workspace dependencies, so the declared CLI typecheck initially failed with `tsc: command not found`; a locked dependency install was required before verification.
+- 2026-07-21: Antigravity documents quota data in its interactive `/usage` view and structured counters in status-line input, but exposes no supported historical-usage API; zero-config history requires a deliberately isolated parser for its undocumented local SQLite/protobuf format.
+- 2026-07-21: Node's `node:sqlite` cannot be statically resolved by Bun's standalone compiler, while Bun's `bun:sqlite` cannot run in the published Node CLI; one collector therefore needs a runtime-selected adapter for both release paths.
+- 2026-07-21: Antigravity stores internal response-model aliases such as `gemini-pro-default`; token extraction can succeed while cost silently remains `$0` unless those aliases are normalized to priced canonical model IDs.
+- 2026-07-21: The host standalone service runner compiled successfully with local Bun 1.3.13 but macOS killed it immediately with exit 137, even for `--version`; source-Bun and bundled-Node verification remained usable, while the repo declares Bun 1.3.14.
+- 2026-07-21: The installed production CLI and an unreleased repo build both report `v0.4.23`, so version output alone cannot prove which code is running; collision-safe testing needs an explicit artifact path (and optionally a checksum).
+- 2026-07-21: Several active upstream PRs touch the same source registry, sync, aggregation, packaging, and homepage files; PR preparation requires separating essential integration hunks from unrelated privacy and UI fixes already under review.
+- 2026-07-21: A targeted `oxfmt` invocation stalled without output while preparing the PR, so validation should prefer the repository's established formatting scripts and terminate silent formatter processes promptly.
+- 2026-07-21: Retrying the repository formatter exposed a macOS `ERR_DLOPEN_FAILED` code-signature rejection for oxfmt's optional native binding; fresh-package and Node 22 retries reproduced it, sometimes as a silent hang.
+- 2026-07-21: Git status intermittently stalled under the configured filesystem monitor during PR preparation; disabling `core.fsmonitor` for verification restored immediate results.
+- 2026-07-21: The parallel pre-commit hook inherits the same oxfmt native-binding stall, hiding already-completed lint, typecheck, and test results until the formatter process is interrupted.

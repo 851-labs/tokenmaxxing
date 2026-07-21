@@ -44,7 +44,7 @@ interface ServiceRunnerPackageManifest {
     tokenmaxxing: string;
   };
   cpu: ServiceRunnerArch[];
-  files: ["bin"];
+  files: ["bin", "THIRD_PARTY_NOTICES.md"];
   libc?: ["musl"] | undefined;
   license?: string | undefined;
   name: string;
@@ -103,7 +103,7 @@ function serviceRunnerPackageManifest(
       tokenmaxxing: `bin/${binaryName}`,
     },
     cpu: [definition.arch],
-    files: ["bin"],
+    files: ["bin", "THIRD_PARTY_NOTICES.md"],
     ...("libc" in definition && definition.libc === "musl" ? { libc: ["musl"] as ["musl"] } : {}),
     ...(options.license === undefined ? {} : { license: options.license }),
     name: serviceRunnerPackageName(target),

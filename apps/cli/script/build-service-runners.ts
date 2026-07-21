@@ -86,6 +86,7 @@ async function buildServiceRunners(options: BuildServiceRunnerOptions): Promise<
       )}\n`,
     );
     await cp(join(repoDir, "LICENSE"), join(packageDir, "LICENSE"));
+    await cp(join(repoDir, "THIRD_PARTY_NOTICES.md"), join(packageDir, "THIRD_PARTY_NOTICES.md"));
   }
 }
 

@@ -258,6 +258,73 @@ describe("aggregateDays", () => {
     expect(rows.find((row) => row.model === "gpt-5.4")?.costUsd).toBeCloseTo(25);
   });
 
+  it("keeps Gemini reasoning tokens in a single model's authoritative day total", () => {
+    const rows = aggregateDays("gemini", [
+      {
+        date: "2026-07-21",
+        modelBreakdowns: [
+          {
+            cacheReadTokens: 16_000,
+            inputTokens: 1_632,
+            modelName: "gemini-3.5-flash-high",
+            outputTokens: 300,
+          },
+        ],
+        totalCost: 0.007_908,
+        totalTokens: 17_972,
+      },
+    ]);
+
+    expect(rows).toEqual([
+      {
+        cacheCreationTokens: 0,
+        cacheReadTokens: 16_000,
+        costUsd: 0.007_908,
+        date: "2026-07-21",
+        inputTokens: 1_632,
+        model: "gemini-3.5-flash-high",
+        outputTokens: 300,
+        source: "gemini",
+        totalTokens: 17_972,
+      },
+    ]);
+  });
+
+  it("distributes a multi-model day remainder deterministically", () => {
+    const rows = aggregateDays("gemini", [
+      {
+        date: "2026-07-21",
+        modelBreakdowns: [
+          { inputTokens: 300, modelName: "model-b" },
+          { inputTokens: 100, modelName: "model-a" },
+        ],
+        totalTokens: 500,
+      },
+    ]);
+
+    expect(rows.map(({ model, totalTokens }) => ({ model, totalTokens }))).toEqual([
+      { model: "model-a", totalTokens: 125 },
+      { model: "model-b", totalTokens: 375 },
+    ]);
+  });
+
+  it("saturates malformed aggregate counters", () => {
+    const rows = aggregateDays("gemini", [
+      {
+        date: "2026-07-21",
+        modelBreakdowns: [
+          { inputTokens: Number.MAX_SAFE_INTEGER, modelName: "model-a" },
+          { inputTokens: Number.MAX_SAFE_INTEGER, modelName: "model-a" },
+        ],
+      },
+    ]);
+
+    expect(rows[0]).toMatchObject({
+      inputTokens: Number.MAX_SAFE_INTEGER,
+      totalTokens: Number.MAX_SAFE_INTEGER,
+    });
+  });
+
   it("sums duplicate (date, model) pairs", () => {
     const rows = aggregateDays("claude", [
       {

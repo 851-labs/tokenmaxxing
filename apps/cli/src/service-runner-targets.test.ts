@@ -121,7 +121,7 @@ describe("native package metadata", () => {
       expect(manifest.cpu).toEqual([definition.arch]);
       expect(manifest.preferUnplugged).toBe(true);
       expect(manifest.publishConfig).toEqual({ access: "public" });
-      expect(manifest.files).toEqual(["bin"]);
+      expect(manifest.files).toEqual(["bin", "THIRD_PARTY_NOTICES.md"]);
       expect(manifest.bin["tokenmaxxing"]).toBe(
         `bin/${serviceRunnerBinaryName(platformForServiceRunnerTarget(definition.target))}`,
       );

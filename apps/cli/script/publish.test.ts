@@ -40,6 +40,7 @@ describe("publish script generated main package", () => {
       "install-native.mjs",
       "README.md",
       "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
     ]);
     expect(manifest.optionalDependencies).toHaveProperty("@851-labs/tokenmaxxing-darwin-arm64");
     expect(Object.keys(manifest.optionalDependencies)).not.toContain(
