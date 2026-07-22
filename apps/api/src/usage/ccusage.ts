@@ -5,7 +5,7 @@ import type {
 } from "@tokenmaxxing/api-contract";
 import { Effect, Option, Schema } from "effect";
 
-const PARSER_VERSION = "ccusage-v20-raw-1";
+const PARSER_VERSION = "ccusage-v20-raw-2";
 
 const CcusageModelBreakdown = Schema.Struct({
   cacheCreationTokens: Schema.optional(Schema.Number),

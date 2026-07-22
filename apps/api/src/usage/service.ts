@@ -18,6 +18,7 @@ import type {
 import { sha256Hex } from "../auth/crypto";
 import type { DatabaseError } from "../database";
 import { parseRawUsageReports, PARSER_VERSION } from "./ccusage";
+import { normalizeUsageDays } from "./models";
 import type { RawUsageStorageError } from "./raw-store";
 
 /**
@@ -168,7 +169,7 @@ const makeUsageService = Effect.fn("makeUsageService")(function* () {
         .pipe(Effect.orDie);
 
       const parsed = yield* parseRawUsageReports(reports);
-      yield* writeStructuredUsage(
+      const upserted = yield* writeStructuredUsage(
         repository,
         identity.user.id,
         deviceId,
@@ -181,7 +182,7 @@ const makeUsageService = Effect.fn("makeUsageService")(function* () {
       return {
         received: reports.length,
         syncedAt: syncedAt.toISOString(),
-        upserted: parsed.rows.length,
+        upserted,
       };
     }),
     syncBatch: Effect.fn("UsageService.syncBatch")(function* (
@@ -193,7 +194,7 @@ const makeUsageService = Effect.fn("makeUsageService")(function* () {
       const deviceId = yield* requireDeviceId(identity);
       const syncedAt = new Date();
 
-      yield* writeStructuredUsage(
+      const upserted = yield* writeStructuredUsage(
         repository,
         identity.user.id,
         deviceId,
@@ -206,7 +207,7 @@ const makeUsageService = Effect.fn("makeUsageService")(function* () {
       return {
         received: days.length,
         syncedAt: syncedAt.toISOString(),
-        upserted: days.length,
+        upserted,
       };
     }),
   });
@@ -294,13 +295,21 @@ function writeStructuredUsage(
   syncedAt: Date,
 ) {
   return Effect.gen(function* () {
-    for (let offset = 0; offset < days.length; offset += UPSERT_CHUNK_SIZE) {
+    const normalizedDays = normalizeUsageDays(days);
+    for (let offset = 0; offset < normalizedDays.length; offset += UPSERT_CHUNK_SIZE) {
       yield* repository
-        .upsertChunk(userId, deviceId, days.slice(offset, offset + UPSERT_CHUNK_SIZE), syncedAt)
+        .upsertChunk(
+          userId,
+          deviceId,
+          normalizedDays.slice(offset, offset + UPSERT_CHUNK_SIZE),
+          syncedAt,
+        )
         .pipe(Effect.orDie);
     }
     yield* repository.upsertSourceStats(userId, deviceId, sourceStats, syncedAt).pipe(Effect.orDie);
     yield* repository.touchDevice(deviceId, device, syncedAt).pipe(Effect.orDie);
+
+    return normalizedDays.length;
   });
 }
 

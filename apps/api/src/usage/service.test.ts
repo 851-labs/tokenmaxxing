@@ -47,7 +47,7 @@ const rawReports: RawUsageReportInput[] = [
           costUSD: 12.34,
           date: "2026-06-15",
           models: {
-            "GPT-5.5": {
+            "[codex] GPT-5.5": {
               inputTokens: 100,
               outputTokens: 200,
               totalTokens: 300,
@@ -248,6 +248,42 @@ describe("UsageService.syncBatch", () => {
     );
   });
 
+  it("normalizes and merges legacy structured rows before upserting", async () => {
+    const { repository, upsertChunk } = makeRepository();
+    const service = await makeService(repository);
+    const prefixed = {
+      ...usageDay,
+      costUsd: 1,
+      inputTokens: 10,
+      model: "[codex] GPT-5.5",
+      outputTokens: 20,
+      totalTokens: 30,
+    };
+
+    const result = await Effect.runPromise(
+      service.syncBatch({ deviceId: "device_123", tokenId: "token_123", user }, device, [
+        prefixed,
+        usageDay,
+      ]),
+    );
+
+    expect(result).toMatchObject({ received: 2, upserted: 1 });
+    expect(upsertChunk).toHaveBeenCalledWith(
+      "user_123",
+      "device_123",
+      [
+        {
+          ...usageDay,
+          costUsd: 13.34,
+          inputTokens: 110,
+          outputTokens: 220,
+          totalTokens: 330,
+        },
+      ],
+      expect.any(Date),
+    );
+  });
+
   it("does not touch storage when the token has no device", async () => {
     const { repository, touchDevice, upsertChunk, upsertSourceStats } = makeRepository();
     const service = await makeService(repository);
@@ -287,6 +323,7 @@ describe("UsageService.ingestRaw", () => {
           ) as unknown as string,
           payloadBytes: JSON.stringify(rawReports[0]!.payload).length,
           payloadJson: JSON.stringify(rawReports[0]!.payload),
+          parserVersion: "ccusage-v20-raw-2",
           reportKind: "daily",
           source: "codex",
         }),
