@@ -1336,11 +1336,14 @@ describe("service auto-update reports", () => {
 });
 
 describe("serviceScheduledSyncSince", () => {
+  const localDateTime = (year: number, month: number, day: number, hour = 12, minute = 0): Date =>
+    new Date(year, month - 1, day, hour, minute);
+
   it("uses the previous successful local date for scheduled syncs", () => {
     expect(
       serviceScheduledSyncSince(
-        { lastSuccessAt: "2026-06-16T23:30:00.000Z", version: 1 },
-        new Date("2026-06-17T00:05:00.000Z"),
+        { lastSuccessAt: localDateTime(2026, 6, 16, 23, 30).toISOString(), version: 1 },
+        localDateTime(2026, 6, 17, 0, 5),
         true,
       ),
     ).toBe("2026-06-16");
@@ -1350,27 +1353,27 @@ describe("serviceScheduledSyncSince", () => {
     expect(
       serviceScheduledSyncSince(
         { lastSuccessDate: "2026-06-15", version: 1 },
-        new Date("2026-06-17T12:00:00.000Z"),
+        localDateTime(2026, 6, 17),
         true,
       ),
     ).toBe("2026-06-15");
   });
 
   it("falls back to yesterday when no reliable marker exists", () => {
-    expect(
-      serviceScheduledSyncSince({ version: 1 }, new Date("2026-06-17T12:00:00.000Z"), true),
-    ).toBe("2026-06-16");
+    expect(serviceScheduledSyncSince({ version: 1 }, localDateTime(2026, 6, 17), true)).toBe(
+      "2026-06-16",
+    );
     expect(
       serviceScheduledSyncSince(
         { lastSuccessAt: "not-a-date", version: 1 },
-        new Date("2026-06-17T12:00:00.000Z"),
+        localDateTime(2026, 6, 17),
         true,
       ),
     ).toBe("2026-06-16");
     expect(
       serviceScheduledSyncSince(
-        { lastSuccessAt: "2026-06-18T00:00:00.000Z", version: 1 },
-        new Date("2026-06-17T12:00:00.000Z"),
+        { lastSuccessAt: localDateTime(2026, 6, 18).toISOString(), version: 1 },
+        localDateTime(2026, 6, 17),
         true,
       ),
     ).toBe("2026-06-16");
@@ -1379,8 +1382,8 @@ describe("serviceScheduledSyncSince", () => {
   it("does not set since for manual service runs", () => {
     expect(
       serviceScheduledSyncSince(
-        { lastSuccessAt: "2026-06-16T23:30:00.000Z", version: 1 },
-        new Date("2026-06-17T00:05:00.000Z"),
+        { lastSuccessAt: localDateTime(2026, 6, 16, 23, 30).toISOString(), version: 1 },
+        localDateTime(2026, 6, 17, 0, 5),
         false,
       ),
     ).toBeUndefined();
