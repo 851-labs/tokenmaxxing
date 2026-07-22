@@ -15,6 +15,17 @@ describe("modelSeriesLabel", () => {
     ["gpt-5.5", "GPT-5.5"],
     ["gpt-5.4", "GPT-5.4"],
     ["gpt-5", "GPT-5"],
+    ["grok-4.5", "Grok"],
+    ["grok-4.5-build", "Grok"],
+    ["kimi-for-coding", "Kimi"],
+    ["deepseek-v4-pro", "DeepSeek"],
+    ["glm-5.2", "GLM"],
+    ["gemma4", "Gemma"],
+    ["anthropic/claude-fable-5", "Claude Fable 5"],
+    ["openai/gpt-5.5-pro", "GPT-5.5"],
+    ["moonshotai/kimi-k3", "Kimi"],
+    ["deepseek/deepseek-v4-flash", "DeepSeek"],
+    ["z-ai/glm-5.2", "GLM"],
     ["unknown", "Other"],
   ])("labels %s as %s", (model, expected) => {
     expect(modelSeriesLabel(model)).toBe(expected);

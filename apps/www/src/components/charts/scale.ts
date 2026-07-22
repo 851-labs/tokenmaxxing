@@ -70,6 +70,11 @@ const MODEL_SERIES_RULES: readonly [RegExp, string][] = [
   [/^gpt-5/i, "GPT-5"],
   [/^gpt/i, "GPT"],
   [/codex/i, "GPT Codex"],
+  [/^grok/i, "Grok"],
+  [/kimi/i, "Kimi"],
+  [/deepseek/i, "DeepSeek"],
+  [/glm/i, "GLM"],
+  [/gemma/i, "Gemma"],
   [/gemini/i, "Gemini"],
   [/^o[0-9]/i, "OpenAI o-series"],
 ];
@@ -86,17 +91,26 @@ const MODEL_SERIES_ORDER = [
   "OpenAI o-series",
   ...CLAUDE_SERIES_ORDER,
   "Gemini",
+  "Grok",
+  "Kimi",
+  "DeepSeek",
+  "GLM",
+  "Gemma",
   "Other",
 ] as const;
 
 function modelSeriesLabel(model: string): string {
-  const claude = claudeSeriesLabel(model);
+  // OpenRouter-style ids arrive as "vendor/model"; the vendor prefix carries
+  // no series information, so match on the bare model name.
+  const name = model.slice(model.lastIndexOf("/") + 1);
+
+  const claude = claudeSeriesLabel(name);
   if (claude !== null) {
     return claude;
   }
 
   for (const [pattern, series] of MODEL_SERIES_RULES) {
-    if (pattern.test(model)) {
+    if (pattern.test(name)) {
       return series;
     }
   }
@@ -133,7 +147,10 @@ const MODEL_SERIES_COLORS = {
   "Claude Mythos": "#a855f7",
   "Claude Opus": "#eab308",
   "Claude Sonnet": "#14b8a6",
+  DeepSeek: "#4d6bfe",
   Gemini: "#ef4444",
+  Gemma: "#f59e0b",
+  GLM: "#10b981",
   GPT: "#6366f1",
   "GPT Codex": "#0ea5e9",
   "GPT-5": "#8b5cf6",
@@ -142,6 +159,8 @@ const MODEL_SERIES_COLORS = {
   "GPT-5.6 Luna": "#06b6d4",
   "GPT-5.6 Sol": "#e11d48",
   "GPT-5.6 Terra": "#ca8a04",
+  Grok: "#f43f5e",
+  Kimi: "#3b82f6",
   "OpenAI o-series": "#84cc16",
   Other: "#9ca3af",
 } as const satisfies Record<string, string>;
