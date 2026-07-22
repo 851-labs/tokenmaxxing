@@ -12,7 +12,7 @@ import {
   enumerateDays,
   formatTokens,
   formatUsd,
-  modelSeriesLabel,
+  selectModelSeries,
   seriesColors,
 } from "../components/charts/scale";
 import { Legend, StackedBars, type StackedDay } from "../components/charts/stacked-bars";
@@ -56,8 +56,6 @@ const CHART_MODES: { label: string; value: ChartMode }[] = [
   { label: "Usage", value: "absolute" },
   { label: "Share", value: "share" },
 ];
-const LEGEND_LIMIT = 10;
-
 const Route = createFileRoute("/stats")({
   validateSearch: statsSearchSchema,
   search: {
@@ -194,7 +192,7 @@ function TrendSection({ selected }: { selected: SelectedStats }) {
         <div className="mt-4 flex flex-col gap-6 lg:flex-row lg:items-center">
           <div className="min-w-0 flex-1">
             <StackedBars
-              ariaLabel={`Aggregate daily spend by model series across ${derived.spendDays.length} days`}
+              ariaLabel={`Aggregate daily spend by model across ${derived.spendDays.length} days`}
               days={derived.spendDays}
               highlight={hoveredSpendSeries}
               mode={chartMode}
@@ -210,7 +208,7 @@ function TrendSection({ selected }: { selected: SelectedStats }) {
         <div className="mt-4 flex flex-col gap-6 lg:flex-row lg:items-center">
           <div className="min-w-0 flex-1">
             <StackedBars
-              ariaLabel={`Aggregate daily tokens by model series across ${derived.tokenDays.length} days`}
+              ariaLabel={`Aggregate daily tokens by model across ${derived.tokenDays.length} days`}
               days={derived.tokenDays}
               highlight={hoveredTokensSeries}
               mode={chartMode}
@@ -226,7 +224,7 @@ function TrendSection({ selected }: { selected: SelectedStats }) {
         <div className="mt-4 flex flex-col gap-6 lg:flex-row lg:items-center">
           <div className="min-w-0 flex-1">
             <StackedBars
-              ariaLabel={`Aggregate daily sessions by model series across ${derived.sessionDays.length} days`}
+              ariaLabel={`Aggregate daily sessions by model across ${derived.sessionDays.length} days`}
               days={derived.sessionDays}
               highlight={hoveredSessionsSeries}
               mode={chartMode}
@@ -352,6 +350,9 @@ function deriveAggregateCharts(
   last: string | null,
 ) {
   const colors = seriesColors(rows);
+  const spendSelection = selectModelSeries(rows, (row) => row.costUsd);
+  const tokenSelection = selectModelSeries(rows, (row) => row.totalTokens);
+  const sessionSelection = selectModelSeries(rows, (row) => row.rowCount);
   const spendByDate = new Map<string, number>();
   const tokenByDate = new Map<string, number>();
   const sessionByDate = new Map<string, number>();
@@ -364,27 +365,40 @@ function deriveAggregateCharts(
     tokenByDate.set(row.date, (tokenByDate.get(row.date) ?? 0) + row.totalTokens);
     sessionByDate.set(row.date, (sessionByDate.get(row.date) ?? 0) + row.rowCount);
 
-    const series = modelSeriesLabel(row.key);
+    const spendModel = spendSelection.label(row.key);
     const spendSeries = spendSeriesByDate.get(row.date) ?? new Map<string, number>();
-    spendSeries.set(series, (spendSeries.get(series) ?? 0) + row.costUsd);
+    spendSeries.set(spendModel, (spendSeries.get(spendModel) ?? 0) + row.costUsd);
     spendSeriesByDate.set(row.date, spendSeries);
 
+    const tokenModel = tokenSelection.label(row.key);
     const tokenSeries = tokenSeriesByDate.get(row.date) ?? new Map<string, number>();
-    tokenSeries.set(series, (tokenSeries.get(series) ?? 0) + row.totalTokens);
+    tokenSeries.set(tokenModel, (tokenSeries.get(tokenModel) ?? 0) + row.totalTokens);
     tokenSeriesByDate.set(row.date, tokenSeries);
 
+    const sessionModel = sessionSelection.label(row.key);
     const sessionSeries = sessionSeriesByDate.get(row.date) ?? new Map<string, number>();
-    sessionSeries.set(series, (sessionSeries.get(series) ?? 0) + row.rowCount);
+    sessionSeries.set(sessionModel, (sessionSeries.get(sessionModel) ?? 0) + row.rowCount);
     sessionSeriesByDate.set(row.date, sessionSeries);
   }
 
   const days = first === null || last === null ? [] : enumerateDays(first, last);
-  const seriesOrder = [...colors.keys()];
-  const spendDays = buildStackedDays(days, seriesOrder, colors, spendSeriesByDate, spendByDate);
-  const tokenDays = buildStackedDays(days, seriesOrder, colors, tokenSeriesByDate, tokenByDate);
+  const spendDays = buildStackedDays(
+    days,
+    spendSelection.order,
+    colors,
+    spendSeriesByDate,
+    spendByDate,
+  );
+  const tokenDays = buildStackedDays(
+    days,
+    tokenSelection.order,
+    colors,
+    tokenSeriesByDate,
+    tokenByDate,
+  );
   const sessionDays = buildStackedDays(
     days,
-    seriesOrder,
+    sessionSelection.order,
     colors,
     sessionSeriesByDate,
     sessionByDate,
@@ -440,14 +454,7 @@ function buildLegend(days: readonly StackedDay[], colors: ReadonlyMap<string, st
     }))
     .filter((entry) => entry.value > 0)
     .sort((a, b) => b.value - a.value);
-  const other = entries.find((entry) => entry.series === "Other");
-  const namedEntries = entries.filter((entry) => entry.series !== "Other");
-  const visibleEntries =
-    other === undefined
-      ? namedEntries.slice(0, LEGEND_LIMIT)
-      : [...namedEntries.slice(0, LEGEND_LIMIT - 1), other];
-
-  return visibleEntries.map(({ color, percent, series }) => ({ color, percent, series }));
+  return entries.map(({ color, percent, series }) => ({ color, percent, series }));
 }
 
 function formatRange(totals: Totals): string {

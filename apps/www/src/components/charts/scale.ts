@@ -1,9 +1,5 @@
-import type { ProfileDailyRow } from "@tokenmaxxing/api-contract";
-
-type DailyRow = typeof ProfileDailyRow.Type;
-
 /**
- * Shared chart math: linear scales, model-series bucketing, and number
+ * Shared chart math, model-series selection, and number
  * formatting. Charts are pure SVG; everything here is deterministic and
  * unit-testable.
  */
@@ -45,106 +41,9 @@ function niceMax(value: number): number {
   return niceFraction * 10 ** exponent;
 }
 
-const CLAUDE_MODEL_LINES = {
-  fable: "Claude Fable",
-  haiku: "Claude Haiku",
-  mythos: "Claude Mythos",
-  opus: "Claude Opus",
-  sonnet: "Claude Sonnet",
-} as const;
-
-const CLAUDE_SERIES_ORDER = [
-  "Claude Fable",
-  "Claude Mythos",
-  "Claude Opus",
-  "Claude Sonnet",
-  "Claude Haiku",
-] as const;
-
-const MODEL_SERIES_RULES: readonly [RegExp, string][] = [
-  [/^gpt-5\.6(?:$|-sol(?:$|-))/i, "GPT-5.6 Sol"],
-  [/^gpt-5\.6-terra(?:$|-)/i, "GPT-5.6 Terra"],
-  [/^gpt-5\.6-luna(?:$|-)/i, "GPT-5.6 Luna"],
-  [/^gpt-5\.5/i, "GPT-5.5"],
-  [/^gpt-5\.4/i, "GPT-5.4"],
-  [/^gpt-5/i, "GPT-5"],
-  [/^gpt/i, "GPT"],
-  [/codex/i, "GPT Codex"],
-  [/gemini/i, "Gemini"],
-  [/^o[0-9]/i, "OpenAI o-series"],
-];
-
-const MODEL_SERIES_ORDER = [
-  "GPT-5.6 Sol",
-  "GPT-5.6 Terra",
-  "GPT-5.6 Luna",
-  "GPT-5.5",
-  "GPT-5.4",
-  "GPT-5",
-  "GPT",
-  "GPT Codex",
-  "OpenAI o-series",
-  ...CLAUDE_SERIES_ORDER,
-  "Gemini",
-  "Other",
-] as const;
-
-function modelSeriesLabel(model: string): string {
-  const claude = claudeSeriesLabel(model);
-  if (claude !== null) {
-    return claude;
-  }
-
-  for (const [pattern, series] of MODEL_SERIES_RULES) {
-    if (pattern.test(model)) {
-      return series;
-    }
-  }
-
-  return "Other";
-}
-
-function claudeSeriesLabel(model: string): string | null {
-  const match = /^claude-([a-z]+)(?:-(\d+)(?:-(\d+))?)?/i.exec(model);
-  if (match === null) {
-    return null;
-  }
-
-  const line = match[1]?.toLowerCase();
-  const base =
-    line === undefined ? undefined : CLAUDE_MODEL_LINES[line as keyof typeof CLAUDE_MODEL_LINES];
-  if (base === undefined) {
-    return "Other";
-  }
-
-  const major = match[2];
-  if (major === undefined) {
-    return base;
-  }
-
-  const minor = match[3];
-  return minor === undefined ? `${base} ${major}` : `${base} ${major}.${minor}`;
-}
-
-/** Fixed palette tuned to read on both themes. */
-const MODEL_SERIES_COLORS = {
-  "Claude Fable": "#38bdf8",
-  "Claude Haiku": "#ec4899",
-  "Claude Mythos": "#a855f7",
-  "Claude Opus": "#eab308",
-  "Claude Sonnet": "#14b8a6",
-  Gemini: "#ef4444",
-  GPT: "#6366f1",
-  "GPT Codex": "#0ea5e9",
-  "GPT-5": "#8b5cf6",
-  "GPT-5.4": "#22c55e",
-  "GPT-5.5": "#f97316",
-  "GPT-5.6 Luna": "#06b6d4",
-  "GPT-5.6 Sol": "#e11d48",
-  "GPT-5.6 Terra": "#ca8a04",
-  "OpenAI o-series": "#84cc16",
-  Other: "#9ca3af",
-} as const satisfies Record<string, string>;
+const MODEL_SERIES_LIMIT = 10;
+const OTHER_MODEL_SERIES = "Other";
+const OTHER_MODEL_SERIES_COLOR = "#9ca3af";
 
 const DYNAMIC_SERIES_COLORS = [
   "#f59e0b",
@@ -161,73 +60,59 @@ const DYNAMIC_SERIES_COLORS = [
   "#475569",
 ] as const;
 
-/** Stable series -> color assignment in canonical model-series order. */
-function seriesColors(rows: readonly DailyRow[]): Map<string, string> {
-  const seen = new Set<string>();
+interface ModelSeriesSelection {
+  label(model: string): string;
+  order: readonly string[];
+}
+
+/**
+ * Keep the highest-value raw model names and collapse only the remaining long
+ * tail. Ranking across the full chart range keeps stack positions stable from
+ * day to day.
+ */
+function selectModelSeries<Row extends { key: string }>(
+  rows: readonly Row[],
+  value: (row: Row) => number,
+  limit = MODEL_SERIES_LIMIT,
+): ModelSeriesSelection {
+  const valueByModel = new Map<string, number>();
   for (const row of rows) {
-    seen.add(modelSeriesLabel(row.key));
+    valueByModel.set(row.key, (valueByModel.get(row.key) ?? 0) + value(row));
   }
 
+  const ranked = [...valueByModel.entries()]
+    .sort(
+      ([leftModel, leftValue], [rightModel, rightValue]) =>
+        rightValue - leftValue || leftModel.localeCompare(rightModel),
+    )
+    .map(([model]) => model);
+  const safeLimit = Math.max(Math.floor(limit), 1);
+  const hasOverflow = ranked.length > safeLimit;
+  const visible = ranked.slice(0, hasOverflow ? safeLimit - 1 : safeLimit);
+  const visibleSet = new Set(visible);
+  const order = hasOverflow
+    ? [...visible.filter((model) => model !== OTHER_MODEL_SERIES), OTHER_MODEL_SERIES]
+    : visible;
+
+  return {
+    label: (model) => (visibleSet.has(model) ? model : OTHER_MODEL_SERIES),
+    order,
+  };
+}
+
+/** Stable raw-model color assignment shared by every metric on a page. */
+function seriesColors<Row extends { key: string }>(rows: readonly Row[]): Map<string, string> {
+  const models = [...new Set(rows.map((row) => row.key))].sort((a, b) => a.localeCompare(b));
   const colors = new Map<string, string>();
-  let dynamicIndex = 0;
-  for (const series of [...seen].sort(compareModelSeriesLabels)) {
-    const staticColor = MODEL_SERIES_COLORS[series as keyof typeof MODEL_SERIES_COLORS];
-    if (staticColor !== undefined) {
-      colors.set(series, staticColor);
-    } else {
-      colors.set(
-        series,
-        DYNAMIC_SERIES_COLORS[dynamicIndex % DYNAMIC_SERIES_COLORS.length] ??
-          MODEL_SERIES_COLORS.Other,
-      );
-      dynamicIndex += 1;
-    }
+  for (const [index, model] of models.entries()) {
+    colors.set(
+      model,
+      DYNAMIC_SERIES_COLORS[index % DYNAMIC_SERIES_COLORS.length] ?? OTHER_MODEL_SERIES_COLOR,
+    );
   }
+  colors.set(OTHER_MODEL_SERIES, OTHER_MODEL_SERIES_COLOR);
 
   return colors;
-}
-
-function compareModelSeriesLabels(a: string, b: string): number {
-  const left = modelSeriesSortKey(a);
-  const right = modelSeriesSortKey(b);
-
-  return (
-    left.group - right.group ||
-    left.version - right.version ||
-    left.label.localeCompare(right.label)
-  );
-}
-
-function modelSeriesSortKey(label: string) {
-  for (const [group, base] of MODEL_SERIES_ORDER.entries()) {
-    if (label === base) {
-      return { group, label, version: Number.MAX_SAFE_INTEGER };
-    }
-    if (CLAUDE_SERIES_ORDER.includes(base as (typeof CLAUDE_SERIES_ORDER)[number])) {
-      const version = claudeLabelVersion(label, base);
-      if (version !== null) {
-        return { group, label, version: -version };
-      }
-    }
-  }
-
-  return { group: MODEL_SERIES_ORDER.length, label, version: 0 };
-}
-
-function claudeLabelVersion(label: string, base: string): number | null {
-  const version = new RegExp(`^${escapeRegExp(base)} (\\d+)(?:\\.(\\d+))?$`).exec(label);
-  if (version === null) {
-    return null;
-  }
-
-  const major = Number(version[1]);
-  const minor = version[2] === undefined ? 0 : Number(version[2]);
-
-  return major * 1_000 + minor;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 const usd0 = new Intl.NumberFormat("en-US", {
@@ -317,7 +202,7 @@ export {
   formatTokens,
   formatUsd,
   linearScale,
-  modelSeriesLabel,
   niceMax,
+  selectModelSeries,
   seriesColors,
 };

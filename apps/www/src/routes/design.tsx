@@ -250,7 +250,7 @@ function DesignPage() {
           <StatCard label="Total spend" value="$1,284" />
           <StatCard label="Total tokens" value="48.2M" />
           <StatCard label="Active days" value="63" />
-          <StatCard label="Top spend model" value="Claude Opus 4.8" />
+          <StatCard label="Top spend model" value="claude-opus-4-8" />
         </div>
       </Section>
     </div>

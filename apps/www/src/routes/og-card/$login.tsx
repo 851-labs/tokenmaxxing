@@ -1,6 +1,5 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 
-import { modelSeriesLabel } from "../../components/charts/scale";
 import { formatOgNumber, formatOgTokens, formatOgUsd } from "../../lib/og";
 import { loadProfileOgData, type ProfileOgData } from "../../lib/og-data";
 
@@ -75,7 +74,7 @@ function OgProfileHeader({ data }: { data: ProfileOgData }) {
 
 function StatsGrid({ data }: { data: ProfileOgData }) {
   const { stats } = data.profile;
-  const topSpendModel = stats.topModel === null ? "—" : modelSeriesLabel(stats.topModel.model);
+  const topSpendModel = stats.topModel === null ? "—" : stats.topModel.model;
   const metrics = [
     { label: "Total spend", value: formatOgUsd(stats.totalSpendUsd) },
     { label: "Total tokens", value: formatOgTokens(stats.totalTokens) },

@@ -5,7 +5,7 @@ import { barLayout, CHART_AXIS, CHART_WIDTH, formatDay, linearScale, niceMax } f
 import { anchorBesideBar, ChartTooltip } from "./tooltip";
 
 /**
- * Daily metric, one bar per day stacked by model series. Hover reveals the
+ * Daily metric, one bar per day stacked by model. Hover reveals the
  * per-series breakdown.
  */
 

@@ -13,7 +13,7 @@ import {
   enumerateDays,
   formatTokens,
   formatUsd,
-  modelSeriesLabel,
+  selectModelSeries,
   seriesColors,
 } from "../components/charts/scale";
 import { Legend, StackedBars, type StackedDay } from "../components/charts/stacked-bars";
@@ -195,7 +195,7 @@ function ProfileDashboard({
         <div aria-hidden="true" className="order-last bg-background" />
         <StatCard
           label="Top spend model"
-          value={stats.topModel === null ? "—" : modelSeriesLabel(stats.topModel.model)}
+          value={stats.topModel === null ? "—" : stats.topModel.model}
         />
         <StatCard label="Current streak" value={formatCount(stats.currentStreakDays)} />
         <StatCard label="Longest streak" value={formatCount(stats.longestStreakDays)} />
@@ -207,7 +207,7 @@ function ProfileDashboard({
         <div className="mt-4 flex flex-col gap-6 lg:flex-row lg:items-center">
           <div className="min-w-0 flex-1">
             <StackedBars
-              ariaLabel={`Daily spend by model series across ${derived.spendDays.length} days`}
+              ariaLabel={`Daily spend by model across ${derived.spendDays.length} days`}
               days={derived.spendDays}
               highlight={hoveredSpendSeries}
               valueFormatter={formatUsd}
@@ -222,7 +222,7 @@ function ProfileDashboard({
         <div className="mt-4 flex flex-col gap-6 lg:flex-row lg:items-center">
           <div className="min-w-0 flex-1">
             <StackedBars
-              ariaLabel={`Daily tokens by model series across ${derived.tokenDays.length} days`}
+              ariaLabel={`Daily tokens by model across ${derived.tokenDays.length} days`}
               days={derived.tokenDays}
               highlight={hoveredTokensSeries}
               valueFormatter={formatTokens}
@@ -265,8 +265,10 @@ function ProfileDashboard({
 
 function deriveCharts(rows: readonly DailyRow[], range: DailyRange) {
   const colors = seriesColors(rows);
+  const spendSelection = selectModelSeries(rows, (row) => row.costUsd);
+  const tokenSelection = selectModelSeries(rows, (row) => row.totalTokens);
 
-  // Per-day totals and per-day model-series segments.
+  // Per-day totals and per-day raw-model segments.
   const spendByDate = new Map<string, number>();
   const tokenByDate = new Map<string, number>();
   const spendSeriesByDate = new Map<string, Map<string, number>>();
@@ -283,18 +285,19 @@ function deriveCharts(rows: readonly DailyRow[], range: DailyRange) {
     // getUTCDay() is Sunday-first; shift to Monday-first. UTC avoids tz drift.
     const weekday = (new Date(`${row.date}T00:00:00Z`).getUTCDay() + 6) % 7;
     spendByWeekday[weekday] = (spendByWeekday[weekday] ?? 0) + row.costUsd;
-    const series = modelSeriesLabel(row.key);
+    const spendModel = spendSelection.label(row.key);
     const spendSeries = spendSeriesByDate.get(row.date) ?? new Map<string, number>();
-    spendSeries.set(series, (spendSeries.get(series) ?? 0) + row.costUsd);
+    spendSeries.set(spendModel, (spendSeries.get(spendModel) ?? 0) + row.costUsd);
     spendSeriesByDate.set(row.date, spendSeries);
+    const tokenModel = tokenSelection.label(row.key);
     const tokenSeries = tokenSeriesByDate.get(row.date) ?? new Map<string, number>();
-    tokenSeries.set(series, (tokenSeries.get(series) ?? 0) + row.totalTokens);
+    tokenSeries.set(tokenModel, (tokenSeries.get(tokenModel) ?? 0) + row.totalTokens);
     tokenSeriesByDate.set(row.date, tokenSeries);
 
     const month = row.date.slice(0, 7);
     spendByMonth.set(month, (spendByMonth.get(month) ?? 0) + row.costUsd);
     const monthSeries = seriesByMonth.get(month) ?? new Map<string, number>();
-    monthSeries.set(series, (monthSeries.get(series) ?? 0) + row.costUsd);
+    monthSeries.set(spendModel, (monthSeries.get(spendModel) ?? 0) + row.costUsd);
     seriesByMonth.set(month, monthSeries);
   }
 
@@ -304,11 +307,10 @@ function deriveCharts(rows: readonly DailyRow[], range: DailyRange) {
     last: calendarYearEnd(range.last),
   };
 
-  const seriesOrder = [...colors.keys()];
   const segmentsByDate = new Map(
     [...spendSeriesByDate.entries()].map(([date, seriesValues]) => [
       date,
-      seriesOrder.map((series) => ({
+      spendSelection.order.map((series) => ({
         color: colors.get(series) ?? "#9ca3af",
         series,
         value: seriesValues.get(series) ?? 0,
@@ -319,14 +321,14 @@ function deriveCharts(rows: readonly DailyRow[], range: DailyRange) {
   const chartedDays = allDays;
   const spendDays = buildStackedDays(
     chartedDays,
-    seriesOrder,
+    spendSelection.order,
     colors,
     spendSeriesByDate,
     spendByDate,
   );
   const tokenDays = buildStackedDays(
     chartedDays,
-    seriesOrder,
+    tokenSelection.order,
     colors,
     tokenSeriesByDate,
     tokenByDate,
@@ -334,7 +336,7 @@ function deriveCharts(rows: readonly DailyRow[], range: DailyRange) {
 
   const months = enumerateCalendarMonths(range.first, range.last).map((month) => ({
     month,
-    segments: seriesOrder.map((series) => ({
+    segments: spendSelection.order.map((series) => ({
       color: colors.get(series) ?? "#9ca3af",
       series,
       value: seriesByMonth.get(month)?.get(series) ?? 0,

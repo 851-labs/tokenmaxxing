@@ -75,7 +75,7 @@ describe("deriveCharts", () => {
     ]);
   });
 
-  it("keeps versioned Opus models as separate series", () => {
+  it("uses raw model names as separate series", () => {
     const range: DailyRange = {
       first: "2026-06-21",
       last: "2026-06-21",
@@ -88,17 +88,49 @@ describe("deriveCharts", () => {
     const derived = deriveCharts(rows, range);
 
     expect(derived.spendLegend.map((entry) => entry.series)).toEqual([
-      "Claude Opus 4.8",
-      "Claude Opus 4.7",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
     ]);
     expect(
       derived.spendDays[0]?.segments
         .filter((segment) => segment.value > 0)
         .map((segment) => [segment.series, segment.value]),
     ).toEqual([
-      ["Claude Opus 4.8", 20],
-      ["Claude Opus 4.7", 10],
+      ["claude-opus-4-8", 20],
+      ["claude-opus-4-7", 10],
     ]);
+  });
+
+  it("collapses only models below the chart limit into Other", () => {
+    const range: DailyRange = {
+      first: "2026-06-21",
+      last: "2026-06-21",
+    };
+    const rows = Array.from({ length: 11 }, (_, index) =>
+      dailyRow({
+        costUsd: 11 - index,
+        key: `model-${String(index + 1).padStart(2, "0")}`,
+        totalTokens: 110 - index * 10,
+      }),
+    );
+
+    const derived = deriveCharts(rows, range);
+
+    expect(derived.spendLegend.map((entry) => entry.series)).toEqual([
+      "model-01",
+      "model-02",
+      "model-03",
+      "model-04",
+      "model-05",
+      "model-06",
+      "model-07",
+      "model-08",
+      "model-09",
+      "Other",
+    ]);
+    expect(
+      derived.spendDays[0]?.segments.find((segment) => segment.series === "Other")?.value,
+    ).toBe(3);
   });
 });
 
