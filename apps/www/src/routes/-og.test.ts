@@ -205,6 +205,7 @@ function profile(): Profile {
       deviceCount: 2,
       firstDate: "2026-01-01",
       lastDate: "2026-06-21",
+      leaderboardRank: 7,
       longestStreakDays: 12,
       peakDay: { date: "2026-06-20", spendUsd: 42 },
       sessionCount: 14,

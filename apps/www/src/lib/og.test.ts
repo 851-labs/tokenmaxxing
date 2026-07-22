@@ -76,6 +76,7 @@ function profile({
       deviceCount: activeDays === 0 ? 0 : 2,
       firstDate: activeDays === 0 ? null : "2026-01-01",
       lastDate,
+      leaderboardRank: activeDays === 0 ? null : 7,
       longestStreakDays: activeDays === 0 ? 0 : 12,
       peakDay: activeDays === 0 ? null : { date: "2026-06-20", spendUsd: 42 },
       sessionCount: activeDays === 0 ? 0 : 14,

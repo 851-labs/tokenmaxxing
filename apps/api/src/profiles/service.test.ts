@@ -88,6 +88,7 @@ async function makeProfileService(shadowBanned: boolean): Promise<TestProfilesSe
                 })
               : Option.none(),
           ),
+        leaderboardRank: () => Effect.succeed(7),
         stats: () => Effect.succeed(profileStats),
       }),
     ),
@@ -99,6 +100,7 @@ describe("ProfilesService shadow-ban visibility", () => {
     const service = await makeProfileService(false);
 
     await expect(Effect.runPromise(service.getProfile("target", null))).resolves.toMatchObject({
+      stats: { leaderboardRank: 7 },
       user: { id: "user_target", login: "target" },
     });
   });

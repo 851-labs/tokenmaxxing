@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Drizzle } from "./database";
 import { LeaderboardRepositoryLive } from "./leaderboard/d1";
 import { LeaderboardRepository } from "./leaderboard/service";
+import { ProfilesRepositoryLive } from "./profiles/d1";
+import { ProfilesRepository } from "./profiles/service";
 import { StatsRepositoryLive } from "./stats/d1";
 import { StatsRepository } from "./stats/service";
 
@@ -74,11 +76,20 @@ describe("public usage visibility", () => {
         return yield* StatsRepository;
       }).pipe(Effect.provide(StatsRepositoryLive.pipe(Layer.provide(drizzleLayer)))),
     );
+    const profiles = await Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* ProfilesRepository;
+      }).pipe(Effect.provide(ProfilesRepositoryLive.pipe(Layer.provide(drizzleLayer)))),
+    );
 
     const entries = await run(leaderboard.list({ limit: 10, metric: "tokens", since: null }));
+    const visibleRank = await run(profiles.leaderboardRank("visible"));
+    const bannedRank = await run(profiles.leaderboardRank("banned"));
     const hidden = await run(stats.snapshot({ last30dSince: "2026-06-10", limit: 10 }));
 
     expect(entries.map((entry) => [entry.rank, entry.user.login])).toEqual([[1, "visible"]]);
+    expect(visibleRank).toBe(1);
+    expect(bannedRank).toBeNull();
     expect(hidden.allTime).toMatchObject({
       deviceCount: 1,
       rowCount: 1,
@@ -97,7 +108,11 @@ describe("public usage visibility", () => {
 
     sqlite.prepare("update users set shadow_banned_at = null where id = 'banned'").run();
 
+    const restoredBannedRank = await run(profiles.leaderboardRank("banned"));
+    const restoredVisibleRank = await run(profiles.leaderboardRank("visible"));
     const restored = await run(stats.snapshot({ last30dSince: "2026-06-10", limit: 10 }));
+    expect(restoredBannedRank).toBe(1);
+    expect(restoredVisibleRank).toBe(2);
     expect(restored.allTime).toMatchObject({
       deviceCount: 2,
       rowCount: 2,

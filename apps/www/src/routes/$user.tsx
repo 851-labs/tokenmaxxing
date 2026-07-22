@@ -165,6 +165,7 @@ interface DashboardStats {
   currentStreakDays: number;
   firstDate: string | null;
   lastDate: string | null;
+  leaderboardRank: number | null;
   longestStreakDays: number;
   peakDay: { date: string; spendUsd: number } | null;
   sessionCount: number;
@@ -192,7 +193,6 @@ function ProfileDashboard({
         <StatCard label="Total spend" value={formatUsd(stats.totalSpendUsd)} />
         <StatCard label="Total tokens" value={formatTokens(stats.totalTokens)} />
         <StatCard label="Sessions" value={formatCount(stats.sessionCount)} />
-        <div aria-hidden="true" className="order-last bg-background" />
         <StatCard
           label="Top spend model"
           value={stats.topModel === null ? "—" : stats.topModel.model}
@@ -200,6 +200,10 @@ function ProfileDashboard({
         <StatCard label="Current streak" value={formatCount(stats.currentStreakDays)} />
         <StatCard label="Longest streak" value={formatCount(stats.longestStreakDays)} />
         <StatCard label="Active days" value={formatCount(stats.activeDays)} />
+        <StatCard
+          label="Leaderboard rank"
+          value={stats.leaderboardRank === null ? "—" : `#${formatCount(stats.leaderboardRank)}`}
+        />
       </div>
 
       <section className="bg-background p-5">

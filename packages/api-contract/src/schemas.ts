@@ -381,6 +381,7 @@ const ProfileStats = Schema.Struct({
   deviceCount: Schema.Number,
   firstDate: Schema.NullOr(Schema.String),
   lastDate: Schema.NullOr(Schema.String),
+  leaderboardRank: Schema.NullOr(Schema.Number),
   longestStreakDays: Schema.Number,
   peakDay: Schema.NullOr(
     Schema.Struct({

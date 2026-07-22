@@ -31,6 +31,31 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
               },
             });
       }),
+    leaderboardRank: (userId) =>
+      Effect.gen(function* () {
+        const rows = yield* database.use((db) => {
+          const rankedUsers = db
+            .select({
+              rank: sql<number>`row_number() over (
+                order by sum(${usageDays.costUsd}) desc, ${usageDays.userId} asc
+              )`.as("leaderboard_rank"),
+              userId: usageDays.userId,
+            })
+            .from(usageDays)
+            .innerJoin(users, eq(usageDays.userId, users.id))
+            .where(isNull(users.shadowBannedAt))
+            .groupBy(usageDays.userId)
+            .as("ranked_users");
+
+          return db
+            .select({ rank: rankedUsers.rank })
+            .from(rankedUsers)
+            .where(eq(rankedUsers.userId, userId))
+            .limit(1);
+        });
+
+        return rows[0]?.rank ?? null;
+      }),
     stats: (userId) =>
       Effect.gen(function* () {
         const [totals] = yield* database.use((db) =>

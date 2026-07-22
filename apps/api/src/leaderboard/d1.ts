@@ -1,5 +1,5 @@
 import { usageDays, users } from "@tokenmaxxing/db";
-import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { Layer } from "effect";
 
@@ -35,7 +35,10 @@ const makeD1LeaderboardRepository = Effect.fn("makeD1LeaderboardRepository")(fun
               : base.where(and(isNull(users.shadowBannedAt), gte(usageDays.date, input.since)))
           )
             .groupBy(usageDays.userId)
-            .orderBy(input.metric === "spend" ? desc(spendUsd) : desc(totalTokens))
+            .orderBy(
+              input.metric === "spend" ? desc(spendUsd) : desc(totalTokens),
+              asc(usageDays.userId),
+            )
             .limit(input.limit);
         });
 

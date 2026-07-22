@@ -44,9 +44,12 @@ interface ProfileUser {
   user: typeof AuthUser.Type;
 }
 
+type ProfileStatsWithoutRank = Omit<typeof ProfileStats.Type, "leaderboardRank">;
+
 interface ProfilesRepositoryShape {
   findUserByLogin(login: string): Effect.Effect<Option.Option<ProfileUser>, DatabaseError, any>;
-  stats(userId: string): Effect.Effect<typeof ProfileStats.Type, DatabaseError, any>;
+  leaderboardRank(userId: string): Effect.Effect<number | null, DatabaseError, any>;
+  stats(userId: string): Effect.Effect<ProfileStatsWithoutRank, DatabaseError, any>;
   daily(
     userId: string,
     query: DailyQuery,
@@ -82,9 +85,12 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
   return ProfilesService.of({
     getProfile: Effect.fn("ProfilesService.getProfile")(function* (login, viewerUserId) {
       const user = yield* requireUser(login, viewerUserId);
-      const stats = yield* repository.stats(user.id).pipe(Effect.orDie);
+      const [stats, leaderboardRank] = yield* Effect.all(
+        [repository.stats(user.id), repository.leaderboardRank(user.id)],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.orDie);
 
-      return { stats, user };
+      return { stats: { ...stats, leaderboardRank }, user };
     }),
     getDaily: Effect.fn("ProfilesService.getDaily")(function* (login, query, viewerUserId) {
       const user = yield* requireUser(login, viewerUserId);
