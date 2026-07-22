@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 
-import { Data, Effect, Option } from "effect";
+import { Data, Effect } from "effect";
 
 import type { CcusageDailyReport, CcusageSessionReport } from "./schema";
 import { decodeDailyReport, decodeSessionReport } from "./schema";
@@ -8,9 +8,8 @@ import type { CcusageSource } from "./sources";
 
 /**
  * Shells out to `bun x ccusage@^20.0.17 <source> daily --json --breakdown` (npx
- * fallback only when bun itself is missing). A source that fails, is not
- * installed, or has no local data resolves to none — one broken agent must
- * never abort the whole sync.
+ * fallback only when bun itself is missing). Runner and report failures stay
+ * typed so the sync layer can distinguish them from valid empty reports.
  */
 
 const CCUSAGE_SPEC = "ccusage@^20.0.17";
@@ -18,11 +17,14 @@ const RUN_TIMEOUT_MS = 180_000;
 
 class CcusageRunError extends Data.TaggedError("CcusageRunError")<{
   readonly cause: unknown;
+  readonly code: CcusageRunErrorCode;
+  readonly report: CcusageReportKind;
   readonly source: string;
 }> {}
 
 interface RunOptions {
   /** YYYY-MM-DD; forwarded to ccusage as compact YYYYMMDD. */
+  exec?: ExecCcusageOptions | undefined;
   since?: string | undefined;
 }
 
@@ -34,7 +36,16 @@ interface CcusageCommandInvocation {
 interface ExecCcusageOptions {
   platform?: NodeJS.Platform | undefined;
   run?: CcusageCommandRunner | undefined;
+  timeoutMs?: number | undefined;
 }
+
+type CcusageReportKind = "daily" | "session";
+type CcusageRunErrorCode =
+  | "command_failed"
+  | "command_not_found"
+  | "command_timed_out"
+  | "invalid_json"
+  | "invalid_report";
 
 type CcusageCommandRunner = (
   command: string,
@@ -44,43 +55,59 @@ type CcusageCommandRunner = (
 function runCcusageDailyReport(
   source: CcusageSource,
   options: RunOptions = {},
-): Effect.Effect<Option.Option<CcusageDailyReport>> {
+): Effect.Effect<CcusageDailyReport, CcusageRunError> {
   // calculate mode prices every token at current list rates ("API-equivalent
   // cost") — auto mode trusts pre-recorded costs, which subscription usage
   // records as $0 and would zero out codex/opencode on the leaderboard.
   const args = dailyCcusageArgs(source, options);
 
-  return Effect.gen(function* () {
-    const stdout = yield* execCcusage(args, source.source);
-    const report = yield* decodeDailyReport(JSON.parse(stdout)).pipe(
-      Effect.mapError((cause) => new CcusageRunError({ cause, source: source.source })),
-    );
-
-    return Option.some(report);
-  }).pipe(
-    // Missing runner, no data dir, malformed output: skip the source.
-    Effect.catchCause(() => Effect.succeedNone),
+  return execCcusage(args, source.source, "daily", options.exec).pipe(
+    Effect.flatMap((stdout) => decodeCcusageJson(stdout, source.source, "daily")),
+    Effect.flatMap((payload) =>
+      decodeDailyReport(payload).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CcusageRunError({
+              cause,
+              code: "invalid_report",
+              report: "daily",
+              source: source.source,
+            }),
+        ),
+      ),
+    ),
   );
 }
 
 function runCcusageSessionReport(
   source: CcusageSource,
   options: RunOptions = {},
-): Effect.Effect<Option.Option<CcusageSessionReport>> {
+): Effect.Effect<CcusageSessionReport, CcusageRunError> {
   const args = sessionCcusageArgs(source, options);
 
-  return Effect.gen(function* () {
-    const stdout = yield* execCcusage(args, source.source);
-    const report = yield* decodeSessionReport(JSON.parse(stdout)).pipe(
-      Effect.mapError((cause) => new CcusageRunError({ cause, source: source.source })),
-    );
-
-    return Option.some(report);
-  }).pipe(
-    // Missing runner, no session support, no data dir, malformed output:
-    // show an unknown session count without failing usage sync.
-    Effect.catchCause(() => Effect.succeedNone),
+  return execCcusage(args, source.source, "session", options.exec).pipe(
+    Effect.flatMap((stdout) => decodeCcusageJson(stdout, source.source, "session")),
+    Effect.flatMap((payload) =>
+      decodeSessionReport(payload).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CcusageRunError({
+              cause,
+              code: "invalid_report",
+              report: "session",
+              source: source.source,
+            }),
+        ),
+      ),
+    ),
   );
+}
+
+function decodeCcusageJson(stdout: string, source: string, report: CcusageReportKind) {
+  return Effect.try({
+    try: () => JSON.parse(stdout) as unknown,
+    catch: (cause) => new CcusageRunError({ cause, code: "invalid_json", report, source }),
+  });
 }
 
 function dailyCcusageCommand(source: CcusageSource, options: RunOptions = {}): string[] {
@@ -112,28 +139,52 @@ function sessionCcusageArgs(source: CcusageSource, options: RunOptions = {}): st
 function execCcusage(
   args: string[],
   source: string,
+  report: CcusageReportKind,
   options: ExecCcusageOptions = {},
 ): Effect.Effect<string, CcusageRunError> {
-  const run = options.run ?? makeCcusageCommandRunner(source);
+  const run = options.run ?? makeCcusageCommandRunner(source, report);
   const [primary, fallback] = ccusageCommandInvocations(args, options.platform ?? process.platform);
+  const runInvocation = (invocation: CcusageCommandInvocation) =>
+    run(invocation.command, invocation.args).pipe(
+      Effect.timeout(`${Math.max(1, options.timeoutMs ?? RUN_TIMEOUT_MS)} millis`),
+      Effect.mapError((error) =>
+        error instanceof CcusageRunError
+          ? error
+          : new CcusageRunError({
+              cause: error,
+              code: "command_timed_out",
+              report,
+              source,
+            }),
+      ),
+    );
 
-  return run(primary.command, primary.args).pipe(
+  return runInvocation(primary).pipe(
     Effect.catch((error: CcusageRunError) =>
-      isMissingCommand(error.cause) ? run(fallback.command, fallback.args) : Effect.fail(error),
+      error.code === "command_not_found" ? runInvocation(fallback) : Effect.fail(error),
     ),
   );
 }
 
-function makeCcusageCommandRunner(source: string): CcusageCommandRunner {
+function makeCcusageCommandRunner(source: string, report: CcusageReportKind): CcusageCommandRunner {
   return (command, commandArgs) =>
     Effect.callback<string, CcusageRunError>((resume) => {
       const child = execFile(
         command,
         commandArgs,
-        { maxBuffer: 256 * 1024 * 1024, timeout: RUN_TIMEOUT_MS },
+        { maxBuffer: 256 * 1024 * 1024 },
         (error, stdout) => {
           if (error) {
-            resume(Effect.fail(new CcusageRunError({ cause: error, source })));
+            resume(
+              Effect.fail(
+                new CcusageRunError({
+                  cause: error,
+                  code: isMissingCommand(error) ? "command_not_found" : "command_failed",
+                  report,
+                  source,
+                }),
+              ),
+            );
           } else {
             resume(Effect.succeed(stdout));
           }
@@ -175,4 +226,4 @@ export {
   sessionCcusageCommand,
 };
 
-export type { RunOptions };
+export type { CcusageReportKind, CcusageRunErrorCode, RunOptions };

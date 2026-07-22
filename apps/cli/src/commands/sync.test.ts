@@ -2,6 +2,7 @@ import { Cause, Effect, Layer, Option } from "effect";
 import type { AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vitest";
 
+import { CcusageRunError } from "../ccusage/runner";
 import {
   ApiClientService,
   BrowserService,
@@ -23,9 +24,13 @@ import {
   renderSyncTable,
   resolveSyncAuth,
   sourceStatsForSync,
+  syncJsonPayload,
+  syncProgram,
+  syncStatusForSources,
   SyncAuthValidationError,
   SyncPushError,
   type SyncAuth,
+  type SyncSourceIssue,
   uploadUsageReports,
 } from "./sync";
 
@@ -53,6 +58,20 @@ const user: AuthUser = {
   login: "alex",
   name: null,
 };
+
+const invalidSessionIssue: SyncSourceIssue = {
+  code: "invalid_report",
+  message: "ccusage returned an invalid session report",
+  report: "session",
+};
+
+function ccusageFailure(
+  code: "command_failed" | "invalid_report",
+  report: "daily" | "session",
+  source: string,
+) {
+  return new CcusageRunError({ cause: new Error(code), code, report, source });
+}
 
 function makeTestLayer(options: TestLayerOptions) {
   let currentConfig = options.initialConfig;
@@ -228,10 +247,12 @@ describe("renderSyncTable", () => {
       [
         {
           source: "claude",
+          status: "synced",
           summary: { days: 17, models: 7, rows: 42, sessions: 17, spendUsd: 2_672 },
         },
         {
           source: "opencode",
+          status: "synced",
           summary: {
             days: 85,
             models: 9,
@@ -240,7 +261,7 @@ describe("renderSyncTable", () => {
             spendUsd: 1_699,
           },
         },
-        { source: "gemini", summary: null },
+        { reason: "no_data", source: "gemini", status: "skipped", summary: null },
       ],
       { env: { NO_COLOR: "" } },
     );
@@ -259,15 +280,46 @@ describe("renderSyncTable", () => {
       [
         {
           source: "claude",
+          status: "synced",
           summary: { days: 17, models: 7, rows: 42, sessions: 17, spendUsd: 2_672 },
         },
-        { source: "gemini", summary: null },
+        { reason: "no_data", source: "gemini", status: "skipped", summary: null },
       ],
       { env: {} },
     );
 
     expect(table).toContain("\x1b[32msynced");
     expect(table).toContain("\x1b[33mskipped");
+  });
+
+  it("distinguishes partial and failed sources", () => {
+    const table = renderSyncTable(
+      [
+        {
+          issue: invalidSessionIssue,
+          source: "codex",
+          status: "partial",
+          summary: { days: 3, models: 2, rows: 6, sessions: null, spendUsd: 12.34 },
+        },
+        {
+          issue: {
+            code: "command_failed",
+            message: "ccusage command failed",
+            report: "daily",
+          },
+          source: "gemini",
+          status: "failed",
+          summary: null,
+        },
+      ],
+      { env: { NO_COLOR: "" } },
+    );
+
+    expect(table.split("\n").map((line) => line.trim().split(/\s{2,}/))).toEqual([
+      ["Agent", "Status", "Days", "Sessions", "Models", "Spend"],
+      ["codex", "partial", "3", "-", "2", "$12.34"],
+      ["gemini", "failed", "-", "-", "-", "-"],
+    ]);
   });
 });
 
@@ -276,6 +328,7 @@ describe("renderSyncSourceResult", () => {
     expect(
       renderSyncSourceResult({
         source: "claude",
+        status: "synced",
         summary: { days: 17, models: 7, rows: 42, sessions: 54, spendUsd: 2_672 },
       }),
     ).toBe("claude synced - 17 days - 54 sessions - 7 models - $2,672");
@@ -285,15 +338,184 @@ describe("renderSyncSourceResult", () => {
     expect(
       renderSyncSourceResult({
         source: "opencode",
+        status: "synced",
         summary: { days: 85, models: 9, rows: 123, sessions: null, spendUsd: 1_699 },
       }),
     ).toBe("opencode synced - 85 days - sessions unknown - 9 models - $1,699");
   });
 
   it("renders skipped sources as a single status row", () => {
-    expect(renderSyncSourceResult({ source: "gemini", summary: null })).toBe(
-      "gemini skipped (no data)",
+    expect(
+      renderSyncSourceResult({
+        reason: "no_data",
+        source: "gemini",
+        status: "skipped",
+        summary: null,
+      }),
+    ).toBe("gemini skipped (no data)");
+  });
+
+  it("renders partial and failed sources with concise reasons", () => {
+    expect(
+      renderSyncSourceResult({
+        issue: invalidSessionIssue,
+        source: "codex",
+        status: "partial",
+        summary: { days: 3, models: 2, rows: 6, sessions: null, spendUsd: 12.34 },
+      }),
+    ).toBe(
+      "codex partially synced - 3 days - sessions unknown - 2 models - $12.34 - sessions unavailable: ccusage returned an invalid session report",
     );
+    expect(
+      renderSyncSourceResult({
+        issue: {
+          code: "command_failed",
+          message: "ccusage command failed",
+          report: "daily",
+        },
+        source: "gemini",
+        status: "failed",
+        summary: null,
+      }),
+    ).toBe("gemini failed - ccusage command failed");
+  });
+});
+
+describe("sync source outcomes", () => {
+  it("derives ok, partial, and error aggregate statuses", () => {
+    const skipped = {
+      reason: "no_data" as const,
+      source: "gemini",
+      status: "skipped" as const,
+      summary: null,
+    };
+    const failed = {
+      issue: {
+        code: "command_failed" as const,
+        message: "ccusage command failed",
+        report: "daily" as const,
+      },
+      source: "codex",
+      status: "failed" as const,
+      summary: null,
+    };
+
+    expect(syncStatusForSources([skipped], 0)).toBe("ok");
+    expect(syncStatusForSources([failed, skipped], 0)).toBe("error");
+    expect(syncStatusForSources([failed], 2)).toBe("partial");
+  });
+
+  it("adds stable source outcomes to JSON without removing the legacy sources map", () => {
+    const sourceResults = [
+      {
+        issue: {
+          code: "command_failed" as const,
+          message: "ccusage command failed",
+          report: "daily" as const,
+        },
+        source: "codex",
+        status: "failed" as const,
+        summary: null,
+      },
+    ];
+
+    expect(
+      syncJsonPayload({
+        dryRun: true,
+        rows: 0,
+        sourceResults,
+        sources: { codex: null },
+        status: "error",
+      }),
+    ).toEqual({
+      dryRun: true,
+      rows: 0,
+      sourceResults,
+      sources: { codex: null },
+      status: "error",
+    });
+  });
+
+  it("continues with successful sources after a daily report failure", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+      interactive: false,
+    });
+    const result = await Effect.runPromise(
+      syncProgram(
+        { dryRun: true, json: true, sources: "claude,codex" },
+        {
+          runDailyReport: (source) =>
+            source.source === "codex"
+              ? Effect.fail(ccusageFailure("command_failed", "daily", source.source))
+              : Effect.succeed({ daily: [{ date: "2026-07-22", totalTokens: 10 }] }),
+          runSessionReport: () => Effect.succeed({ sessions: [] }),
+        },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.rows).toBe(1);
+    expect(result.sourceResults.map(({ source, status }) => ({ source, status }))).toEqual([
+      { source: "claude", status: "synced" },
+      { source: "codex", status: "failed" },
+    ]);
+  });
+
+  it("keeps daily rows when the session report fails", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+      interactive: false,
+    });
+    const result = await Effect.runPromise(
+      syncProgram(
+        { dryRun: true, json: true, sources: "codex" },
+        {
+          runDailyReport: () =>
+            Effect.succeed({ daily: [{ date: "2026-07-22", totalTokens: 10 }] }),
+          runSessionReport: (source) =>
+            Effect.fail(ccusageFailure("invalid_report", "session", source.source)),
+        },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.rows).toBe(1);
+    expect(result.sourceResults[0]).toMatchObject({
+      issue: { code: "invalid_report", report: "session" },
+      status: "partial",
+      summary: { sessions: null },
+    });
+  });
+
+  it("treats a valid empty daily report as no data", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+      interactive: false,
+    });
+    const result = await Effect.runPromise(
+      syncProgram(
+        { dryRun: true, json: true, sources: "codex" },
+        {
+          runDailyReport: () => Effect.succeed({ daily: [] }),
+          runSessionReport: () => Effect.die("session report should not run"),
+        },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(result.status).toBe("ok");
+    expect(result.sourceResults).toEqual([
+      { reason: "no_data", source: "codex", status: "skipped", summary: null },
+    ]);
   });
 });
 
@@ -303,19 +525,25 @@ describe("sourceStatsForSync", () => {
       sourceStatsForSync([
         {
           source: "claude",
+          status: "synced",
           summary: { days: 17, models: 7, rows: 42, sessions: 54, spendUsd: 2_672 },
         },
         {
           source: "codex",
+          status: "synced",
           summary: { days: 89, models: 4, rows: 123, sessions: null, spendUsd: 12_172 },
         },
-        { source: "gemini", summary: null },
+        { reason: "no_data", source: "gemini", status: "skipped", summary: null },
       ]),
     ).toEqual([{ sessionCount: 54, source: "claude" }]);
   });
 
   it("returns undefined when there is nothing useful to upload", () => {
-    expect(sourceStatsForSync([{ source: "gemini", summary: null }])).toBeUndefined();
+    expect(
+      sourceStatsForSync([
+        { reason: "no_data", source: "gemini", status: "skipped", summary: null },
+      ]),
+    ).toBeUndefined();
   });
 });
 

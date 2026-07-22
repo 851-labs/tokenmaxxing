@@ -12,6 +12,9 @@ import type {
 import packageJson from "../../package.json";
 import { aggregateDays, summarize, type SourceSummary } from "../ccusage/aggregate";
 import {
+  type CcusageReportKind,
+  CcusageRunError,
+  type CcusageRunErrorCode,
   dailyCcusageCommand,
   runCcusageDailyReport,
   runCcusageSessionReport,
@@ -121,6 +124,11 @@ interface SyncProgramOptions extends SyncOptions {
   uploadPolicy?: UploadRetryPolicy | undefined;
 }
 
+interface SyncProgramRuntime {
+  runDailyReport?: typeof runCcusageDailyReport | undefined;
+  runSessionReport?: typeof runCcusageSessionReport | undefined;
+}
+
 interface ResolveSyncAuthOptions {
   json: boolean;
   showStoredLoginSpinner?: boolean | undefined;
@@ -138,10 +146,19 @@ interface SyncAuth {
 
 type SyncSourceSummary = SourceSummary & { sessions: number | null };
 
-interface SyncSourceResult {
-  source: string;
-  summary: SyncSourceSummary | null;
+interface SyncSourceIssue {
+  code: CcusageRunErrorCode;
+  message: string;
+  report: CcusageReportKind;
 }
+
+type SyncSourceResult =
+  | { source: string; status: "failed"; summary: null; issue: SyncSourceIssue }
+  | { source: string; status: "partial"; summary: SyncSourceSummary; issue: SyncSourceIssue }
+  | { source: string; status: "skipped"; summary: null; reason: "no_data" }
+  | { source: string; status: "synced"; summary: SyncSourceSummary };
+
+type SyncStatus = "error" | "ok" | "partial";
 
 interface SyncResult {
   dryRun: boolean;
@@ -149,7 +166,7 @@ interface SyncResult {
   rows: number;
   sourceResults: SyncSourceResult[];
   sources: Record<string, SyncSourceSummary | null>;
-  status: "ok";
+  status: SyncStatus;
   upserted?: number | undefined;
 }
 
@@ -201,7 +218,9 @@ function syncEffect(options: SyncOptions) {
       }
 
       if (shouldRenderInlineSync(options)) {
-        if (result.rows === 0) {
+        if (result.status === "error") {
+          yield* humanLog("error", "No usage synced; source collection failed", options);
+        } else if (result.rows === 0) {
           yield* humanLog("info", "Nothing to sync", options);
         } else if (result.dryRun) {
           yield* humanLog("success", "Dry run complete; nothing pushed", options);
@@ -213,7 +232,9 @@ function syncEffect(options: SyncOptions) {
           console.log("");
           console.log(renderSyncTable(result.sourceResults));
           console.log("");
-          if (result.rows === 0) {
+          if (result.status === "error") {
+            console.error("No usage synced; source collection failed");
+          } else if (result.rows === 0) {
             console.log("Nothing to sync");
           } else if (result.dryRun) {
             console.log("Dry run complete; nothing pushed");
@@ -230,8 +251,10 @@ function syncEffect(options: SyncOptions) {
   );
 }
 
-function syncProgram(options: SyncProgramOptions) {
+function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = {}) {
   return Effect.gen(function* () {
+    const runDailyReport = runtime.runDailyReport ?? runCcusageDailyReport;
+    const runSessionReport = runtime.runSessionReport ?? runCcusageSessionReport;
     const requested = options.sources?.split(",") ?? DEFAULT_SOURCE_NAMES;
     const { invalid, sources } = resolveSources(requested);
     if (invalid.length > 0) {
@@ -249,47 +272,91 @@ function syncProgram(options: SyncProgramOptions) {
     const renderInlineResults = shouldRenderInlineSync(options);
     for (const source of sources) {
       const spinner = yield* humanSpinner(`Syncing ${source.source}`, options);
-      const dailyReport = yield* runCcusageDailyReport(source, { since: options.since }).pipe(
-        Effect.tapError(() => Effect.sync(() => spinner.error(`Failed syncing ${source.source}`))),
+      const dailyResult = yield* runDailyReport(source, { since: options.since }).pipe(
+        Effect.match({
+          onFailure: (error) => ({ error, _tag: "failure" as const }),
+          onSuccess: (report) => ({ report, _tag: "success" as const }),
+        }),
       );
-      if (Option.isNone(dailyReport) || dailyReport.value.daily.length === 0) {
-        const result = { source: source.source, summary: null };
+
+      if (dailyResult._tag === "failure") {
+        const result = {
+          issue: syncSourceIssue(dailyResult.error),
+          source: source.source,
+          status: "failed" as const,
+          summary: null,
+        };
+        sourceSummaries[source.source] = null;
+        sourceResults.push(result);
+        spinner.error(
+          renderInlineResults ? renderSyncSourceResult(result) : `Failed syncing ${source.source}`,
+        );
+        continue;
+      }
+
+      const dailyReport = dailyResult.report;
+      if (dailyReport.daily.length === 0) {
+        const result = {
+          reason: "no_data" as const,
+          source: source.source,
+          status: "skipped" as const,
+          summary: null,
+        };
         sourceSummaries[source.source] = result.summary;
         sourceResults.push(result);
         spinner.stop(renderInlineResults ? renderSyncSourceResult(result) : undefined);
         continue;
       }
 
-      const sourceRows = aggregateDays(source.source, dailyReport.value.daily);
+      const sourceRows = aggregateDays(source.source, dailyReport.daily);
       rawReports.push({
         command: dailyCcusageCommand(source, { since: options.since }),
-        payload: dailyReport.value,
+        payload: dailyReport,
         reportKind: "daily",
         source: source.source,
       });
 
-      const sessionReport = yield* runCcusageSessionReport(source, { since: options.since }).pipe(
-        Effect.tapError(() => Effect.sync(() => spinner.error(`Failed syncing ${source.source}`))),
+      const sessionResult = yield* runSessionReport(source, { since: options.since }).pipe(
+        Effect.match({
+          onFailure: (error) => ({ error, _tag: "failure" as const }),
+          onSuccess: (report) => ({ report, _tag: "success" as const }),
+        }),
       );
-      const sessionCount = Option.match(sessionReport, {
-        onNone: () => null,
-        onSome: (report) => report.sessions.length,
-      });
-      if (options.since === undefined && Option.isSome(sessionReport)) {
+      const sessionCount =
+        sessionResult._tag === "success" ? sessionResult.report.sessions.length : null;
+      if (options.since === undefined && sessionResult._tag === "success") {
         rawReports.push({
           command: sessionCcusageCommand(source),
-          payload: sessionReport.value,
+          payload: sessionResult.report,
           reportKind: "session",
           source: source.source,
         });
       }
       const summary = { ...summarize(sourceRows), sessions: sessionCount };
-      const result = { source: source.source, summary };
+      const result: SyncSourceResult =
+        sessionResult._tag === "failure"
+          ? {
+              issue: syncSourceIssue(sessionResult.error),
+              source: source.source,
+              status: "partial",
+              summary,
+            }
+          : { source: source.source, status: "synced", summary };
       sourceSummaries[source.source] = summary;
       sourceResults.push(result);
       rows.push(...sourceRows);
-      spinner.stop(renderInlineResults ? renderSyncSourceResult(result) : undefined);
+      if (result.status === "partial") {
+        spinner.error(
+          renderInlineResults
+            ? renderSyncSourceResult(result)
+            : `Partially synced ${source.source}`,
+        );
+      } else {
+        spinner.stop(renderInlineResults ? renderSyncSourceResult(result) : undefined);
+      }
     }
+
+    const status = syncStatusForSources(sourceResults, rows.length);
 
     if (options.dryRun || rows.length === 0) {
       return {
@@ -297,7 +364,7 @@ function syncProgram(options: SyncProgramOptions) {
         rows: rows.length,
         sourceResults,
         sources: sourceSummaries,
-        status: "ok" as const,
+        status,
       };
     }
 
@@ -314,7 +381,7 @@ function syncProgram(options: SyncProgramOptions) {
         rows: rows.length,
         sourceResults,
         sources: sourceSummaries,
-        status: "ok" as const,
+        status,
       };
     }
 
@@ -333,7 +400,7 @@ function syncProgram(options: SyncProgramOptions) {
       rows: rows.length,
       sourceResults,
       sources: sourceSummaries,
-      status: "ok" as const,
+      status,
       upserted,
     };
   });
@@ -426,6 +493,7 @@ function syncJsonPayload(result: SyncResult) {
     return {
       dryRun: result.dryRun,
       rows: result.rows,
+      sourceResults: result.sourceResults,
       sources: result.sources,
       status: result.status,
     };
@@ -433,6 +501,7 @@ function syncJsonPayload(result: SyncResult) {
 
   return {
     rows: result.rows,
+    sourceResults: result.sourceResults,
     sources: result.sources,
     status: result.status,
     upserted: result.upserted ?? 0,
@@ -449,6 +518,32 @@ function sourceStatsForSync(
   );
 
   return stats.length === 0 ? undefined : stats;
+}
+
+function syncSourceIssue(error: CcusageRunError): SyncSourceIssue {
+  const message =
+    error.code === "command_not_found"
+      ? "ccusage command not found"
+      : error.code === "command_timed_out"
+        ? "ccusage command timed out"
+        : error.code === "command_failed"
+          ? "ccusage command failed"
+          : error.code === "invalid_json"
+            ? "ccusage returned invalid JSON"
+            : `ccusage returned an invalid ${error.report} report`;
+
+  return { code: error.code, message, report: error.report };
+}
+
+function syncStatusForSources(results: readonly SyncSourceResult[], rows: number): SyncStatus {
+  const hasIssues = results.some(
+    (result) => result.status === "failed" || result.status === "partial",
+  );
+  if (!hasIssues) {
+    return "ok";
+  }
+
+  return rows > 0 ? "partial" : "error";
 }
 
 function openProfileIfAvailable(
@@ -484,7 +579,11 @@ function shouldRenderInlineSync(options: { json?: boolean; silent?: boolean }): 
 }
 
 function renderSyncSourceResult(result: SyncSourceResult): string {
-  if (result.summary === null) {
+  if (result.status === "failed") {
+    return `${result.source} failed - ${result.issue.message}`;
+  }
+
+  if (result.status === "skipped") {
     return `${result.source} skipped (no data)`;
   }
 
@@ -493,13 +592,18 @@ function renderSyncSourceResult(result: SyncSourceResult): string {
       ? "sessions unknown"
       : formatCount(result.summary.sessions, "session");
 
-  return [
-    `${result.source} synced`,
+  const row = [
+    `${result.source} ${result.status === "partial" ? "partially synced" : "synced"}`,
     formatCount(result.summary.days, "day"),
     sessions,
     formatCount(result.summary.models, "model"),
     formatSyncUsd(result.summary.spendUsd),
-  ].join(" - ");
+  ];
+  if (result.status === "partial") {
+    row.push(`sessions unavailable: ${result.issue.message}`);
+  }
+
+  return row.join(" - ");
 }
 
 function renderSyncTable(
@@ -516,10 +620,13 @@ function renderSyncTable(
     { align: "right", value: "Spend" },
   ];
   const rows = results.map((result): readonly TableCell[] => {
-    if (result.summary === null) {
+    if (result.status === "failed" || result.status === "skipped") {
       return [
         { value: result.source },
-        { style: styles.skipped, value: "skipped" },
+        {
+          style: result.status === "failed" ? styles.failed : styles.skipped,
+          value: result.status,
+        },
         { align: "right", style: styles.muted, value: "-" },
         { align: "right", style: styles.muted, value: "-" },
         { align: "right", style: styles.muted, value: "-" },
@@ -529,7 +636,10 @@ function renderSyncTable(
 
     return [
       { value: result.source },
-      { style: styles.synced, value: "synced" },
+      {
+        style: result.status === "partial" ? styles.partial : styles.synced,
+        value: result.status,
+      },
       { align: "right", value: formatInteger(result.summary.days) },
       {
         align: "right",
@@ -583,7 +693,9 @@ function visibleLength(value: string): number {
 }
 
 function makeStyles(options: FormatOptions = {}): {
+  failed: Style;
   muted: Style;
+  partial: Style;
   skipped: Style;
   synced: Style;
 } {
@@ -591,7 +703,9 @@ function makeStyles(options: FormatOptions = {}): {
   const colors = !Object.prototype.hasOwnProperty.call(env, "NO_COLOR");
 
   return {
+    failed: (value) => (colors ? `\x1b[31m${value}\x1b[0m` : value),
     muted: (value) => (colors ? `\x1b[2m${value}\x1b[0m` : value),
+    partial: (value) => (colors ? `\x1b[33m${value}\x1b[0m` : value),
     skipped: (value) => (colors ? `\x1b[33m${value}\x1b[0m` : value),
     synced: (value) => (colors ? `\x1b[32m${value}\x1b[0m` : value),
   };
@@ -684,6 +798,8 @@ export {
   renderSyncTable,
   resolveSyncAuth,
   sourceStatsForSync,
+  syncSourceIssue,
+  syncStatusForSources,
   syncCommand,
   syncEffect,
   syncJsonPayload,
@@ -699,6 +815,10 @@ export type {
   SyncAuth,
   SyncOptions,
   SyncResult,
+  SyncProgramRuntime,
+  SyncSourceIssue,
+  SyncSourceResult,
   SyncSourceSummary,
+  SyncStatus,
   UploadRetryPolicy,
 };

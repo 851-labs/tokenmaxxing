@@ -679,6 +679,7 @@ describe("serviceStateJson", () => {
           status: "synced",
         },
       ],
+      lastSyncStatus: "ok",
       lastSuccessAt: "2026-06-16T10:00:01.000Z",
       lastUpserted: 42,
       version: 1,
@@ -1393,9 +1394,10 @@ describe("service run state", () => {
     sourceResults: [
       {
         source: "codex",
+        status: "synced",
         summary: { days: 3, models: 2, rows: 42, sessions: null, spendUsd: 12.34 },
       },
-      { source: "gemini", summary: null },
+      { reason: "no_data", source: "gemini", status: "skipped", summary: null },
     ],
     sources: {
       codex: { days: 3, models: 2, rows: 42, sessions: null, spendUsd: 12.34 },
@@ -1437,6 +1439,7 @@ describe("service run state", () => {
       lastRows: 42,
       lastSince: "2026-06-16",
       lastSuccessAt: "2026-06-16T10:00:01.000Z",
+      lastSyncStatus: "ok",
       lastUpserted: 40,
       version: 1,
     });
@@ -1451,6 +1454,123 @@ describe("service run state", () => {
         status: "synced",
       },
       { source: "gemini", status: "skipped" },
+    ]);
+  });
+
+  it("records source collection failures without advancing the last success", () => {
+    const failedResult: SyncResult = {
+      dryRun: false,
+      rows: 0,
+      sourceResults: [
+        {
+          issue: {
+            code: "command_not_found",
+            message: "ccusage command not found",
+            report: "daily",
+          },
+          source: "codex",
+          status: "failed",
+          summary: null,
+        },
+      ],
+      sources: { codex: null },
+      status: "error",
+    };
+
+    const state = serviceRunSuccessState(
+      {
+        lastSuccessAt: "2026-06-16T09:00:00.000Z",
+        version: 1,
+      },
+      {
+        arch: "arm64",
+        attemptAt: "2026-06-16T10:00:00.000Z",
+        autoUpdate: autoUpdateReport(),
+        durationMs: 1234,
+        result: failedResult,
+        successAt: "2026-06-16T10:00:01.000Z",
+        version: "0.4.23",
+      },
+    );
+
+    expect(state).toMatchObject({
+      lastError: "ccusage source collection failed",
+      lastRows: 0,
+      lastSuccessAt: "2026-06-16T09:00:00.000Z",
+      lastSyncStatus: "error",
+      lastUpserted: 0,
+    });
+    expect(state.lastSources).toEqual([
+      {
+        issue: {
+          code: "command_not_found",
+          message: "ccusage command not found",
+          report: "daily",
+        },
+        source: "codex",
+        status: "failed",
+      },
+    ]);
+  });
+
+  it("records partial source diagnostics while advancing the last success", () => {
+    const partialResult: SyncResult = {
+      dryRun: false,
+      rows: 42,
+      sourceResults: [
+        {
+          issue: {
+            code: "invalid_report",
+            message: "ccusage returned an invalid session report",
+            report: "session",
+          },
+          source: "codex",
+          status: "partial",
+          summary: { days: 3, models: 2, rows: 42, sessions: null, spendUsd: 12.34 },
+        },
+      ],
+      sources: {
+        codex: { days: 3, models: 2, rows: 42, sessions: null, spendUsd: 12.34 },
+      },
+      status: "partial",
+      upserted: 40,
+    };
+
+    const state = serviceRunSuccessState(
+      { version: 1 },
+      {
+        arch: "arm64",
+        attemptAt: "2026-06-16T10:00:00.000Z",
+        autoUpdate: autoUpdateReport(),
+        durationMs: 1234,
+        result: partialResult,
+        successAt: "2026-06-16T10:00:01.000Z",
+        version: "0.4.23",
+      },
+    );
+
+    expect(state).toMatchObject({
+      lastError: undefined,
+      lastRows: 42,
+      lastSuccessAt: "2026-06-16T10:00:01.000Z",
+      lastSyncStatus: "partial",
+      lastUpserted: 40,
+    });
+    expect(state.lastSources).toEqual([
+      {
+        days: 3,
+        issue: {
+          code: "invalid_report",
+          message: "ccusage returned an invalid session report",
+          report: "session",
+        },
+        models: 2,
+        rows: 42,
+        sessions: null,
+        source: "codex",
+        spendUsd: 12.34,
+        status: "partial",
+      },
     ]);
   });
 

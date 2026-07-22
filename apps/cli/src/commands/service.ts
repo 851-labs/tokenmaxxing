@@ -50,6 +50,8 @@ import {
   syncProgram,
   type SyncAuth,
   type SyncResult,
+  type SyncSourceIssue,
+  type SyncStatus,
   type UploadRetryPolicy,
 } from "./sync";
 
@@ -237,6 +239,7 @@ interface ServiceState {
   lastSchedulerActive?: boolean;
   lastSince?: string;
   lastSources?: ServiceSourceState[];
+  lastSyncStatus?: SyncStatus;
   lastSuccessAt?: string;
   lastSuccessDate?: string;
   lastUpserted?: number;
@@ -246,12 +249,13 @@ interface ServiceState {
 
 interface ServiceSourceState {
   days?: number;
+  issue?: SyncSourceIssue;
   models?: number;
   rows?: number;
   sessions?: number | null;
   source: string;
   spendUsd?: number;
-  status: "skipped" | "synced";
+  status: "failed" | "partial" | "skipped" | "synced";
 }
 
 interface ServiceLogWriter {
@@ -898,6 +902,7 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
         lastSchedulerActive: state?.lastSchedulerActive ?? null,
         lastSince: state?.lastSince ?? null,
         lastSources: state?.lastSources ?? [],
+        lastSyncStatus: state?.lastSyncStatus ?? null,
         lastSuccessAt: state?.lastSuccessAt ?? null,
         lastSuccessDate: serviceLastSuccessDate(state) ?? null,
         lastUpserted: state?.lastUpserted ?? null,
@@ -1331,20 +1336,22 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
     });
     const finalSuccessState =
       repairReport === undefined ? successState : serviceRepairState(successState, repairReport);
+    const syncFailed = result.value.status === "error";
     yield* writeServiceState(paths.statePath, finalSuccessState).pipe(
       Effect.mapError((cause) => new ServiceRunError({ cause })),
     );
     yield* writeScheduledServiceLog(
       console,
       options,
-      serviceRunLogLine(finalSuccessState, "success"),
+      serviceRunLogLine(finalSuccessState, syncFailed ? "failure" : "success"),
     );
     yield* writeServiceCheckIn(auth, {
       ...baseCheckIn,
       autoUpdate,
       ...serviceRunnerCheckIn(metadata, autoUpdate),
       ...serviceRepairCheckIn(repairReport),
-      status: "success",
+      ...(syncFailed ? { error: finalSuccessState.lastError } : {}),
+      status: syncFailed ? "failure" : "success",
     }).pipe(Effect.ignore);
 
     if (autoUpdated && metadata !== null && !options.scheduled) {
@@ -1363,7 +1370,9 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
 
     if (!options.json && !options.scheduled) {
       yield* Effect.sync(() => {
-        console.log("Service run complete");
+        console.log(
+          syncFailed ? "Service run completed with source failures" : "Service run complete",
+        );
         console.log(`Log: ${paths.logPath}`);
       });
     }
@@ -1372,7 +1381,8 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       autoUpdated,
       logPath: paths.logPath,
       rows: result.value.rows,
-      status: "ok" as const,
+      sources: result.value.sourceResults,
+      status: result.value.status,
       upserted: result.value.upserted ?? 0,
     };
   });
@@ -1828,12 +1838,13 @@ function serviceRunSuccessState(
     lastAutoUpdated: input.autoUpdate.status === "success",
     lastCliVersion: input.version,
     lastDurationMs: input.durationMs,
-    lastError: undefined,
+    lastError: input.result.status === "error" ? "ccusage source collection failed" : undefined,
     lastRows: input.result.rows,
     lastSchedulerActive: input.schedulerActive,
     lastSince: input.since,
     lastSources: serviceSourcesForState(input.result),
-    lastSuccessAt: input.successAt,
+    lastSuccessAt: input.result.status === "error" ? currentState.lastSuccessAt : input.successAt,
+    lastSyncStatus: input.result.status,
     lastUpserted: input.result.upserted ?? 0,
     reloadRequired: input.reloadRequired,
     version: 1,
@@ -1869,22 +1880,31 @@ function serviceRunFailureState(
 
 function serviceSourcesForState(result: SyncResult): ServiceSourceState[] {
   return result.sourceResults.map((sourceResult) => {
-    const summary = sourceResult.summary;
-    if (summary === null) {
+    if (sourceResult.status === "failed") {
       return {
+        issue: sourceResult.issue,
         source: sourceResult.source,
-        status: "skipped" as const,
+        status: sourceResult.status,
       };
     }
 
+    if (sourceResult.status === "skipped") {
+      return {
+        source: sourceResult.source,
+        status: sourceResult.status,
+      };
+    }
+
+    const summary = sourceResult.summary;
     return {
       days: summary.days,
+      ...(sourceResult.status === "partial" ? { issue: sourceResult.issue } : {}),
       models: summary.models,
       rows: summary.rows,
       sessions: summary.sessions,
       source: sourceResult.source,
       spendUsd: summary.spendUsd,
-      status: "synced" as const,
+      status: sourceResult.status,
     };
   });
 }
@@ -1903,6 +1923,7 @@ function serviceRunLogLine(state: ServiceState, status: "failure" | "success") {
     schedulerActive: state.lastSchedulerActive,
     since: state.lastSince,
     sources: state.lastSources,
+    syncStatus: state.lastSyncStatus,
     status,
     timestamp: new Date().toISOString(),
     upserted: state.lastUpserted,
@@ -2225,6 +2246,7 @@ function serviceStateJson(state: ServiceState): Partial<ServiceState> {
       : { lastSchedulerActive: state.lastSchedulerActive }),
     ...(state.lastSince === undefined ? {} : { lastSince: state.lastSince }),
     ...(state.lastSources === undefined ? {} : { lastSources: state.lastSources }),
+    ...(state.lastSyncStatus === undefined ? {} : { lastSyncStatus: state.lastSyncStatus }),
     ...(state.lastSuccessAt === undefined ? {} : { lastSuccessAt: state.lastSuccessAt }),
     ...(state.lastUpserted === undefined ? {} : { lastUpserted: state.lastUpserted }),
     ...(state.reloadRequired === undefined ? {} : { reloadRequired: state.reloadRequired }),
