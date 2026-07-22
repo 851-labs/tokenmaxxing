@@ -61,7 +61,9 @@ const rawReports: RawUsageReportInput[] = [
   },
   {
     command: ["ccusage@^20", "codex", "session", "--json", "--mode", "calculate"],
-    payload: { sessions: [{ sessionId: "a" }, { sessionId: "b" }] },
+    payload: {
+      sessions: [{ projectPath: "/Users/alex/secret-client", sessionId: "a" }, { sessionId: "b" }],
+    },
     reportKind: "session",
     source: "codex",
   },
@@ -95,6 +97,7 @@ interface TestUsageService {
     },
     syncDevice: typeof device,
     reports: readonly RawUsageReportInput[],
+    syncSourceStats?: readonly (typeof sourceStats)[number][],
   ): Effect.Effect<SyncResult, DeviceMissing>;
 }
 
@@ -301,7 +304,7 @@ describe("UsageService.syncBatch", () => {
 });
 
 describe("UsageService.ingestRaw", () => {
-  it("stores raw reports, derives structured rows, and touches the device", async () => {
+  it("stores normalized daily reports and derives legacy session counts without persisting them", async () => {
     const { repository, touchDevice, upsertChunk, upsertRawReports, upsertSourceStats } =
       makeRepository();
     const service = await makeService(repository);
@@ -315,7 +318,7 @@ describe("UsageService.ingestRaw", () => {
     expect(upsertRawReports).toHaveBeenCalledWith(
       "user_123",
       "device_123",
-      expect.arrayContaining([
+      [
         expect.objectContaining<Partial<StoredRawUsageReport>>({
           ccusageCommand: "ccusage@^20 codex daily --json --breakdown --mode calculate",
           objectKey: expect.stringMatching(
@@ -323,23 +326,14 @@ describe("UsageService.ingestRaw", () => {
           ) as unknown as string,
           payloadBytes: JSON.stringify(rawReports[0]!.payload).length,
           payloadJson: JSON.stringify(rawReports[0]!.payload),
-          parserVersion: "ccusage-v20-raw-2",
+          parserVersion: "ccusage-v20-raw-3",
           reportKind: "daily",
           source: "codex",
         }),
-        expect.objectContaining<Partial<StoredRawUsageReport>>({
-          ccusageCommand: "ccusage@^20 codex session --json --mode calculate",
-          objectKey: expect.stringMatching(
-            /^users\/user_123\/devices\/device_123\/ccusage\/codex\/session\/[a-f0-9]+\.json$/,
-          ) as unknown as string,
-          payloadBytes: JSON.stringify(rawReports[1]!.payload).length,
-          payloadJson: JSON.stringify(rawReports[1]!.payload),
-          reportKind: "session",
-          source: "codex",
-        }),
-      ]),
+      ],
       expect.any(Date),
     );
+    expect(JSON.stringify(upsertRawReports.mock.calls)).not.toContain("secret-client");
     expect(upsertChunk).toHaveBeenCalledWith(
       "user_123",
       "device_123",
@@ -355,6 +349,34 @@ describe("UsageService.ingestRaw", () => {
     expect(touchDevice).toHaveBeenCalledWith("device_123", device, expect.any(Date));
     expect(upsertRawReports.mock.invocationCallOrder[0]).toBeLessThan(
       upsertChunk.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("prefers explicit source stats and deterministically keeps the last duplicate", async () => {
+    const { repository, upsertSourceStats } = makeRepository();
+    const service = await makeService(repository);
+
+    await Effect.runPromise(
+      service.ingestRaw(
+        { deviceId: "device_123", tokenId: "token_123", user },
+        device,
+        rawReports,
+        [
+          { sessionCount: 7, source: "codex" },
+          { sessionCount: 9, source: "codex" },
+          { sessionCount: 3, source: "claude" },
+        ],
+      ),
+    );
+
+    expect(upsertSourceStats).toHaveBeenCalledWith(
+      "user_123",
+      "device_123",
+      [
+        { sessionCount: 9, source: "codex" },
+        { sessionCount: 3, source: "claude" },
+      ],
+      expect.any(Date),
     );
   });
 

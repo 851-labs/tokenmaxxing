@@ -133,6 +133,8 @@ const SourceUsageStatsInput = Schema.Struct({
 
 type SourceUsageStatsInput = typeof SourceUsageStatsInput.Type;
 
+// `session` remains accepted for old CLIs; ingestion counts those entries in
+// memory and never persists their payloads.
 const UsageRawReportKind = Schema.Literals(["daily", "session"]);
 
 type UsageRawReportKind = typeof UsageRawReportKind.Type;
@@ -241,6 +243,7 @@ const IngestUsageInput = Schema.Struct({
     version: Schema.optional(Schema.String),
   }),
   reports: Schema.Array(RawUsageReportInput),
+  sourceStats: Schema.optional(Schema.Array(SourceUsageStatsInput)),
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });

@@ -204,10 +204,13 @@ function makeConsoleLayer() {
 interface TestUsageIngestRequest {
   payload: {
     device: {
+      arch?: string;
       name: string;
       platform: NodeJS.Platform;
+      version?: string;
     };
     reports: unknown[];
+    sourceStats?: { sessionCount: number; source: string }[];
   };
 }
 
@@ -465,6 +468,56 @@ describe("sync source outcomes", () => {
     ]);
   });
 
+  it("uploads daily reports plus aggregate session counts without session payloads", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+      interactive: false,
+    });
+    let uploadPayload: TestUsageIngestRequest["payload"] | undefined;
+    const auth = makeUploadAuth((request) =>
+      Effect.sync(() => {
+        uploadPayload = request.payload;
+        return { received: 1, syncedAt: "2026-07-22T00:00:00.000Z", upserted: 1 };
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      syncProgram(
+        { auth, dryRun: false, json: true, sources: "codex" },
+        {
+          runDailyReport: () =>
+            Effect.succeed({ daily: [{ date: "2026-07-22", totalTokens: 10 }] }),
+          runSessionReport: () =>
+            Effect.succeed({
+              sessions: [
+                {
+                  projectPath: "/Users/alex/secret-client",
+                  sessionId: "-Users-alex-secret-client",
+                },
+              ],
+            }),
+        },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(result).toMatchObject({ status: "ok", upserted: 1 });
+    expect(uploadPayload).toMatchObject({
+      reports: [
+        {
+          payload: { daily: [{ date: "2026-07-22", totalTokens: 10 }] },
+          reportKind: "daily",
+          source: "codex",
+        },
+      ],
+      sourceStats: [{ sessionCount: 1, source: "codex" }],
+    });
+    expect(JSON.stringify(uploadPayload)).not.toContain("secret-client");
+    expect(uploadPayload?.reports).toHaveLength(1);
+  });
+
   it("keeps daily rows when the session report fails", async () => {
     const { layer } = makeTestLayer({
       initialConfig: {
@@ -473,9 +526,16 @@ describe("sync source outcomes", () => {
       },
       interactive: false,
     });
+    let uploadPayload: TestUsageIngestRequest["payload"] | undefined;
+    const auth = makeUploadAuth((request) =>
+      Effect.sync(() => {
+        uploadPayload = request.payload;
+        return { received: 1, syncedAt: "2026-07-22T00:00:00.000Z", upserted: 1 };
+      }),
+    );
     const result = await Effect.runPromise(
       syncProgram(
-        { dryRun: true, json: true, sources: "codex" },
+        { auth, dryRun: false, json: true, sources: "codex" },
         {
           runDailyReport: () =>
             Effect.succeed({ daily: [{ date: "2026-07-22", totalTokens: 10 }] }),
@@ -492,6 +552,45 @@ describe("sync source outcomes", () => {
       status: "partial",
       summary: { sessions: null },
     });
+    expect(uploadPayload?.reports).toHaveLength(1);
+    expect(uploadPayload).not.toHaveProperty("sourceStats");
+  });
+
+  it("does not overwrite lifetime session counts during a bounded sync", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+      interactive: false,
+    });
+    let uploadPayload: TestUsageIngestRequest["payload"] | undefined;
+    const auth = makeUploadAuth((request) =>
+      Effect.sync(() => {
+        uploadPayload = request.payload;
+        return { received: 1, syncedAt: "2026-07-22T00:00:00.000Z", upserted: 1 };
+      }),
+    );
+
+    await Effect.runPromise(
+      syncProgram(
+        {
+          auth,
+          dryRun: false,
+          json: true,
+          since: "2026-07-20",
+          sources: "codex",
+        },
+        {
+          runDailyReport: () =>
+            Effect.succeed({ daily: [{ date: "2026-07-22", totalTokens: 10 }] }),
+          runSessionReport: () => Effect.succeed({ sessions: [{}, {}] }),
+        },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(uploadPayload?.reports).toHaveLength(1);
+    expect(uploadPayload).not.toHaveProperty("sourceStats");
   });
 
   it("treats a valid empty daily report as no data", async () => {
@@ -569,11 +668,18 @@ describe("uploadUsageReports", () => {
         device: { name: "Mac.local", platform: "darwin" },
         options: { json: false },
         rawReports: [],
+        sourceStats: [{ sessionCount: 42, source: "codex" }],
       }).pipe(Effect.provide(layer)),
     );
 
     expect(result.upserted).toBe(1);
-    expect(payloads).toEqual([{ device: { name: "Mac.local", platform: "darwin" }, reports: [] }]);
+    expect(payloads).toEqual([
+      {
+        device: { name: "Mac.local", platform: "darwin" },
+        reports: [],
+        sourceStats: [{ sessionCount: 42, source: "codex" }],
+      },
+    ]);
     expect(state.logs).toEqual(["Uploading usage", "Usage uploaded"]);
     expect(state.errors).toEqual([]);
   });

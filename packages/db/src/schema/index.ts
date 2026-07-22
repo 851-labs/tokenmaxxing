@@ -195,8 +195,9 @@ const usageSourceStats = sqliteTable(
 );
 
 /**
- * Raw ccusage reports as received from the CLI. Structured tables are derived
- * from these rows so parser changes can be backfilled server-side later.
+ * Normalized daily ccusage reports used for server-side parser backfills.
+ * Historical rows may include session reports from before aggregate-only
+ * session stats were introduced.
  */
 const usageRawBatches = sqliteTable(
   "usage_raw_batches",

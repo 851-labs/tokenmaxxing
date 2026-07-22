@@ -135,8 +135,8 @@ class UsageGroup extends HttpApiGroup.make("usage")
     }),
   )
   .add(
-    // Legacy structured sync for old CLI clients. New clients send raw ccusage
-    // reports to /usage/ingest and let the API derive structured rows.
+    // Legacy structured sync for old CLI clients. New clients send normalized
+    // daily ccusage reports and aggregate source stats to /usage/ingest.
     HttpApiEndpoint.post("sync", "/usage/sync", {
       payload: SyncUsageInput,
       success: SyncUsageResponse,

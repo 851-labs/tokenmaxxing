@@ -5,7 +5,7 @@ import type {
 } from "@tokenmaxxing/api-contract";
 import { Effect, Option, Schema } from "effect";
 
-const PARSER_VERSION = "ccusage-v20-raw-2";
+const PARSER_VERSION = "ccusage-v20-raw-3";
 
 const CcusageModelBreakdown = Schema.Struct({
   cacheCreationTokens: Schema.optional(Schema.Number),
@@ -56,14 +56,20 @@ const decodeDailyReport = Schema.decodeUnknownEffect(CcusageDailyReport);
 const decodeSessionReport = Schema.decodeUnknownEffect(CcusageSessionReport);
 
 interface ParsedRawUsageReports {
+  persistableReports: PersistableDailyReport[];
   rows: UsageDayInput[];
   sourceStats: SourceUsageStatsInput[];
 }
+
+type PersistableDailyReport = Omit<RawUsageReportInput, "reportKind"> & {
+  reportKind: "daily";
+};
 
 function parseRawUsageReports(
   reports: readonly RawUsageReportInput[],
 ): Effect.Effect<ParsedRawUsageReports> {
   return Effect.gen(function* () {
+    const persistableReports: PersistableDailyReport[] = [];
     const rows: UsageDayInput[] = [];
     const sourceStats: SourceUsageStatsInput[] = [];
 
@@ -71,6 +77,12 @@ function parseRawUsageReports(
       if (report.reportKind === "daily") {
         const decoded = yield* decodeDailyReport(report.payload).pipe(Effect.option);
         if (Option.isSome(decoded)) {
+          persistableReports.push({
+            command: report.command,
+            payload: decoded.value,
+            reportKind: "daily",
+            source: report.source,
+          });
           rows.push(...aggregateDays(report.source, decoded.value.daily));
         }
       } else {
@@ -84,7 +96,7 @@ function parseRawUsageReports(
       }
     }
 
-    return { rows, sourceStats };
+    return { persistableReports, rows, sourceStats };
   });
 }
 
@@ -200,3 +212,5 @@ function collectModelEntries(day: CcusageDay): ModelTotals[] {
 }
 
 export { parseRawUsageReports, PARSER_VERSION };
+
+export type { PersistableDailyReport };

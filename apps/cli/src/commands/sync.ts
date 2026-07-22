@@ -18,7 +18,6 @@ import {
   dailyCcusageCommand,
   runCcusageDailyReport,
   runCcusageSessionReport,
-  sessionCcusageCommand,
 } from "../ccusage/runner";
 import { DEFAULT_SOURCE_NAMES, resolveSources } from "../ccusage/sources";
 import {
@@ -193,6 +192,7 @@ interface UploadUsageReportsOptions {
   };
   options: Pick<SyncProgramOptions, "json" | "silent">;
   rawReports: RawUsageReportInput[];
+  sourceStats?: SourceUsageStatsInput[] | undefined;
   uploadPolicy?: UploadRetryPolicy | undefined;
 }
 
@@ -324,14 +324,6 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
       );
       const sessionCount =
         sessionResult._tag === "success" ? sessionResult.report.sessions.length : null;
-      if (options.since === undefined && sessionResult._tag === "success") {
-        rawReports.push({
-          command: sessionCcusageCommand(source),
-          payload: sessionResult.report,
-          reportKind: "session",
-          source: source.source,
-        });
-      }
       const summary = { ...summarize(sourceRows), sessions: sessionCount };
       const result: SyncSourceResult =
         sessionResult._tag === "failure"
@@ -390,6 +382,7 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
       device,
       options,
       rawReports,
+      sourceStats: options.since === undefined ? sourceStatsForSync(sourceResults) : undefined,
       uploadPolicy: options.uploadPolicy,
     });
     upserted = response.upserted;
@@ -411,11 +404,12 @@ function uploadUsageReports({
   device,
   options,
   rawReports,
+  sourceStats,
   uploadPolicy,
 }: UploadUsageReportsOptions) {
   return Effect.gen(function* () {
     const spinner = yield* humanSpinner("Uploading usage", options);
-    const upload = uploadUsageReportsOnce({ auth, device, rawReports }, uploadPolicy);
+    const upload = uploadUsageReportsOnce({ auth, device, rawReports, sourceStats }, uploadPolicy);
 
     return yield* upload.pipe(
       Effect.tap(() => Effect.sync(() => spinner.stop("Usage uploaded"))),
@@ -426,7 +420,7 @@ function uploadUsageReports({
 }
 
 function uploadUsageReportsOnce(
-  input: Pick<UploadUsageReportsOptions, "auth" | "device" | "rawReports">,
+  input: Pick<UploadUsageReportsOptions, "auth" | "device" | "rawReports" | "sourceStats">,
   uploadPolicy: UploadRetryPolicy | undefined,
 ) {
   const upload = () =>
@@ -434,6 +428,7 @@ function uploadUsageReportsOnce(
       payload: {
         device: input.device,
         reports: input.rawReports,
+        ...(input.sourceStats === undefined ? {} : { sourceStats: input.sourceStats }),
       },
     });
 

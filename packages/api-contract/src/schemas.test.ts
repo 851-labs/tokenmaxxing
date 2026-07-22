@@ -117,6 +117,20 @@ describe("device telemetry inputs", () => {
       },
     });
   });
+
+  it("accepts aggregate source stats on raw usage ingestion", async () => {
+    await expect(
+      Schema.decodeUnknownPromise(IngestUsageInput)({
+        device: { name: "Mac.localdomain", platform: "darwin" },
+        reports: [],
+        sourceStats: [{ sessionCount: 42, source: "codex" }],
+      }),
+    ).resolves.toEqual({
+      device: { name: "Mac.localdomain", platform: "darwin" },
+      reports: [],
+      sourceStats: [{ sessionCount: 42, source: "codex" }],
+    });
+  });
 });
 
 describe("profile daily responses", () => {

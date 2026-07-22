@@ -135,7 +135,12 @@ const usageHandlers = HttpApiBuilder.group(TokenmaxxingApi, "usage", (handlers) 
       Effect.gen(function* () {
         const identity = yield* CurrentCliIdentity;
         const usage = yield* UsageService;
-        return yield* usage.ingestRaw(identity, payload.device, payload.reports);
+        return yield* usage.ingestRaw(
+          identity,
+          payload.device,
+          payload.reports,
+          payload.sourceStats,
+        );
       }),
     )
     .handle("sync", ({ payload }) =>

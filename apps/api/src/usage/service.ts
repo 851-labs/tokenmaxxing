@@ -17,14 +17,15 @@ import type {
 
 import { sha256Hex } from "../auth/crypto";
 import type { DatabaseError } from "../database";
-import { parseRawUsageReports, PARSER_VERSION } from "./ccusage";
+import { parseRawUsageReports, PARSER_VERSION, type PersistableDailyReport } from "./ccusage";
 import { normalizeUsageDays } from "./models";
 import type { RawUsageStorageError } from "./raw-store";
 
 /**
- * Usage ingestion: raw reports are stored first, then current structured rows
- * are derived and upserted idempotently by (deviceId, date, source, model).
- * The deviceId always comes from the presenting token — payloads cannot write
+ * Usage ingestion: normalized daily reports are stored first, then current
+ * structured rows and aggregate source stats are upserted idempotently.
+ * Legacy session reports are counted in memory and never persisted. The
+ * deviceId always comes from the presenting token, so payloads cannot write
  * into another device's history.
  */
 
@@ -43,7 +44,7 @@ interface StoredRawUsageReport {
   payloadHash: string;
   payloadJson: string;
   processedAt: Date;
-  reportKind: "daily" | "session";
+  reportKind: "daily";
   source: string;
 }
 
@@ -57,6 +58,7 @@ interface UsageServiceShape {
     identity: typeof CliIdentity.Type,
     device: UsageDevice,
     reports: readonly RawUsageReportInput[],
+    sourceStats?: readonly SourceUsageStatsInput[],
   ): Effect.Effect<SyncResult, DeviceMissing, any>;
   syncBatch(
     identity: typeof CliIdentity.Type,
@@ -159,23 +161,33 @@ const makeUsageService = Effect.fn("makeUsageService")(function* () {
         checkedInAt: checkedInAt.toISOString(),
       };
     }),
-    ingestRaw: Effect.fn("UsageService.ingestRaw")(function* (identity, device, reports) {
+    ingestRaw: Effect.fn("UsageService.ingestRaw")(function* (
+      identity,
+      device,
+      reports,
+      sourceStats = [],
+    ) {
       const deviceId = yield* requireDeviceId(identity);
       const syncedAt = new Date();
-      const rawReports = yield* prepareRawReports(identity.user.id, deviceId, reports, syncedAt);
+      const parsed = yield* parseRawUsageReports(reports);
+      const rawReports = yield* prepareRawReports(
+        identity.user.id,
+        deviceId,
+        parsed.persistableReports,
+        syncedAt,
+      );
 
       yield* repository
         .upsertRawReports(identity.user.id, deviceId, rawReports, syncedAt)
         .pipe(Effect.orDie);
 
-      const parsed = yield* parseRawUsageReports(reports);
       const upserted = yield* writeStructuredUsage(
         repository,
         identity.user.id,
         deviceId,
         device,
         parsed.rows,
-        parsed.sourceStats,
+        mergeSourceStats(parsed.sourceStats, sourceStats),
         syncedAt,
       );
 
@@ -229,7 +241,7 @@ function requireDeviceId(identity: typeof CliIdentity.Type): Effect.Effect<strin
 function prepareRawReports(
   userId: string,
   deviceId: string,
-  reports: readonly RawUsageReportInput[],
+  reports: readonly PersistableDailyReport[],
   processedAt: Date,
 ): Effect.Effect<StoredRawUsageReport[]> {
   return Effect.forEach(reports, (report) =>
@@ -265,7 +277,7 @@ function prepareRawReports(
 function rawReportObjectKey(input: {
   deviceId: string;
   payloadHash: string;
-  reportKind: "daily" | "session";
+  reportKind: "daily";
   source: string;
   userId: string;
 }): string {
@@ -283,6 +295,21 @@ function rawReportObjectKey(input: {
 
 function encodeKeyPart(value: string): string {
   return encodeURIComponent(value);
+}
+
+function mergeSourceStats(
+  legacyStats: readonly SourceUsageStatsInput[],
+  explicitStats: readonly SourceUsageStatsInput[],
+): SourceUsageStatsInput[] {
+  const merged = new Map<string, SourceUsageStatsInput>();
+  for (const stat of legacyStats) {
+    merged.set(stat.source, stat);
+  }
+  for (const stat of explicitStats) {
+    merged.set(stat.source, stat);
+  }
+
+  return [...merged.values()];
 }
 
 function writeStructuredUsage(
