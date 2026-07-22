@@ -7,8 +7,8 @@ import { decodeDailyReport, decodeSessionReport } from "./schema";
 import type { CcusageSource } from "./sources";
 
 /**
- * Shells out to `bunx ccusage@^20.0.17 <source> daily --json --breakdown` (npx
- * fallback only when bunx itself is missing). A source that fails, is not
+ * Shells out to `bun x ccusage@^20.0.17 <source> daily --json --breakdown` (npx
+ * fallback only when bun itself is missing). A source that fails, is not
  * installed, or has no local data resolves to none — one broken agent must
  * never abort the whole sync.
  */
@@ -25,6 +25,21 @@ interface RunOptions {
   /** YYYY-MM-DD; forwarded to ccusage as compact YYYYMMDD. */
   since?: string | undefined;
 }
+
+interface CcusageCommandInvocation {
+  args: string[];
+  command: string;
+}
+
+interface ExecCcusageOptions {
+  platform?: NodeJS.Platform | undefined;
+  run?: CcusageCommandRunner | undefined;
+}
+
+type CcusageCommandRunner = (
+  command: string,
+  args: string[],
+) => Effect.Effect<string, CcusageRunError>;
 
 function runCcusageDailyReport(
   source: CcusageSource,
@@ -94,8 +109,23 @@ function sessionCcusageArgs(source: CcusageSource, options: RunOptions = {}): st
   return args;
 }
 
-function execCcusage(args: string[], source: string): Effect.Effect<string, CcusageRunError> {
-  const run = (command: string, commandArgs: string[]) =>
+function execCcusage(
+  args: string[],
+  source: string,
+  options: ExecCcusageOptions = {},
+): Effect.Effect<string, CcusageRunError> {
+  const run = options.run ?? makeCcusageCommandRunner(source);
+  const [primary, fallback] = ccusageCommandInvocations(args, options.platform ?? process.platform);
+
+  return run(primary.command, primary.args).pipe(
+    Effect.catch((error: CcusageRunError) =>
+      isMissingCommand(error.cause) ? run(fallback.command, fallback.args) : Effect.fail(error),
+    ),
+  );
+}
+
+function makeCcusageCommandRunner(source: string): CcusageCommandRunner {
+  return (command, commandArgs) =>
     Effect.callback<string, CcusageRunError>((resume) => {
       const child = execFile(
         command,
@@ -114,14 +144,21 @@ function execCcusage(args: string[], source: string): Effect.Effect<string, Ccus
         child.kill();
       });
     });
+}
 
-  return run("bunx", [CCUSAGE_SPEC, ...args]).pipe(
-    Effect.catch((error: CcusageRunError) =>
-      isMissingCommand(error.cause)
-        ? run("npx", ["-y", CCUSAGE_SPEC, ...args])
-        : Effect.fail(error),
-    ),
-  );
+function ccusageCommandInvocations(
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): [CcusageCommandInvocation, CcusageCommandInvocation] {
+  return [
+    { args: ["x", CCUSAGE_SPEC, ...args], command: "bun" },
+    {
+      args: ["-y", CCUSAGE_SPEC, ...args],
+      // The published Windows CLI is Bun-compiled, whose execFile implementation
+      // can launch npm's command shim directly. A Node runtime would need cmd.exe.
+      command: platform === "win32" ? "npx.cmd" : "npx",
+    },
+  ];
 }
 
 function isMissingCommand(cause: unknown): boolean {
@@ -129,7 +166,10 @@ function isMissingCommand(cause: unknown): boolean {
 }
 
 export {
+  CcusageRunError,
+  ccusageCommandInvocations,
   dailyCcusageCommand,
+  execCcusage,
   runCcusageDailyReport,
   runCcusageSessionReport,
   sessionCcusageCommand,
