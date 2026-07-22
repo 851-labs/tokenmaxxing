@@ -124,6 +124,32 @@ const opencodeFixture = {
   ],
 };
 
+/** Mirrors the ccusage v20 Pi agent-summary daily shape. */
+const piFixture = {
+  daily: [
+    {
+      date: "2026-07-01",
+      inputTokens: 1_200,
+      outputTokens: 300,
+      cacheCreationTokens: 100,
+      cacheReadTokens: 2_400,
+      totalTokens: 4_000,
+      totalCost: 0.42,
+      modelsUsed: ["[pi] claude-sonnet-4"],
+      modelBreakdowns: [
+        {
+          modelName: "[pi] claude-sonnet-4",
+          inputTokens: 1_200,
+          outputTokens: 300,
+          cacheCreationTokens: 100,
+          cacheReadTokens: 2_400,
+          cost: 0.42,
+        },
+      ],
+    },
+  ],
+};
+
 describe("decodeDailyReport", () => {
   it("parses the verified v20 focused-command shape", async () => {
     const report = await Effect.runPromise(decodeDailyReport(claudeFixture));
@@ -240,6 +266,25 @@ describe("aggregateDays", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ costUsd: 68.88, model: "gpt-5.3-codex" });
     expect(rows[1]).toMatchObject({ costUsd: 1.0, model: "unknown" });
+  });
+
+  it("decodes and aggregates Pi agent-summary reports", async () => {
+    const report = await Effect.runPromise(decodeDailyReport(piFixture));
+    const rows = aggregateDays("pi", report.daily);
+
+    expect(rows).toEqual([
+      {
+        cacheCreationTokens: 100,
+        cacheReadTokens: 2_400,
+        costUsd: 0.42,
+        date: "2026-07-01",
+        inputTokens: 1_200,
+        model: "[pi] claude-sonnet-4",
+        outputTokens: 300,
+        source: "pi",
+        totalTokens: 4_000,
+      },
+    ]);
   });
 
   it("distributes day cost over token weight when breakdowns lack per-model cost", () => {

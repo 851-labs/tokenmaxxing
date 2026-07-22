@@ -11,6 +11,7 @@ import {
 } from "./runner";
 
 const codex = { source: "codex", subcommand: "codex" };
+const pi = { source: "pi", subcommand: "pi" };
 
 async function ccusageErrorFor<A>(effect: Effect.Effect<A, CcusageRunError>) {
   const exit = await Effect.runPromiseExit(effect);
@@ -42,6 +43,26 @@ describe("ccusage commands", () => {
     expect(sessionCcusageCommand(codex)).toEqual([
       "ccusage@^20.0.17",
       "codex",
+      "session",
+      "--json",
+      "--mode",
+      "calculate",
+    ]);
+  });
+
+  it("builds focused Pi daily and session commands", () => {
+    expect(dailyCcusageCommand(pi)).toEqual([
+      "ccusage@^20.0.17",
+      "pi",
+      "daily",
+      "--json",
+      "--breakdown",
+      "--mode",
+      "calculate",
+    ]);
+    expect(sessionCcusageCommand(pi)).toEqual([
+      "ccusage@^20.0.17",
+      "pi",
       "session",
       "--json",
       "--mode",

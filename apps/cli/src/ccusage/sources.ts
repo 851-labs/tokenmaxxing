@@ -18,6 +18,7 @@ const CCUSAGE_SOURCES: readonly CcusageSource[] = [
   { source: "opencode", subcommand: "opencode" },
   { source: "gemini", subcommand: "gemini" },
   { source: "copilot", subcommand: "copilot" },
+  { source: "pi", subcommand: "pi" },
 ];
 
 const DEFAULT_SOURCE_NAMES = CCUSAGE_SOURCES.map((entry) => entry.source);
