@@ -1338,7 +1338,9 @@ describe("serviceScheduledSyncSince", () => {
   it("uses the previous successful local date for scheduled syncs", () => {
     expect(
       serviceScheduledSyncSince(
-        { lastSuccessAt: "2026-06-16T23:30:00.000Z", version: 1 },
+        // Midday UTC keeps the local calendar date on 2026-06-16 in every
+        // timezone the tests run in, so the assertion stays TZ-independent.
+        { lastSuccessAt: "2026-06-16T12:00:00.000Z", version: 1 },
         new Date("2026-06-17T00:05:00.000Z"),
         true,
       ),

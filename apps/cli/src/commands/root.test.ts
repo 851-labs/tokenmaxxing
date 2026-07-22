@@ -37,7 +37,8 @@ describe("root command", () => {
     expect(result.output).toContain("upgrade      Upgrade the globally installed CLI");
   });
 
-  it("exposes --json on all service subcommands and upgrade", () => {
+  // Seven subprocess spawns exceed the default timeout on slower machines.
+  it("exposes --json on all service subcommands and upgrade", { timeout: 60_000 }, () => {
     for (const args of [
       ["upgrade", "--help"],
       ["service", "install", "--help"],
