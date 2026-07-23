@@ -2,7 +2,12 @@ import { Collapsible } from "@base-ui-components/react/collapsible";
 import { Tabs as BaseTabs } from "@base-ui-components/react/tabs";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, stripSearchParams, useNavigate } from "@tanstack/react-router";
-import type { LeaderboardMetric, LeaderboardWindow } from "@tokenmaxxing/api-contract";
+import {
+  DEFAULT_LEADERBOARD_METRIC,
+  DEFAULT_LEADERBOARD_WINDOW,
+  type LeaderboardMetric,
+  type LeaderboardWindow,
+} from "@tokenmaxxing/api-contract";
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "@phosphor-icons/react/ssr";
 import { z } from "zod";
@@ -19,15 +24,21 @@ const LEADERBOARD_METRIC_VALUES = ["spend", "tokens"] as const;
 const LEADERBOARD_WINDOW_VALUES = ["7d", "30d", "all"] as const;
 
 const leaderboardSearchSchema = z.object({
-  metric: z.enum(LEADERBOARD_METRIC_VALUES).default("spend").catch("spend"),
-  window: z.enum(LEADERBOARD_WINDOW_VALUES).default("30d").catch("30d"),
+  metric: z
+    .enum(LEADERBOARD_METRIC_VALUES)
+    .default(DEFAULT_LEADERBOARD_METRIC)
+    .catch(DEFAULT_LEADERBOARD_METRIC),
+  window: z
+    .enum(LEADERBOARD_WINDOW_VALUES)
+    .default(DEFAULT_LEADERBOARD_WINDOW)
+    .catch(DEFAULT_LEADERBOARD_WINDOW),
 });
 
 type LeaderboardSearch = z.infer<typeof leaderboardSearchSchema>;
 
 const DEFAULT_LEADERBOARD_SEARCH = {
-  metric: "spend",
-  window: "30d",
+  metric: DEFAULT_LEADERBOARD_METRIC,
+  window: DEFAULT_LEADERBOARD_WINDOW,
 } as const satisfies LeaderboardSearch;
 
 const Route = createFileRoute("/")({

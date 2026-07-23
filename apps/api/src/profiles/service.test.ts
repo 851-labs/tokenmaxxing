@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { UserNotFound } from "@tokenmaxxing/api-contract";
 import type { ProfileDailyResponse, ProfileResponse } from "@tokenmaxxing/api-contract";
@@ -60,7 +60,10 @@ interface TestProfilesService {
   ): Effect.Effect<typeof ProfileDailyResponse.Type, UserNotFound>;
 }
 
-async function makeProfileService(shadowBanned: boolean): Promise<TestProfilesService> {
+async function makeProfileService(
+  shadowBanned: boolean,
+  onLeaderboardRank?: (input: { since: string | null; userId: string }) => void,
+): Promise<TestProfilesService> {
   return (await Effect.runPromise(
     makeProfilesService().pipe(
       Effect.provideService(ProfilesRepository, {
@@ -88,7 +91,10 @@ async function makeProfileService(shadowBanned: boolean): Promise<TestProfilesSe
                 })
               : Option.none(),
           ),
-        leaderboardRank: () => Effect.succeed(7),
+        leaderboardRank: (input) => {
+          onLeaderboardRank?.(input);
+          return Effect.succeed(7);
+        },
         stats: () => Effect.succeed(profileStats),
       }),
     ),
@@ -96,6 +102,24 @@ async function makeProfileService(shadowBanned: boolean): Promise<TestProfilesSe
 }
 
 describe("ProfilesService shadow-ban visibility", () => {
+  it("calculates rank with the default 30-day leaderboard window", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T22:30:00Z"));
+    let rankInput: { since: string | null; userId: string } | undefined;
+
+    try {
+      const service = await makeProfileService(false, (input) => {
+        rankInput = input;
+      });
+
+      await Effect.runPromise(service.getProfile("target", null));
+
+      expect(rankInput).toEqual({ since: "2026-05-14", userId: "user_target" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps visible profiles public", async () => {
     const service = await makeProfileService(false);
 

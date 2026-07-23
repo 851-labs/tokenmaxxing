@@ -83,8 +83,12 @@ describe("public usage visibility", () => {
     );
 
     const entries = await run(leaderboard.list({ limit: 10, metric: "tokens", since: null }));
-    const visibleRank = await run(profiles.leaderboardRank("visible"));
-    const bannedRank = await run(profiles.leaderboardRank("banned"));
+    const visibleRank = await run(
+      profiles.leaderboardRank({ since: "2026-06-10", userId: "visible" }),
+    );
+    const bannedRank = await run(
+      profiles.leaderboardRank({ since: "2026-06-10", userId: "banned" }),
+    );
     const hidden = await run(stats.snapshot({ last30dSince: "2026-06-10", limit: 10 }));
 
     expect(entries.map((entry) => [entry.rank, entry.user.login])).toEqual([[1, "visible"]]);
@@ -108,8 +112,12 @@ describe("public usage visibility", () => {
 
     sqlite.prepare("update users set shadow_banned_at = null where id = 'banned'").run();
 
-    const restoredBannedRank = await run(profiles.leaderboardRank("banned"));
-    const restoredVisibleRank = await run(profiles.leaderboardRank("visible"));
+    const restoredBannedRank = await run(
+      profiles.leaderboardRank({ since: "2026-06-10", userId: "banned" }),
+    );
+    const restoredVisibleRank = await run(
+      profiles.leaderboardRank({ since: "2026-06-10", userId: "visible" }),
+    );
     const restored = await run(stats.snapshot({ last30dSince: "2026-06-10", limit: 10 }));
     expect(restoredBannedRank).toBe(1);
     expect(restoredVisibleRank).toBe(2);
@@ -121,6 +129,42 @@ describe("public usage visibility", () => {
       userCount: 2,
     });
     expect(restored.topUsers.byTokens[0]?.user.login).toBe("banned");
+  });
+
+  it("applies the same date window as the leaderboard", async () => {
+    sqlite.prepare("update users set shadow_banned_at = null where id = 'banned'").run();
+    sqlite
+      .prepare(
+        `insert into usage_days (
+          device_id, user_id, date, source, model, input_tokens, output_tokens,
+          cache_creation_tokens, cache_read_tokens, total_tokens, cost_usd, synced_at
+        ) values (
+          'visible-old-device', 'visible', '2026-05-01', 'codex', 'visible-model',
+          0, 0, 0, 0, 1, 1000, 0
+        )`,
+      )
+      .run();
+
+    const drizzleLayer = Drizzle.layer({ raw: Effect.succeed(d1Database(sqlite)) });
+    const profiles = await Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* ProfilesRepository;
+      }).pipe(Effect.provide(ProfilesRepositoryLive.pipe(Layer.provide(drizzleLayer)))),
+    );
+
+    const allTimeVisibleRank = await run(
+      profiles.leaderboardRank({ since: null, userId: "visible" }),
+    );
+    const recentVisibleRank = await run(
+      profiles.leaderboardRank({ since: "2026-06-10", userId: "visible" }),
+    );
+    const recentBannedRank = await run(
+      profiles.leaderboardRank({ since: "2026-06-10", userId: "banned" }),
+    );
+
+    expect(allTimeVisibleRank).toBe(1);
+    expect(recentVisibleRank).toBe(2);
+    expect(recentBannedRank).toBe(1);
   });
 });
 

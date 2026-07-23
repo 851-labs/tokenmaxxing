@@ -31,7 +31,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
               },
             });
       }),
-    leaderboardRank: (userId) =>
+    leaderboardRank: (input) =>
       Effect.gen(function* () {
         const rows = yield* database.use((db) => {
           const rankedUsers = db
@@ -43,14 +43,18 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
             })
             .from(usageDays)
             .innerJoin(users, eq(usageDays.userId, users.id))
-            .where(isNull(users.shadowBannedAt))
+            .where(
+              input.since === null
+                ? isNull(users.shadowBannedAt)
+                : and(isNull(users.shadowBannedAt), gte(usageDays.date, input.since)),
+            )
             .groupBy(usageDays.userId)
             .as("ranked_users");
 
           return db
             .select({ rank: rankedUsers.rank })
             .from(rankedUsers)
-            .where(eq(rankedUsers.userId, userId))
+            .where(eq(rankedUsers.userId, input.userId))
             .limit(1);
         });
 

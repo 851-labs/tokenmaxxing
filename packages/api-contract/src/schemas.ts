@@ -273,6 +273,9 @@ const LeaderboardWindow = Schema.Literals(["all", "30d", "7d"]);
 type LeaderboardMetric = typeof LeaderboardMetric.Type;
 type LeaderboardWindow = typeof LeaderboardWindow.Type;
 
+const DEFAULT_LEADERBOARD_METRIC = "spend" as const satisfies LeaderboardMetric;
+const DEFAULT_LEADERBOARD_WINDOW = "30d" as const satisfies LeaderboardWindow;
+
 const LeaderboardEntry = Schema.Struct({
   activeDays: Schema.Number,
   lastDate: Schema.NullOr(Schema.String),
@@ -595,6 +598,8 @@ export {
   DeviceSummary,
   HealthResponse,
   IngestUsageInput,
+  DEFAULT_LEADERBOARD_METRIC,
+  DEFAULT_LEADERBOARD_WINDOW,
   LeaderboardEntry,
   LeaderboardMetric,
   LeaderboardResponse,

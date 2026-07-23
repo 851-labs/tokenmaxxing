@@ -2,7 +2,7 @@ import { Context } from "effect";
 import { Effect } from "effect";
 import { Option } from "effect";
 
-import { UserNotFound } from "@tokenmaxxing/api-contract";
+import { DEFAULT_LEADERBOARD_WINDOW, UserNotFound } from "@tokenmaxxing/api-contract";
 import type {
   AuthUser,
   ProfileDailyGroupBy,
@@ -13,6 +13,7 @@ import type {
 } from "@tokenmaxxing/api-contract";
 
 import type { DatabaseError } from "../database";
+import { windowStart } from "../leaderboard/service";
 
 /**
  * Public profile dashboards: lifetime stats for the header cards plus the
@@ -48,7 +49,10 @@ type ProfileStatsWithoutRank = Omit<typeof ProfileStats.Type, "leaderboardRank">
 
 interface ProfilesRepositoryShape {
   findUserByLogin(login: string): Effect.Effect<Option.Option<ProfileUser>, DatabaseError, any>;
-  leaderboardRank(userId: string): Effect.Effect<number | null, DatabaseError, any>;
+  leaderboardRank(input: {
+    since: string | null;
+    userId: string;
+  }): Effect.Effect<number | null, DatabaseError, any>;
   stats(userId: string): Effect.Effect<ProfileStatsWithoutRank, DatabaseError, any>;
   daily(
     userId: string,
@@ -86,7 +90,13 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
     getProfile: Effect.fn("ProfilesService.getProfile")(function* (login, viewerUserId) {
       const user = yield* requireUser(login, viewerUserId);
       const [stats, leaderboardRank] = yield* Effect.all(
-        [repository.stats(user.id), repository.leaderboardRank(user.id)],
+        [
+          repository.stats(user.id),
+          repository.leaderboardRank({
+            since: windowStart(DEFAULT_LEADERBOARD_WINDOW, new Date()),
+            userId: user.id,
+          }),
+        ],
         { concurrency: "unbounded" },
       ).pipe(Effect.orDie);
 

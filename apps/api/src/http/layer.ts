@@ -14,7 +14,13 @@ import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
 
-import { CurrentCliIdentity, CurrentUser, TokenmaxxingApi } from "@tokenmaxxing/api-contract";
+import {
+  CurrentCliIdentity,
+  CurrentUser,
+  DEFAULT_LEADERBOARD_METRIC,
+  DEFAULT_LEADERBOARD_WINDOW,
+  TokenmaxxingApi,
+} from "@tokenmaxxing/api-contract";
 import type { Authorization, CliAuth } from "@tokenmaxxing/api-contract";
 
 import { AppConfig } from "../config";
@@ -167,8 +173,8 @@ const leaderboardHandlers = HttpApiBuilder.group(TokenmaxxingApi, "leaderboard",
   handlers.handle("list", ({ query }) =>
     Effect.gen(function* () {
       const leaderboard = yield* LeaderboardService;
-      const metric = query.metric ?? "spend";
-      const window = query.window ?? "all";
+      const metric = query.metric ?? DEFAULT_LEADERBOARD_METRIC;
+      const window = query.window ?? DEFAULT_LEADERBOARD_WINDOW;
 
       return { entries: yield* leaderboard.list(metric, window), metric, window };
     }),
