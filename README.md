@@ -45,11 +45,6 @@ tokenmaxxing bootstrap
 `bootstrap` signs you in, syncs the usage already on your machine, optionally
 installs automatic syncing, and opens your public profile.
 
-You can also install with
-`bun add -g --trust @851-labs/tokenmaxxing@latest`,
-`pnpm add -g @851-labs/tokenmaxxing@latest`, or
-`yarn global add @851-labs/tokenmaxxing@latest`.
-
 ## How it works
 
 tokenmaxxing uses [ccusage](https://ccusage.com/) to read local coding-agent
