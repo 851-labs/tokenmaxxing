@@ -1,8 +1,8 @@
 <div align="center">
   <h1><b>tokenmaxxing</b></h1>
   <p>
-    The social leaderboard for LLM coding-agent token usage.<br>
-    Sync locally. Track tokens and spend. Climb the board.
+    The best place to track token usage<br>
+    A local CLI, built on ccusage, that syncs your token usage with everyone else.
   </p>
 </div>
 
