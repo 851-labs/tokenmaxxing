@@ -1,5 +1,5 @@
 <div align="center">
-  <h1><b>tokenmaxxing</b></h1>
+  <h1><b><a href="https://tokenmaxxing.sh">tokenmaxxing.sh</a></b></h1>
   <p>
     The best place to track token usage<br>
     A local CLI, built on ccusage, that syncs your token usage with everyone else.
