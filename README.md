@@ -19,6 +19,9 @@
   <a href="https://github.com/851-labs/tokenmaxxing">
     <img src="https://img.shields.io/github/stars/851-labs/tokenmaxxing?style=flat" alt="GitHub stars">
   </a>
+  <a href="https://discord.gg/WzX6BpfaRH">
+    <img src="https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white&style=flat" alt="Join the tokenmaxxing Discord">
+  </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-blue?style=flat" alt="MIT License">
   </a>
