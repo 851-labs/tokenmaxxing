@@ -31,7 +31,7 @@
 
 <div align="center">
   <a href="https://tokenmaxxing.sh">
-    <img src="docs/screenshots/leaderboard.png" alt="tokenmaxxing bootstrap command and public leaderboard">
+    <img src="docs/screenshots/profile.png" alt="tokenmaxxing profile dashboard with usage stats and daily spend">
   </a>
 </div>
 
