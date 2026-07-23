@@ -1,104 +1,111 @@
-# tokenmaxxing
+<div align="center">
+  <h1><b>tokenmaxxing</b></h1>
+  <p>
+    The social leaderboard for LLM coding-agent token usage.<br>
+    Sync locally. Track tokens and spend. Climb the board.
+  </p>
+</div>
 
-The social leaderboard for LLM token usage. Sync your local agent usage
-(Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI, Pi), climb the board at
-[tokenmaxxing.sh](https://tokenmaxxing.sh).
+<div align="center">
+  <a href="https://tokenmaxxing.sh">
+    <img src="https://img.shields.io/website?url=https%3A%2F%2Ftokenmaxxing.sh&label=tokenmaxxing.sh&style=flat" alt="tokenmaxxing.sh">
+  </a>
+  <a href="https://www.npmjs.com/package/@851-labs/tokenmaxxing">
+    <img src="https://img.shields.io/npm/v/%40851-labs%2Ftokenmaxxing?label=npm&style=flat" alt="npm version">
+  </a>
+  <a href="https://www.npmjs.com/package/@851-labs/tokenmaxxing">
+    <img src="https://img.shields.io/npm/dm/%40851-labs%2Ftokenmaxxing?label=downloads&style=flat" alt="npm downloads">
+  </a>
+  <a href="https://github.com/851-labs/tokenmaxxing">
+    <img src="https://img.shields.io/github/stars/851-labs/tokenmaxxing?style=flat" alt="GitHub stars">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-blue?style=flat" alt="MIT License">
+  </a>
+</div>
 
-Built on [ccusage](https://github.com/ryoppippi/ccusage) for local usage
-parsing, [Effect](https://effect.website) v4 end to end, and deployed to
-Cloudflare (Workers + D1) with [Alchemy](https://alchemy.run) v2.
+<br>
 
-## Quick start
+<div align="center">
+  <a href="https://tokenmaxxing.sh">
+    <img src="docs/screenshots/leaderboard.png" alt="tokenmaxxing bootstrap command and public leaderboard">
+  </a>
+</div>
+
+## Installation
 
 ```bash
 npm install -g @851-labs/tokenmaxxing@latest
-tokenmaxxing login              # sign in with OAuth, approves this device
-tokenmaxxing sync               # parse local usage via ccusage and push it
-tokenmaxxing service install    # optional: sync automatically every 5 minutes
-tokenmaxxing upgrade            # upgrade the global CLI and refresh the service
+tokenmaxxing bootstrap
 ```
 
-You can also install globally with `bun add -g --trust @851-labs/tokenmaxxing@latest`,
+`bootstrap` signs you in, syncs the usage already on your machine, optionally
+installs automatic syncing, and opens your public profile.
+
+You can also install with
+`bun add -g --trust @851-labs/tokenmaxxing@latest`,
 `pnpm add -g @851-labs/tokenmaxxing@latest`, or
 `yarn global add @851-labs/tokenmaxxing@latest`.
 
-The background service uses the global `tokenmaxxing` binary and syncs every
-5 minutes. It auto-updates through the package manager that installed the
-global binary (bun, npm, pnpm, or yarn) when that package manager can be
-detected.
-After an upgrade or auto-update, installed services are refreshed automatically so scheduler
-files stay current.
-Use `tokenmaxxing service status` for the last run and `tokenmaxxing service
-doctor` to inspect scheduler files, auth, auto-update, locks, and recent logs.
+## How it works
 
-`sync` aggregates one row per (day × model × agent) and upserts — run it as
-often as you like, from as many machines as you like; profiles aggregate
-across all your devices. `--dry-run` shows what would be pushed, `--since
-YYYY-MM-DD` bounds the range, `--sources claude,codex` picks agents.
+tokenmaxxing uses [ccusage](https://ccusage.com/) to read local coding-agent
+usage, turn it into daily token and API-equivalent spend totals, and sync those
+aggregates to your public profile. The leaderboard lets you compare spend or
+tokens over the last 7 days, 30 days, or all time.
 
-### What gets uploaded (privacy)
+Sync is idempotent and profiles aggregate across devices, so you can run
+`tokenmaxxing bootstrap` on every machine and sync as often as you like.
 
-Daily aggregates only: date, model name, agent name, token counts, and the
-API-equivalent cost — never prompts, file paths, project names, or session
-content. Profiles and the leaderboard are public; device hostnames appear
-on your own settings page and in your per-device breakdown.
+## Supported agents
 
-CLI tokens never expire. Revoke them with `tokenmaxxing logout` or from
+- Claude Code
+- OpenAI Codex
+- OpenCode
+- Gemini CLI
+- GitHub Copilot CLI
+- Pi
+
+## Usage
+
+```bash
+tokenmaxxing sync                         # Sync all local usage
+tokenmaxxing sync --dry-run               # Preview exactly what would be sent
+tokenmaxxing sync --since 2026-01-01      # Only sync usage on or after a date
+tokenmaxxing sync --sources claude,codex  # Only sync selected agents
+
+tokenmaxxing service install              # Sync automatically every 5 minutes
+tokenmaxxing service status               # Show service health and the last run
+tokenmaxxing service doctor               # Inspect auth, scheduler, locks, and logs
+
+tokenmaxxing whoami                        # Show the signed-in account
+tokenmaxxing upgrade                       # Upgrade the CLI and refresh the service
+tokenmaxxing logout                        # Revoke this device's CLI token
+```
+
+The background service supports macOS, Linux, and Windows. It uses the global
+`tokenmaxxing` binary and keeps itself current through the package manager that
+installed the CLI when that package manager can be detected.
+
+## Privacy
+
+Only daily aggregates are uploaded: date, model name, agent name, token counts,
+and API-equivalent cost. tokenmaxxing never uploads prompts, file paths, project
+names, code, or session content. Preview the exact payload anytime with
+`tokenmaxxing sync --dry-run`.
+
+Profiles and leaderboard totals are public. Device hostnames are visible only
+to you in settings and your per-device breakdown. CLI tokens do not expire
+automatically; revoke one with `tokenmaxxing logout` or from
 [settings](https://tokenmaxxing.sh/settings).
 
-## Layout
+## Support
 
-- `apps/api` — Effect HttpApi server on a Cloudflare Worker (D1)
-- `apps/www` — TanStack Start site: leaderboard + profile dashboards
-- `apps/cli` — `@851-labs/tokenmaxxing`, the `tokenmaxxing` CLI
-- `packages/api-contract` — shared HttpApi contract (end-to-end types)
-- `packages/db` — drizzle schema + D1 migrations
-
-## Development
-
-```bash
-bun install
-bun run dev        # alchemy dev: api :8788 + www :3002 on *.tokenmaxxing.localhost
-bun run typecheck
-bun run test
-```
-
-Run local development from the repo root; app-level Vite dev/preview scripts are
-intentionally omitted because the web app depends on Alchemy/Cloudflare bindings.
-
-Copy `.env.example` to `.env` and fill in the GitHub and Google OAuth pairs.
-Dev callbacks are `http://api.tokenmaxxing.localhost:8788/auth/github/callback`
-and `http://api.tokenmaxxing.localhost:8788/auth/google/callback`.
-Run the CLI against the dev stack with
-`TOKENMAXXING_ENV=development bun apps/cli/src/index.ts <command>`.
-
-## Deploys
-
-Every push to `main` deploys via GitHub Actions (typecheck + tests gate
-it). Deploy state lives on a Cloudflare state-store worker
-(`alchemy cloudflare bootstrap`), shared between CI and local machines —
-`bun run deploy` does the same deploy locally, reading the prod OAuth pairs
-from `.env.production`. Required repo secrets: `CLOUDFLARE_API_TOKEN`,
-`TMX_GITHUB_CLIENT_ID`, `TMX_GITHUB_CLIENT_SECRET`,
-`TMX_GOOGLE_CLIENT_ID`, `TMX_GOOGLE_CLIENT_SECRET`.
-
-## CLI Releases
-
-The CLI publishes to npm from the `Release CLI` GitHub Actions workflow.
-Publishing is tag-based: bump `apps/cli/package.json`, commit the bump to
-`main`, then push a tag named `cli-vX.Y.Z` that exactly matches the package
-version.
-
-```bash
-git tag cli-vX.Y.Z
-git push origin main
-git push origin cli-vX.Y.Z
-```
-
-Before the first release from this workflow, configure npm trusted
-publishing for package `@851-labs/tokenmaxxing` with repository
-`851-labs/tokenmaxxing` and workflow `.github/workflows/release-cli.yml`.
+Join the [Discord](https://discord.gg/WzX6BpfaRH), follow
+[@pondorasti](https://x.com/pondorasti), or
+[open an issue](https://github.com/851-labs/tokenmaxxing/issues).
+If you like tokenmaxxing, please consider giving the project a star.
 
 ## License
 
-MIT
+This project is released under the [MIT License](LICENSE).
