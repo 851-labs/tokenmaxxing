@@ -1,10 +1,34 @@
 import { describe, expect, it } from "vitest";
-import type { ProfileDailyResponse, ProfileDailyRow } from "@tokenmaxxing/api-contract";
+import type {
+  ProfileDailyResponse,
+  ProfileDailyRow,
+  ProfileResponse,
+} from "@tokenmaxxing/api-contract";
 
-import { deriveCharts } from "./$user";
+import { DEFAULT_FAVICON_URL } from "../lib/favicon";
+import { deriveCharts, profileHead } from "./$user";
 
 type DailyRange = (typeof ProfileDailyResponse.Type)["range"];
 type DailyRow = typeof ProfileDailyRow.Type;
+type Profile = typeof ProfileResponse.Type;
+
+describe("profile metadata", () => {
+  it("uses the profile avatar as the favicon", () => {
+    const avatarUrl = "https://github.com/pondorasti.png";
+
+    expect(profileHead(profile(avatarUrl)).links).toContainEqual({
+      rel: "icon",
+      href: avatarUrl,
+    });
+  });
+
+  it("falls back to the default gradient when the profile has no avatar", () => {
+    expect(profileHead(profile(null)).links).toContainEqual({
+      rel: "icon",
+      href: DEFAULT_FAVICON_URL,
+    });
+  });
+});
 
 describe("deriveCharts", () => {
   it("fills sparse usage rows across the server-provided chart range", () => {
@@ -149,5 +173,32 @@ function dailyRow({
     key,
     outputTokens: 0,
     totalTokens,
+  };
+}
+
+function profile(avatarUrl: string | null): Profile {
+  return {
+    stats: {
+      activeDays: 7,
+      avgSpendPerActiveDay: 17.64,
+      currentStreakDays: 3,
+      deviceCount: 2,
+      firstDate: "2026-01-01",
+      lastDate: "2026-06-21",
+      leaderboardRank: 7,
+      longestStreakDays: 12,
+      peakDay: { date: "2026-06-20", spendUsd: 42 },
+      sessionCount: 14,
+      sources: ["claude", "codex"],
+      topModel: { model: "claude-opus", spendUsd: 42 },
+      totalSpendUsd: 123.45,
+      totalTokens: 987_654,
+    },
+    user: {
+      avatarUrl,
+      id: "user_123",
+      login: "pondorasti",
+      name: null,
+    },
   };
 }
