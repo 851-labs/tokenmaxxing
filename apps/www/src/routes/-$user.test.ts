@@ -1,10 +1,37 @@
 import { describe, expect, it } from "vitest";
-import type { ProfileDailyResponse, ProfileDailyRow } from "@tokenmaxxing/api-contract";
+import type {
+  ProfileDailyResponse,
+  ProfileDailyRow,
+  ProfileResponse,
+} from "@tokenmaxxing/api-contract";
 
-import { deriveCharts } from "./$user";
+import { DEFAULT_FAVICON_URL } from "../lib/favicon";
+import { deriveCharts, profileHead } from "./$user";
 
 type DailyRange = (typeof ProfileDailyResponse.Type)["range"];
 type DailyRow = typeof ProfileDailyRow.Type;
+type Profile = typeof ProfileResponse.Type;
+
+describe("profile metadata", () => {
+  it("uses the composite profile favicon route when an avatar is available", () => {
+    const head = profileHead(profile("https://avatars.githubusercontent.com/u/89296201?v=4"));
+    const link = head.links[0];
+
+    expect(link).toMatchObject({
+      rel: "icon",
+      type: "image/svg+xml",
+    });
+    expect(link?.href).toMatch(/^\/favicon\/pondorasti\.svg\?v=[a-z0-9]+$/);
+  });
+
+  it("uses the centered default favicon when no avatar is available", () => {
+    expect(profileHead(profile(null)).links).toContainEqual({
+      rel: "icon",
+      href: DEFAULT_FAVICON_URL,
+      type: "image/svg+xml",
+    });
+  });
+});
 
 describe("deriveCharts", () => {
   it("fills sparse usage rows across the server-provided chart range", () => {
@@ -149,5 +176,32 @@ function dailyRow({
     key,
     outputTokens: 0,
     totalTokens,
+  };
+}
+
+function profile(avatarUrl: string | null): Profile {
+  return {
+    stats: {
+      activeDays: 7,
+      avgSpendPerActiveDay: 17.64,
+      currentStreakDays: 3,
+      deviceCount: 2,
+      firstDate: "2026-01-01",
+      lastDate: "2026-06-21",
+      leaderboardRank: 7,
+      longestStreakDays: 12,
+      peakDay: { date: "2026-06-20", spendUsd: 42 },
+      sessionCount: 14,
+      sources: ["claude", "codex"],
+      topModel: { model: "claude-opus", spendUsd: 42 },
+      totalSpendUsd: 123.45,
+      totalTokens: 987_654,
+    },
+    user: {
+      avatarUrl,
+      id: "user_123",
+      login: "pondorasti",
+      name: null,
+    },
   };
 }

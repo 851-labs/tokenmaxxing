@@ -7,7 +7,7 @@ describe("root metadata", () => {
   it("uses local 851 Labs gradient icons", () => {
     const head = rootHead();
 
-    expect(linkHref(head.links, "icon")).toBe("/favicon.png");
+    expect(linkHref(head.links, "icon")).toBe("/favicon.svg");
     expect(linkHref(head.links, "apple-touch-icon")).toBe("/apple-touch-icon.png");
   });
 

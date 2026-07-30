@@ -46,7 +46,7 @@ function rootHead() {
     ],
     links: [
       { rel: "apple-touch-icon", href: DEFAULT_APPLE_TOUCH_ICON_URL },
-      { rel: "icon", href: DEFAULT_FAVICON_URL },
+      { rel: "icon", href: DEFAULT_FAVICON_URL, type: "image/svg+xml" },
       { rel: "stylesheet", href: styles },
     ],
     scripts: [

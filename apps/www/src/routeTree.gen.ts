@@ -17,12 +17,14 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
 import { Route as InternalRouteImport } from './routes/internal'
+import { Route as FaviconDotsvgRouteImport } from './routes/favicon[.]svg'
 import { Route as DesignRouteImport } from './routes/design'
 import { Route as UserRouteImport } from './routes/$user'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as OgChar123loginChar125DotpngRouteImport } from './routes/og/{$login}[.]png'
 import { Route as OgCardLoginRouteImport } from './routes/og-card/$login'
 import { Route as LoginCliRouteImport } from './routes/login_.cli'
+import { Route as FaviconChar123loginChar125DotsvgRouteImport } from './routes/favicon/{$login}[.]svg'
 
 const TermsRoute = TermsRouteImport.update({
   id: '/terms',
@@ -64,6 +66,11 @@ const InternalRoute = InternalRouteImport.update({
   path: '/internal',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FaviconDotsvgRoute = FaviconDotsvgRouteImport.update({
+  id: '/favicon.svg',
+  path: '/favicon.svg',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DesignRoute = DesignRouteImport.update({
   id: '/design',
   path: '/design',
@@ -95,11 +102,18 @@ const LoginCliRoute = LoginCliRouteImport.update({
   path: '/login/cli',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FaviconChar123loginChar125DotsvgRoute =
+  FaviconChar123loginChar125DotsvgRouteImport.update({
+    id: '/favicon/{$login}.svg',
+    path: '/favicon/{$login}.svg',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
+  '/favicon.svg': typeof FaviconDotsvgRoute
   '/internal': typeof InternalRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
@@ -108,6 +122,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/stats': typeof StatsRoute
   '/terms': typeof TermsRoute
+  '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
   '/og/{$login}.png': typeof OgChar123loginChar125DotpngRoute
@@ -116,6 +131,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
+  '/favicon.svg': typeof FaviconDotsvgRoute
   '/internal': typeof InternalRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
@@ -124,6 +140,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/stats': typeof StatsRoute
   '/terms': typeof TermsRoute
+  '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
   '/og/{$login}.png': typeof OgChar123loginChar125DotpngRoute
@@ -133,6 +150,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
+  '/favicon.svg': typeof FaviconDotsvgRoute
   '/internal': typeof InternalRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
@@ -141,6 +159,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/stats': typeof StatsRoute
   '/terms': typeof TermsRoute
+  '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login_/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
   '/og/{$login}.png': typeof OgChar123loginChar125DotpngRoute
@@ -151,6 +170,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$user'
     | '/design'
+    | '/favicon.svg'
     | '/internal'
     | '/llms.txt'
     | '/login'
@@ -159,6 +179,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/stats'
     | '/terms'
+    | '/favicon/{$login}.svg'
     | '/login/cli'
     | '/og-card/$login'
     | '/og/{$login}.png'
@@ -167,6 +188,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$user'
     | '/design'
+    | '/favicon.svg'
     | '/internal'
     | '/llms.txt'
     | '/login'
@@ -175,6 +197,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/stats'
     | '/terms'
+    | '/favicon/{$login}.svg'
     | '/login/cli'
     | '/og-card/$login'
     | '/og/{$login}.png'
@@ -183,6 +206,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$user'
     | '/design'
+    | '/favicon.svg'
     | '/internal'
     | '/llms.txt'
     | '/login'
@@ -191,6 +215,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/stats'
     | '/terms'
+    | '/favicon/{$login}.svg'
     | '/login_/cli'
     | '/og-card/$login'
     | '/og/{$login}.png'
@@ -200,6 +225,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   UserRoute: typeof UserRoute
   DesignRoute: typeof DesignRoute
+  FaviconDotsvgRoute: typeof FaviconDotsvgRoute
   InternalRoute: typeof InternalRoute
   LlmsDottxtRoute: typeof LlmsDottxtRoute
   LoginRoute: typeof LoginRoute
@@ -208,6 +234,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   StatsRoute: typeof StatsRoute
   TermsRoute: typeof TermsRoute
+  FaviconChar123loginChar125DotsvgRoute: typeof FaviconChar123loginChar125DotsvgRoute
   LoginCliRoute: typeof LoginCliRoute
   OgCardLoginRoute: typeof OgCardLoginRoute
   OgChar123loginChar125DotpngRoute: typeof OgChar123loginChar125DotpngRoute
@@ -271,6 +298,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InternalRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/favicon.svg': {
+      id: '/favicon.svg'
+      path: '/favicon.svg'
+      fullPath: '/favicon.svg'
+      preLoaderRoute: typeof FaviconDotsvgRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/design': {
       id: '/design'
       path: '/design'
@@ -313,6 +347,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginCliRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/favicon/{$login}.svg': {
+      id: '/favicon/{$login}.svg'
+      path: '/favicon/{$login}.svg'
+      fullPath: '/favicon/{$login}.svg'
+      preLoaderRoute: typeof FaviconChar123loginChar125DotsvgRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -320,6 +361,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   UserRoute: UserRoute,
   DesignRoute: DesignRoute,
+  FaviconDotsvgRoute: FaviconDotsvgRoute,
   InternalRoute: InternalRoute,
   LlmsDottxtRoute: LlmsDottxtRoute,
   LoginRoute: LoginRoute,
@@ -328,6 +370,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   StatsRoute: StatsRoute,
   TermsRoute: TermsRoute,
+  FaviconChar123loginChar125DotsvgRoute: FaviconChar123loginChar125DotsvgRoute,
   LoginCliRoute: LoginCliRoute,
   OgCardLoginRoute: OgCardLoginRoute,
   OgChar123loginChar125DotpngRoute: OgChar123loginChar125DotpngRoute,

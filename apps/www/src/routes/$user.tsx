@@ -2,10 +2,15 @@ import { useMemo, useState } from "react";
 import { LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, notFound } from "@tanstack/react-router";
-import type { ProfileDailyResponse, ProfileDailyRow } from "@tokenmaxxing/api-contract";
+import type {
+  ProfileDailyResponse,
+  ProfileDailyRow,
+  ProfileResponse,
+} from "@tokenmaxxing/api-contract";
 
 type DailyRow = typeof ProfileDailyRow.Type;
 type DailyRange = (typeof ProfileDailyResponse.Type)["range"];
+type Profile = typeof ProfileResponse.Type;
 
 import { Heatmap } from "../components/charts/heatmap";
 import { MonthBars } from "../components/charts/month-bars";
@@ -24,6 +29,7 @@ import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Code } from "../components/ui/code";
 import { isApiError } from "../lib/api";
+import { profileFaviconUrl } from "../lib/favicon";
 import { breadcrumbSchema, profilePageSchema } from "../lib/jsonld";
 import {
   OG_IMAGE_HEIGHT,
@@ -57,40 +63,50 @@ const Route = createFileRoute("/$user")({
       return {};
     }
 
-    const profile = loaderData.profile;
-    const title = profileOgTitle(profile);
-    const description = profileOgDescription(profile);
-    const image = profileOgImageUrl(profile);
-    const url = profileUrl(profile);
-
-    return {
-      meta: [
-        { title },
-        { name: "description", content: description },
-        { property: "og:title", content: title },
-        { property: "og:description", content: description },
-        { property: "og:type", content: "profile" },
-        { property: "og:url", content: url },
-        { property: "og:image", content: image },
-        { property: "og:image:width", content: String(OG_IMAGE_WIDTH) },
-        { property: "og:image:height", content: String(OG_IMAGE_HEIGHT) },
-        { name: "twitter:card", content: "summary_large_image" },
-        { name: "twitter:image", content: image },
-      ],
-      scripts: [
-        {
-          type: "application/ld+json",
-          children: JSON.stringify(profilePageSchema(profile)),
-        },
-        {
-          type: "application/ld+json",
-          children: JSON.stringify(breadcrumbSchema(profile.user.login, url)),
-        },
-      ],
-    };
+    return profileHead(loaderData.profile);
   },
   component: ProfilePage,
 });
+
+function profileHead(profile: Profile) {
+  const title = profileOgTitle(profile);
+  const description = profileOgDescription(profile);
+  const image = profileOgImageUrl(profile);
+  const url = profileUrl(profile);
+
+  return {
+    meta: [
+      { title },
+      { name: "description", content: description },
+      { property: "og:title", content: title },
+      { property: "og:description", content: description },
+      { property: "og:type", content: "profile" },
+      { property: "og:url", content: url },
+      { property: "og:image", content: image },
+      { property: "og:image:width", content: String(OG_IMAGE_WIDTH) },
+      { property: "og:image:height", content: String(OG_IMAGE_HEIGHT) },
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:image", content: image },
+    ],
+    links: [
+      {
+        rel: "icon",
+        href: profileFaviconUrl(profile.user),
+        type: "image/svg+xml",
+      },
+    ],
+    scripts: [
+      {
+        type: "application/ld+json",
+        children: JSON.stringify(profilePageSchema(profile)),
+      },
+      {
+        type: "application/ld+json",
+        children: JSON.stringify(breadcrumbSchema(profile.user.login, url)),
+      },
+    ],
+  };
+}
 
 const countFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -425,4 +441,4 @@ function calendarYearEnd(date: string): string {
   return `${date.slice(0, 4)}-12-31`;
 }
 
-export { deriveCharts, Route };
+export { deriveCharts, profileHead, Route };
