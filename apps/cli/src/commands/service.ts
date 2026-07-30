@@ -80,6 +80,7 @@ const SERVICE_PACKAGE_UPDATE_TIMEOUT_MS = 4 * 60 * 1000;
 const SERVICE_VERSION_TIMEOUT_MS = 30 * 1000;
 const SERVICE_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const SERVICE_LOG_ROTATIONS = 3;
+const USAGE_REPLACEMENT_BACKFILL_VERSION = 1;
 const NPM_LATEST_URL = "https://registry.npmjs.org/@851-labs%2Ftokenmaxxing/latest";
 const SERVICE_UPLOAD_RETRY_POLICY: UploadRetryPolicy = {
   attempts: 3,
@@ -244,6 +245,7 @@ interface ServiceState {
   lastSuccessDate?: string;
   lastUpserted?: number;
   reloadRequired?: boolean;
+  usageReplacementBackfillVersion?: number;
   version: 1;
 }
 
@@ -1185,7 +1187,13 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
     const startedAtMs = startedAt.getTime();
     const cliVersion = packageJson.version;
     const cliArch = arch();
-    const scheduledSince = serviceScheduledSyncSince(currentState, startedAt, options.scheduled);
+    const usageReplacementBackfill = serviceNeedsUsageReplacementBackfill(
+      currentState,
+      options.scheduled,
+    );
+    const scheduledSince = usageReplacementBackfill
+      ? undefined
+      : serviceScheduledSyncSince(currentState, startedAt, options.scheduled);
     const metadata = yield* readServiceMetadata(paths.metadataPath);
     const nativeStatus = yield* readNativeSchedulerStatus(paths);
     const reloadRequired = serviceReloadRequired(metadata, currentState);
@@ -1269,6 +1277,7 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       json: true,
       silent: true,
       ...(scheduledSince === undefined ? {} : { since: scheduledSince }),
+      ...(usageReplacementBackfill ? { sources: "codex" } : {}),
       ...(options.scheduled ? { uploadPolicy: SERVICE_UPLOAD_RETRY_POLICY } : {}),
     }).pipe(
       Effect.match({
@@ -1323,6 +1332,10 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       schedulerActive: nativeStatus.active,
       since: scheduledSince,
       successAt,
+      usageReplacementBackfillVersion:
+        usageReplacementBackfill && serviceCompletedUsageReplacementBackfill(result.value)
+          ? USAGE_REPLACEMENT_BACKFILL_VERSION
+          : undefined,
       version: cliVersion,
     });
     const repairReport = yield* maybeScheduleDeferredServiceRepair({
@@ -1827,6 +1840,7 @@ function serviceRunSuccessState(
     schedulerActive?: boolean | undefined;
     since?: string | undefined;
     successAt: string;
+    usageReplacementBackfillVersion?: number | undefined;
     version: string;
   },
 ): ServiceState {
@@ -1847,6 +1861,9 @@ function serviceRunSuccessState(
     lastSyncStatus: input.result.status,
     lastUpserted: input.result.upserted ?? 0,
     reloadRequired: input.reloadRequired,
+    ...(input.usageReplacementBackfillVersion === undefined
+      ? {}
+      : { usageReplacementBackfillVersion: input.usageReplacementBackfillVersion }),
     version: 1,
   };
 }
@@ -1991,6 +2008,18 @@ function serviceScheduledSyncSince(
   }
 
   return previousLocalDateKey(now);
+}
+
+function serviceNeedsUsageReplacementBackfill(state: ServiceState, scheduled: boolean): boolean {
+  return (
+    scheduled && (state.usageReplacementBackfillVersion ?? 0) < USAGE_REPLACEMENT_BACKFILL_VERSION
+  );
+}
+
+function serviceCompletedUsageReplacementBackfill(result: SyncResult): boolean {
+  return result.sourceResults.some(
+    (source) => source.source === "codex" && source.status !== "failed",
+  );
 }
 
 function localDateKey(date: Date): string {
@@ -2250,6 +2279,9 @@ function serviceStateJson(state: ServiceState): Partial<ServiceState> {
     ...(state.lastSuccessAt === undefined ? {} : { lastSuccessAt: state.lastSuccessAt }),
     ...(state.lastUpserted === undefined ? {} : { lastUpserted: state.lastUpserted }),
     ...(state.reloadRequired === undefined ? {} : { reloadRequired: state.reloadRequired }),
+    ...(state.usageReplacementBackfillVersion === undefined
+      ? {}
+      : { usageReplacementBackfillVersion: state.usageReplacementBackfillVersion }),
     version: state.version,
   };
 }
@@ -4473,6 +4505,8 @@ export {
   serviceRunnerReleaseIsNewer,
   serviceRunnerTarget,
   serviceRunnerTargetCandidates,
+  serviceCompletedUsageReplacementBackfill,
+  serviceNeedsUsageReplacementBackfill,
   serviceScheduledSyncSince,
   serviceCommand,
   serviceInstallProgram,

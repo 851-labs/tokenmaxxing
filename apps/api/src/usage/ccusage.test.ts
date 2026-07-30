@@ -40,6 +40,7 @@ describe("parseRawUsageReports", () => {
 
     const result = await Effect.runPromise(parseRawUsageReports(reports));
 
+    expect(result.coveredDays).toEqual([{ date: "2026-07-11", source: "codex" }]);
     expect(result.persistableReports).toEqual(reports);
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]).toMatchObject({
@@ -92,6 +93,7 @@ describe("parseRawUsageReports", () => {
         source: "claude",
       },
     ]);
+    expect(result.coveredDays).toEqual([{ date: "2026-07-22", source: "claude" }]);
     expect(result.sourceStats).toEqual([{ sessionCount: 1, source: "claude" }]);
     expect(JSON.stringify(result.persistableReports)).not.toContain("secret-client");
   });
@@ -108,6 +110,11 @@ describe("parseRawUsageReports", () => {
       ]),
     );
 
-    expect(result).toEqual({ persistableReports: [], rows: [], sourceStats: [] });
+    expect(result).toEqual({
+      coveredDays: [],
+      persistableReports: [],
+      rows: [],
+      sourceStats: [],
+    });
   });
 });

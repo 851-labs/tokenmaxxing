@@ -1,5 +1,5 @@
 import { devices, usageDays, usageRawBatches, usageSourceStats } from "@tokenmaxxing/db";
-import { eq } from "drizzle-orm";
+import { and, eq, lt, notInArray } from "drizzle-orm";
 import { Effect } from "effect";
 import { Layer } from "effect";
 
@@ -91,6 +91,33 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
                   syncedAt,
                 },
               }),
+          );
+          const [first, ...rest] = statements;
+
+          return db.batch([first!, ...rest]);
+        });
+      }),
+    pruneChunk: (deviceId, scopes, syncedAt) =>
+      Effect.gen(function* () {
+        if (scopes.length === 0) {
+          return;
+        }
+
+        yield* database.use((db) => {
+          const statements = scopes.map((scope) =>
+            db
+              .delete(usageDays)
+              .where(
+                and(
+                  eq(usageDays.deviceId, deviceId),
+                  eq(usageDays.date, scope.date),
+                  eq(usageDays.source, scope.source),
+                  lt(usageDays.syncedAt, syncedAt),
+                  ...(scope.models.length === 0
+                    ? []
+                    : [notInArray(usageDays.model, [...scope.models])]),
+                ),
+              ),
           );
           const [first, ...rest] = statements;
 

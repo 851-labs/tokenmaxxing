@@ -8,6 +8,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 ### Fixed
 
 - Required ccusage 20.0.19 or newer to prevent replayed Codex subagent history from inflating usage totals.
+- Treat successful raw daily reports as authoritative device/day/source slices so corrected
+  backfills remove stale model rows, and run one full Codex replay after service upgrades.
 
 ## 0.5.0 - 2026-07-22
 

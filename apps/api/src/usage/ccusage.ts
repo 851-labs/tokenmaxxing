@@ -56,9 +56,15 @@ const decodeDailyReport = Schema.decodeUnknownEffect(CcusageDailyReport);
 const decodeSessionReport = Schema.decodeUnknownEffect(CcusageSessionReport);
 
 interface ParsedRawUsageReports {
+  coveredDays: CoveredUsageDay[];
   persistableReports: PersistableDailyReport[];
   rows: UsageDayInput[];
   sourceStats: SourceUsageStatsInput[];
+}
+
+interface CoveredUsageDay {
+  date: string;
+  source: string;
 }
 
 type PersistableDailyReport = Omit<RawUsageReportInput, "reportKind"> & {
@@ -69,6 +75,7 @@ function parseRawUsageReports(
   reports: readonly RawUsageReportInput[],
 ): Effect.Effect<ParsedRawUsageReports> {
   return Effect.gen(function* () {
+    const coveredDays = new Map<string, CoveredUsageDay>();
     const persistableReports: PersistableDailyReport[] = [];
     const rows: UsageDayInput[] = [];
     const sourceStats: SourceUsageStatsInput[] = [];
@@ -83,6 +90,12 @@ function parseRawUsageReports(
             reportKind: "daily",
             source: report.source,
           });
+          for (const day of decoded.value.daily) {
+            coveredDays.set(JSON.stringify([report.source, day.date]), {
+              date: day.date,
+              source: report.source,
+            });
+          }
           rows.push(...aggregateDays(report.source, decoded.value.daily));
         }
       } else {
@@ -96,7 +109,7 @@ function parseRawUsageReports(
       }
     }
 
-    return { persistableReports, rows, sourceStats };
+    return { coveredDays: [...coveredDays.values()], persistableReports, rows, sourceStats };
   });
 }
 
@@ -213,4 +226,4 @@ function collectModelEntries(day: CcusageDay): ModelTotals[] {
 
 export { parseRawUsageReports, PARSER_VERSION };
 
-export type { PersistableDailyReport };
+export type { CoveredUsageDay, PersistableDailyReport };

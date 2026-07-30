@@ -107,6 +107,7 @@ interface RepositoryOptions {
 
 function makeRepository(options: RepositoryOptions = {}) {
   const checkInDevice = vi.fn(() => Effect.succeed(undefined));
+  const pruneChunk = vi.fn(() => Effect.succeed(undefined));
   const upsertChunk = vi.fn(() => Effect.succeed(undefined));
   const touchDevice = vi.fn(() => Effect.succeed(undefined));
   const upsertSourceStats = vi.fn(() => Effect.succeed(undefined));
@@ -118,6 +119,7 @@ function makeRepository(options: RepositoryOptions = {}) {
 
   const repository: UsageRepositoryShape = {
     checkInDevice,
+    pruneChunk,
     touchDevice,
     upsertChunk,
     upsertRawReports,
@@ -126,6 +128,7 @@ function makeRepository(options: RepositoryOptions = {}) {
 
   return {
     checkInDevice,
+    pruneChunk,
     repository,
     touchDevice,
     upsertChunk,
@@ -142,7 +145,7 @@ async function makeService(repository: UsageRepositoryShape) {
 
 describe("UsageService.checkIn", () => {
   it("touches service telemetry without writing usage rows", async () => {
-    const { checkInDevice, repository, touchDevice, upsertChunk, upsertSourceStats } =
+    const { checkInDevice, pruneChunk, repository, touchDevice, upsertChunk, upsertSourceStats } =
       makeRepository();
     const service = await makeService(repository);
 
@@ -194,6 +197,7 @@ describe("UsageService.checkIn", () => {
       expect.any(Date),
     );
     expect(upsertChunk).not.toHaveBeenCalled();
+    expect(pruneChunk).not.toHaveBeenCalled();
     expect(upsertSourceStats).not.toHaveBeenCalled();
     expect(touchDevice).not.toHaveBeenCalled();
   });
@@ -216,7 +220,8 @@ describe("UsageService.checkIn", () => {
 
 describe("UsageService.syncBatch", () => {
   it("upserts daily rows, source stats, and touches the device", async () => {
-    const { repository, touchDevice, upsertChunk, upsertSourceStats } = makeRepository();
+    const { pruneChunk, repository, touchDevice, upsertChunk, upsertSourceStats } =
+      makeRepository();
     const service = await makeService(repository);
 
     const result = await Effect.runPromise(
@@ -236,6 +241,7 @@ describe("UsageService.syncBatch", () => {
       [usageDay],
       expect.any(Date),
     );
+    expect(pruneChunk).not.toHaveBeenCalled();
     expect(upsertSourceStats).toHaveBeenCalledWith(
       "user_123",
       "device_123",
@@ -288,7 +294,8 @@ describe("UsageService.syncBatch", () => {
   });
 
   it("does not touch storage when the token has no device", async () => {
-    const { repository, touchDevice, upsertChunk, upsertSourceStats } = makeRepository();
+    const { pruneChunk, repository, touchDevice, upsertChunk, upsertSourceStats } =
+      makeRepository();
     const service = await makeService(repository);
 
     await expect(
@@ -298,6 +305,7 @@ describe("UsageService.syncBatch", () => {
     ).rejects.toBeInstanceOf(DeviceMissing);
 
     expect(upsertChunk).not.toHaveBeenCalled();
+    expect(pruneChunk).not.toHaveBeenCalled();
     expect(upsertSourceStats).not.toHaveBeenCalled();
     expect(touchDevice).not.toHaveBeenCalled();
   });
@@ -305,8 +313,14 @@ describe("UsageService.syncBatch", () => {
 
 describe("UsageService.ingestRaw", () => {
   it("stores normalized daily reports and derives legacy session counts without persisting them", async () => {
-    const { repository, touchDevice, upsertChunk, upsertRawReports, upsertSourceStats } =
-      makeRepository();
+    const {
+      pruneChunk,
+      repository,
+      touchDevice,
+      upsertChunk,
+      upsertRawReports,
+      upsertSourceStats,
+    } = makeRepository();
     const service = await makeService(repository);
 
     const result = await Effect.runPromise(
@@ -340,6 +354,11 @@ describe("UsageService.ingestRaw", () => {
       [usageDay],
       expect.any(Date),
     );
+    expect(pruneChunk).toHaveBeenCalledWith(
+      "device_123",
+      [{ date: "2026-06-15", models: ["GPT-5.5"], source: "codex" }],
+      expect.any(Date),
+    );
     expect(upsertSourceStats).toHaveBeenCalledWith(
       "user_123",
       "device_123",
@@ -349,6 +368,12 @@ describe("UsageService.ingestRaw", () => {
     expect(touchDevice).toHaveBeenCalledWith("device_123", device, expect.any(Date));
     expect(upsertRawReports.mock.invocationCallOrder[0]).toBeLessThan(
       upsertChunk.mock.invocationCallOrder[0]!,
+    );
+    expect(upsertChunk.mock.invocationCallOrder[0]).toBeLessThan(
+      pruneChunk.mock.invocationCallOrder[0]!,
+    );
+    expect(pruneChunk.mock.invocationCallOrder[0]).toBeLessThan(
+      upsertSourceStats.mock.invocationCallOrder[0]!,
     );
   });
 
@@ -382,8 +407,14 @@ describe("UsageService.ingestRaw", () => {
 
   it("does not write structured rows when raw persistence fails", async () => {
     const rawReportsError = new RawUsageStorageError({ cause: "r2 down" });
-    const { repository, touchDevice, upsertChunk, upsertRawReports, upsertSourceStats } =
-      makeRepository({ rawReportsError });
+    const {
+      pruneChunk,
+      repository,
+      touchDevice,
+      upsertChunk,
+      upsertRawReports,
+      upsertSourceStats,
+    } = makeRepository({ rawReportsError });
     const service = await makeService(repository);
 
     await expect(
@@ -398,6 +429,7 @@ describe("UsageService.ingestRaw", () => {
 
     expect(upsertRawReports).toHaveBeenCalled();
     expect(upsertChunk).not.toHaveBeenCalled();
+    expect(pruneChunk).not.toHaveBeenCalled();
     expect(upsertSourceStats).not.toHaveBeenCalled();
     expect(touchDevice).not.toHaveBeenCalled();
   });
