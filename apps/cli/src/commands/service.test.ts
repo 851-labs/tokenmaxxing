@@ -53,6 +53,8 @@ import {
   serviceRunnerReleaseChannel,
   serviceRunnerReleaseIsNewer,
   serviceRunnerTarget,
+  serviceCompletedUsageReplacementBackfill,
+  serviceNeedsUsageReplacementBackfill,
   serviceScheduledSyncSince,
   serviceInstallProgram,
   serviceLockStatus,
@@ -1390,6 +1392,60 @@ describe("serviceScheduledSyncSince", () => {
   });
 });
 
+describe("usage replacement backfill", () => {
+  it("runs once on a scheduled service after upgrading", () => {
+    expect(serviceNeedsUsageReplacementBackfill({ version: 1 }, true)).toBe(true);
+    expect(
+      serviceNeedsUsageReplacementBackfill(
+        { usageReplacementBackfillVersion: 1, version: 1 },
+        true,
+      ),
+    ).toBe(false);
+    expect(serviceNeedsUsageReplacementBackfill({ version: 1 }, false)).toBe(false);
+  });
+
+  it("completes after Codex daily collection succeeds or finds no local data", () => {
+    expect(
+      serviceCompletedUsageReplacementBackfill({
+        dryRun: false,
+        rows: 1,
+        sourceResults: [
+          {
+            source: "codex",
+            status: "synced",
+            summary: { days: 1, models: 1, rows: 1, sessions: 1, spendUsd: 1 },
+          },
+        ],
+        sources: {
+          codex: { days: 1, models: 1, rows: 1, sessions: 1, spendUsd: 1 },
+        },
+        status: "ok",
+        upserted: 1,
+      }),
+    ).toBe(true);
+    expect(
+      serviceCompletedUsageReplacementBackfill({
+        dryRun: false,
+        rows: 0,
+        sourceResults: [
+          {
+            issue: {
+              code: "command_failed",
+              message: "ccusage command failed",
+              report: "daily",
+            },
+            source: "codex",
+            status: "failed",
+            summary: null,
+          },
+        ],
+        sources: { codex: null },
+        status: "error",
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("service run state", () => {
   const syncResult: SyncResult = {
     dryRun: false,
@@ -1424,6 +1480,7 @@ describe("service run state", () => {
         result: syncResult,
         since: "2026-06-16",
         successAt: "2026-06-16T10:00:01.000Z",
+        usageReplacementBackfillVersion: 1,
         version: "0.4.12",
       },
     );
@@ -1444,6 +1501,7 @@ describe("service run state", () => {
       lastSuccessAt: "2026-06-16T10:00:01.000Z",
       lastSyncStatus: "ok",
       lastUpserted: 40,
+      usageReplacementBackfillVersion: 1,
       version: 1,
     });
     expect(state.lastSources).toEqual([

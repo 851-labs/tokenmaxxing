@@ -17,7 +17,12 @@ import type {
 
 import { sha256Hex } from "../auth/crypto";
 import type { DatabaseError } from "../database";
-import { parseRawUsageReports, PARSER_VERSION, type PersistableDailyReport } from "./ccusage";
+import {
+  parseRawUsageReports,
+  PARSER_VERSION,
+  type CoveredUsageDay,
+  type PersistableDailyReport,
+} from "./ccusage";
 import { normalizeUsageDays } from "./models";
 import type { RawUsageStorageError } from "./raw-store";
 
@@ -105,6 +110,12 @@ interface UsageServiceAutoUpdate {
   status: ServiceAutoUpdateStatusValue;
 }
 
+interface UsageReplacementScope {
+  date: string;
+  models: readonly string[];
+  source: string;
+}
+
 interface UsageRepositoryShape {
   checkInDevice(
     deviceId: string,
@@ -117,6 +128,12 @@ interface UsageRepositoryShape {
     userId: string,
     deviceId: string,
     rows: readonly UsageDayInput[],
+    syncedAt: Date,
+  ): Effect.Effect<void, DatabaseError, any>;
+  /** Removes models omitted by an authoritative raw daily report. */
+  pruneChunk(
+    deviceId: string,
+    scopes: readonly UsageReplacementScope[],
     syncedAt: Date,
   ): Effect.Effect<void, DatabaseError, any>;
   touchDevice(
@@ -189,6 +206,7 @@ const makeUsageService = Effect.fn("makeUsageService")(function* () {
         parsed.rows,
         mergeSourceStats(parsed.sourceStats, sourceStats),
         syncedAt,
+        parsed.coveredDays,
       );
 
       return {
@@ -320,6 +338,7 @@ function writeStructuredUsage(
   days: readonly UsageDayInput[],
   sourceStats: readonly SourceUsageStatsInput[],
   syncedAt: Date,
+  coveredDays: readonly CoveredUsageDay[] = [],
 ) {
   return Effect.gen(function* () {
     const normalizedDays = normalizeUsageDays(days);
@@ -333,6 +352,12 @@ function writeStructuredUsage(
         )
         .pipe(Effect.orDie);
     }
+    const replacementScopes = buildReplacementScopes(coveredDays, normalizedDays);
+    for (let offset = 0; offset < replacementScopes.length; offset += UPSERT_CHUNK_SIZE) {
+      yield* repository
+        .pruneChunk(deviceId, replacementScopes.slice(offset, offset + UPSERT_CHUNK_SIZE), syncedAt)
+        .pipe(Effect.orDie);
+    }
     yield* repository.upsertSourceStats(userId, deviceId, sourceStats, syncedAt).pipe(Effect.orDie);
     yield* repository.touchDevice(deviceId, device, syncedAt).pipe(Effect.orDie);
 
@@ -340,8 +365,37 @@ function writeStructuredUsage(
   });
 }
 
+function buildReplacementScopes(
+  coveredDays: readonly CoveredUsageDay[],
+  normalizedDays: readonly UsageDayInput[],
+): UsageReplacementScope[] {
+  const scopes = new Map<string, { date: string; models: Set<string>; source: string }>();
+  for (const coveredDay of coveredDays) {
+    scopes.set(JSON.stringify([coveredDay.date, coveredDay.source]), {
+      date: coveredDay.date,
+      models: new Set(),
+      source: coveredDay.source,
+    });
+  }
+  for (const day of normalizedDays) {
+    scopes.get(JSON.stringify([day.date, day.source]))?.models.add(day.model);
+  }
+
+  return [...scopes.values()].map((scope) => ({
+    date: scope.date,
+    models: [...scope.models].sort(),
+    source: scope.source,
+  }));
+}
+
 const textEncoder = new TextEncoder();
 
 export { makeUsageService, UsageRepository, UsageService };
 
-export type { StoredRawUsageReport, SyncResult, UsageRepositoryShape, UsageServiceCheckIn };
+export type {
+  StoredRawUsageReport,
+  SyncResult,
+  UsageReplacementScope,
+  UsageRepositoryShape,
+  UsageServiceCheckIn,
+};
