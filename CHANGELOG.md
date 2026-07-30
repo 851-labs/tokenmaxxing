@@ -5,6 +5,10 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Required ccusage 20.0.19 or newer to prevent replayed Codex subagent history from inflating usage totals.
+
 ## 0.5.0 - 2026-07-22
 
 ### Added

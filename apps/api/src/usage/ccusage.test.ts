@@ -9,7 +9,7 @@ describe("parseRawUsageReports", () => {
     const reports: RawUsageReportInput[] = [
       {
         command: [
-          "ccusage@^20.0.17",
+          "ccusage@^20.0.19",
           "codex",
           "daily",
           "--json",

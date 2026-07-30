@@ -7,12 +7,12 @@ import { decodeDailyReport, decodeSessionReport } from "./schema";
 import type { CcusageSource } from "./sources";
 
 /**
- * Shells out to `bun x ccusage@^20.0.17 <source> daily --json --breakdown` (npx
+ * Shells out to `bun x ccusage@^20.0.19 <source> daily --json --breakdown` (npx
  * fallback only when bun itself is missing). Runner and report failures stay
  * typed so the sync layer can distinguish them from valid empty reports.
  */
 
-const CCUSAGE_SPEC = "ccusage@^20.0.17";
+const CCUSAGE_SPEC = "ccusage@^20.0.19";
 const RUN_TIMEOUT_MS = 180_000;
 
 class CcusageRunError extends Data.TaggedError("CcusageRunError")<{
