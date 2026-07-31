@@ -62,6 +62,7 @@ Sync is idempotent and profiles aggregate across devices, so you can run
 - OpenCode
 - Gemini CLI
 - GitHub Copilot CLI
+- Hermes
 - Pi
 
 ## Usage
