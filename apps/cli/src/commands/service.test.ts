@@ -41,6 +41,7 @@ import {
   resolveExecutableSiblingPackageJson,
   renderLaunchdPlist,
   renderServiceWrapper,
+  renderWindowsLauncher,
   renderSystemdTimer,
   runServiceAutoUpdate,
   scheduleDescription,
@@ -598,9 +599,23 @@ describe("native scheduler templates", () => {
       "/MO",
       "5",
       "/TR",
-      '"C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync.cmd"',
+      'wscript.exe //nologo //b "C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync-launcher.vbs"',
       "/F",
     ]);
+  });
+
+  it("renders a hidden VBScript launcher for the sync wrapper", () => {
+    const launcher = renderWindowsLauncher(
+      "C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync.cmd",
+    );
+
+    // window style 0 = hidden, bWaitOnReturn = True so the wrapper's exit code propagates.
+    expect(launcher).toContain(
+      'shell.Run("""C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync.cmd""", 0, True)',
+    );
+    expect(launcher).toContain("WScript.Quit exitCode");
+    // Must never open a console window: no direct cmd/console invocation.
+    expect(launcher).not.toContain("cmd.exe");
   });
 });
 
@@ -2153,7 +2168,7 @@ describe("serviceInstallProgram", () => {
       installedAt: "2026-06-16T12:00:00.000Z",
       runnerTarget: "darwin-arm64",
       runnerVersion: "0.4.17",
-      templateVersion: 5,
+      templateVersion: 6,
     });
     expect(written[0]?.metadata).not.toHaveProperty("autoUpdate");
     expect(state.logs).toContain("Automatic sync installed");
