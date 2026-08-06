@@ -33,6 +33,7 @@ import {
   OkResponse,
   ProfileDailyGroupBy,
   ProfileDailyResponse,
+  ProfileIdentityResponse,
   ProfileResponse,
   ShadowBanUserResponse,
   StatsResponse,
@@ -167,6 +168,15 @@ class StatsGroup extends HttpApiGroup.make("stats").add(
 ) {}
 
 class ProfilesGroup extends HttpApiGroup.make("profiles")
+  .add(
+    HttpApiEndpoint.get("identity", "/profiles/:login/identity", {
+      params: {
+        login: Schema.String,
+      },
+      success: ProfileIdentityResponse,
+      error: UserNotFound,
+    }),
+  )
   .add(
     HttpApiEndpoint.get("get", "/profiles/:login", {
       params: {

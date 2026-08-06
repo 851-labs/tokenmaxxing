@@ -8,6 +8,7 @@ import type {
   ProfileDailyGroupBy,
   ProfileDailyResponse,
   ProfileDailyRow,
+  ProfileIdentityResponse,
   ProfileResponse,
   ProfileStats,
 } from "@tokenmaxxing/api-contract";
@@ -29,6 +30,7 @@ interface DailyQuery {
 }
 
 interface ProfilesServiceShape {
+  getIdentity(login: string): Effect.Effect<typeof ProfileIdentityResponse.Type, UserNotFound, any>;
   getProfile(
     login: string,
     viewerUserId: string | null,
@@ -87,6 +89,10 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
   });
 
   return ProfilesService.of({
+    getIdentity: Effect.fn("ProfilesService.getIdentity")(function* (login) {
+      const user = yield* requireUser(login, null);
+      return { avatarUrl: user.avatarUrl, login: user.login };
+    }),
     getProfile: Effect.fn("ProfilesService.getProfile")(function* (login, viewerUserId) {
       const user = yield* requireUser(login, viewerUserId);
       const [stats, leaderboardRank] = yield* Effect.all(

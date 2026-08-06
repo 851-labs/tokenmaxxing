@@ -2,7 +2,11 @@ import { Effect, Option } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import { UserNotFound } from "@tokenmaxxing/api-contract";
-import type { ProfileDailyResponse, ProfileResponse } from "@tokenmaxxing/api-contract";
+import type {
+  ProfileDailyResponse,
+  ProfileIdentityResponse,
+  ProfileResponse,
+} from "@tokenmaxxing/api-contract";
 
 import { makeProfilesService, profileDailyRange, ProfilesRepository } from "./service";
 
@@ -49,6 +53,7 @@ const profileStats = {
 };
 
 interface TestProfilesService {
+  getIdentity(login: string): Effect.Effect<typeof ProfileIdentityResponse.Type, UserNotFound>;
   getProfile(
     login: string,
     viewerUserId: string | null,
@@ -102,6 +107,39 @@ async function makeProfileService(
 }
 
 describe("ProfilesService shadow-ban visibility", () => {
+  it("loads profile identity without calculating stats or rank", async () => {
+    const stats = vi.fn(() => Effect.succeed(profileStats));
+    const leaderboardRank = vi.fn(() => Effect.succeed(7));
+    const service = (await Effect.runPromise(
+      makeProfilesService().pipe(
+        Effect.provideService(ProfilesRepository, {
+          daily: () => Effect.succeed([]),
+          findUserByLogin: () =>
+            Effect.succeed(
+              Option.some({
+                shadowBanned: false,
+                user: {
+                  avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+                  id: "user_target",
+                  login: "target",
+                  name: null,
+                },
+              }),
+            ),
+          leaderboardRank,
+          stats,
+        }),
+      ),
+    )) as unknown as TestProfilesService;
+
+    await expect(Effect.runPromise(service.getIdentity("target"))).resolves.toEqual({
+      avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+      login: "target",
+    });
+    expect(stats).not.toHaveBeenCalled();
+    expect(leaderboardRank).not.toHaveBeenCalled();
+  });
+
   it("calculates rank with the default 30-day leaderboard window", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-12T22:30:00Z"));
@@ -132,6 +170,9 @@ describe("ProfilesService shadow-ban visibility", () => {
   it("returns not found for anonymous and other viewers of a banned profile", async () => {
     const service = await makeProfileService(true);
 
+    await expect(Effect.runPromise(service.getIdentity("target"))).rejects.toBeInstanceOf(
+      UserNotFound,
+    );
     await expect(Effect.runPromise(service.getProfile("target", null))).rejects.toBeInstanceOf(
       UserNotFound,
     );

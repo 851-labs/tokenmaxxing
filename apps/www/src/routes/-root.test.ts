@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH } from "../lib/og";
+import { DEFAULT_FAVICON_URL, faviconUrlFromMatches } from "../lib/favicon";
 import { DEFAULT_OG_IMAGE_URL, rootHead } from "./__root";
 
 describe("root metadata", () => {
-  it("uses local 851 Labs gradient icons", () => {
+  it("keeps the touch icon in route metadata and the favicon in one reactive slot", () => {
     const head = rootHead();
 
-    expect(linkHref(head.links, "icon")).toBe("/favicon.png");
+    expect(linkHref(head.links, "icon")).toBeUndefined();
     expect(linkHref(head.links, "apple-touch-icon")).toBe("/apple-touch-icon.png");
+    expect(faviconUrlFromMatches([{ routeId: "__root__" }])).toBe(DEFAULT_FAVICON_URL);
+    expect(DEFAULT_FAVICON_URL).toBe("/favicon.svg?v=10");
   });
 
   it("uses pondorasti profile image as the non-profile OG fallback", () => {

@@ -10,7 +10,11 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import { Footer } from "../components/footer";
 import { Nav } from "../components/nav";
-import { DEFAULT_APPLE_TOUCH_ICON_URL, DEFAULT_FAVICON_URL } from "../lib/favicon";
+import {
+  DEFAULT_APPLE_TOUCH_ICON_URL,
+  FAVICON_MIME_TYPE,
+  faviconUrlFromMatches,
+} from "../lib/favicon";
 import { organizationSchema, webSiteSchema } from "../lib/jsonld";
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SITE_ORIGIN } from "../lib/og";
 import styles from "../styles.css?url";
@@ -46,7 +50,6 @@ function rootHead() {
     ],
     links: [
       { rel: "apple-touch-icon", href: DEFAULT_APPLE_TOUCH_ICON_URL },
-      { rel: "icon", href: DEFAULT_FAVICON_URL },
       { rel: "stylesheet", href: styles },
     ],
     scripts: [
@@ -89,6 +92,7 @@ function RootDocument() {
   return (
     <html lang="en">
       <head>
+        <FaviconLink />
         <HeadContent />
       </head>
       <body className="min-h-screen antialiased">
@@ -114,6 +118,11 @@ function RootDocument() {
   );
 }
 
-export { DEFAULT_OG_IMAGE_URL, rootHead, Route };
+function FaviconLink() {
+  const href = useRouterState({ select: (state) => faviconUrlFromMatches(state.matches) });
+  return <link rel="icon" href={href} type={FAVICON_MIME_TYPE} />;
+}
+
+export { DEFAULT_OG_IMAGE_URL, FaviconLink, rootHead, Route };
 
 export type { RouterContext };

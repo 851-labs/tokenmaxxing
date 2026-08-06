@@ -6,6 +6,7 @@ import {
   CliLoginStartInput,
   IngestUsageInput,
   ProfileDailyResponse,
+  ProfileIdentityResponse,
   StatsResponse,
   SyncUsageInput,
   UsageCheckInInput,
@@ -165,6 +166,20 @@ describe("profile daily responses", () => {
         first: "2026-01-01",
         last: "2026-06-21",
       },
+    });
+  });
+});
+
+describe("profile identity responses", () => {
+  it("carries only the fields needed by lightweight profile assets", async () => {
+    await expect(
+      Schema.decodeUnknownPromise(ProfileIdentityResponse)({
+        avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+        login: "pondorasti",
+      }),
+    ).resolves.toEqual({
+      avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+      login: "pondorasti",
     });
   });
 });
