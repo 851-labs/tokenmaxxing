@@ -484,6 +484,7 @@ describe("servicePaths", () => {
 describe("renderServiceWrapper", () => {
   it("runs sync with a durable command without embedding package-manager updates", () => {
     const env = capturedServiceEnv({
+      HERMES_HOME: "/data/hermes",
       HOME: "/home/alex",
       PATH: "/usr/local/bin:/usr/bin",
       TOKENMAXXING_API_TOKEN: "tmx_secret",
@@ -501,6 +502,7 @@ describe("renderServiceWrapper", () => {
     );
     expect(wrapper).toContain("[ ! -r '/home/alex/.config/tokenmaxxing/service-runner-current' ]");
     expect(wrapper).toContain('"$runner" service run --scheduled');
+    expect(wrapper).toContain("export HERMES_HOME='/data/hermes'");
     expect(wrapper).not.toContain("bun update");
     expect(wrapper).not.toContain("npm install");
     expect(wrapper).not.toContain("pnpm add");

@@ -5,6 +5,15 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Added
+
+- Added Hermes Agent as a supported ccusage source.
+
+### Fixed
+
+- Preserved day-level reasoning tokens that ccusage omits from per-model breakdowns.
+- Carried custom `HERMES_HOME` locations into scheduled syncs.
+
 ## 0.5.1 - 2026-07-30
 
 ### Fixed

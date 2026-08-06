@@ -5,7 +5,7 @@ import type {
 } from "@tokenmaxxing/api-contract";
 import { Effect, Option, Schema } from "effect";
 
-const PARSER_VERSION = "ccusage-v20-raw-3";
+const PARSER_VERSION = "ccusage-v20-raw-4";
 
 const CcusageModelBreakdown = Schema.Struct({
   cacheCreationTokens: Schema.optional(Schema.Number),
@@ -156,12 +156,13 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
 
     const tokensOf = (entry: ModelTotals) =>
       entry.inputTokens + entry.outputTokens + entry.cacheCreationTokens + entry.cacheReadTokens;
+    const totalTokens = modelTotalTokens(day.totalTokens, entries, tokensOf);
     const knownCost = entries.reduce((sum, entry) => sum + (entry.cost ?? 0), 0);
     const unpriced = entries.filter((entry) => entry.cost === undefined);
     const unpricedWeight = unpriced.reduce((sum, entry) => sum + tokensOf(entry), 0);
     const remainder = Math.max(dayCost - knownCost, 0);
 
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
       const cost =
         entry.cost ??
         (unpricedWeight > 0
@@ -176,7 +177,7 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
         model: entry.model,
         outputTokens: entry.outputTokens,
         source,
-        totalTokens: tokensOf(entry),
+        totalTokens: totalTokens[index]!,
       });
     }
   }
@@ -193,6 +194,7 @@ interface ModelTotals {
   inputTokens: number;
   model: string;
   outputTokens: number;
+  totalTokens: number | undefined;
 }
 
 function collectModelEntries(day: CcusageDay): ModelTotals[] {
@@ -206,6 +208,7 @@ function collectModelEntries(day: CcusageDay): ModelTotals[] {
         inputTokens: breakdown.inputTokens ?? 0,
         model: breakdown.modelName,
         outputTokens: breakdown.outputTokens ?? 0,
+        totalTokens: undefined,
       });
     }
   } else if (day.models !== undefined && Object.keys(day.models).length > 0) {
@@ -217,11 +220,45 @@ function collectModelEntries(day: CcusageDay): ModelTotals[] {
         inputTokens: entry.inputTokens ?? 0,
         model,
         outputTokens: entry.outputTokens ?? 0,
+        totalTokens: entry.totalTokens,
       });
     }
   }
 
   return entries;
+}
+
+/** Preserve day-level tokens that ccusage does not expose in per-model fields. */
+function modelTotalTokens<T extends { totalTokens: number | undefined }>(
+  dayTotalTokens: number | undefined,
+  entries: readonly T[],
+  visibleTokensOf: (entry: T) => number,
+): number[] {
+  const totals = entries.map((entry) => Math.max(visibleTokensOf(entry), entry.totalTokens ?? 0));
+  const knownTotal = totals.reduce((sum, total) => sum + total, 0);
+  const unreported = Math.max(0, Math.trunc(dayTotalTokens ?? knownTotal) - knownTotal);
+  if (unreported === 0) {
+    return totals;
+  }
+
+  const weight = totals.reduce((sum, total) => sum + total, 0);
+  const shares = totals.map((total) =>
+    weight > 0 ? (unreported * total) / weight : unreported / totals.length,
+  );
+  const allocated = shares.map(Math.floor);
+  let remainder = unreported - allocated.reduce((sum, total) => sum + total, 0);
+  const allocationOrder = shares
+    .map((share, index) => ({ fraction: share - Math.floor(share), index }))
+    .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
+  for (const { index } of allocationOrder) {
+    if (remainder === 0) {
+      break;
+    }
+    allocated[index]! += 1;
+    remainder -= 1;
+  }
+
+  return totals.map((total, index) => total + allocated[index]!);
 }
 
 export { parseRawUsageReports, PARSER_VERSION };

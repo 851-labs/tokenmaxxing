@@ -5,6 +5,65 @@ import { describe, expect, it } from "vitest";
 import { parseRawUsageReports } from "./ccusage";
 
 describe("parseRawUsageReports", () => {
+  it("preserves Hermes reasoning tokens omitted from model breakdowns", async () => {
+    const reports: RawUsageReportInput[] = [
+      {
+        command: [
+          "ccusage@^20.0.19",
+          "hermes",
+          "daily",
+          "--json",
+          "--breakdown",
+          "--mode",
+          "calculate",
+        ],
+        payload: {
+          daily: [
+            {
+              cacheCreationTokens: 20,
+              cacheReadTokens: 50,
+              date: "2025-06-15",
+              inputTokens: 1_200,
+              messageCount: 42,
+              modelBreakdowns: [
+                {
+                  cacheCreationTokens: 20,
+                  cacheReadTokens: 50,
+                  cost: 0.34,
+                  inputTokens: 1_200,
+                  modelName: "claude-sonnet-4-20250514",
+                  outputTokens: 300,
+                },
+              ],
+              modelsUsed: ["claude-sonnet-4-20250514"],
+              outputTokens: 300,
+              totalCost: 0.34,
+              totalTokens: 1_580,
+            },
+          ],
+        },
+        reportKind: "daily",
+        source: "hermes",
+      },
+    ];
+
+    const result = await Effect.runPromise(parseRawUsageReports(reports));
+
+    expect(result.rows).toEqual([
+      {
+        cacheCreationTokens: 20,
+        cacheReadTokens: 50,
+        costUsd: 0.34,
+        date: "2025-06-15",
+        inputTokens: 1_200,
+        model: "claude-sonnet-4-20250514",
+        outputTokens: 300,
+        source: "hermes",
+        totalTokens: 1_580,
+      },
+    ]);
+  });
+
   it("preserves GPT-5.6 tier model names and calculated cost", async () => {
     const reports: RawUsageReportInput[] = [
       {

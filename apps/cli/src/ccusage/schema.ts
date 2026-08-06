@@ -7,6 +7,7 @@ import { Schema } from "effect";
  *
  *   claude    totalCost + modelBreakdowns[{modelName, …, cost}]
  *   codex     costUSD   + models{name: {tokens…}} (no per-model cost)
+ *   hermes    claude-style breakdown + day total containing reasoning tokens
  *   opencode  totalCost + modelsUsed[] only (day totals, no breakdown)
  *
  * Deliberately lenient: only `date` is required, every count defaults at

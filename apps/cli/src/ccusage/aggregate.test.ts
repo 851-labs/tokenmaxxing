@@ -150,6 +150,34 @@ const piFixture = {
   ],
 };
 
+/** Mirrors `ccusage hermes daily --json --breakdown` v20 with reasoning tokens. */
+const hermesFixture = {
+  daily: [
+    {
+      cacheCreationTokens: 20,
+      cacheReadTokens: 50,
+      date: "2025-06-15",
+      inputTokens: 1_200,
+      messageCount: 42,
+      modelBreakdowns: [
+        {
+          cacheCreationTokens: 20,
+          cacheReadTokens: 50,
+          cost: 0.34,
+          inputTokens: 1_200,
+          modelName: "claude-sonnet-4-20250514",
+          outputTokens: 300,
+        },
+      ],
+      modelsUsed: ["claude-sonnet-4-20250514"],
+      outputTokens: 300,
+      totalCost: 0.34,
+      // Includes 10 reasoning tokens omitted from modelBreakdowns by ccusage v20.
+      totalTokens: 1_580,
+    },
+  ],
+};
+
 describe("decodeDailyReport", () => {
   it("parses the verified v20 focused-command shape", async () => {
     const report = await Effect.runPromise(decodeDailyReport(claudeFixture));
@@ -283,6 +311,25 @@ describe("aggregateDays", () => {
         outputTokens: 300,
         source: "pi",
         totalTokens: 4_000,
+      },
+    ]);
+  });
+
+  it("preserves Hermes reasoning tokens omitted from model breakdowns", async () => {
+    const report = await Effect.runPromise(decodeDailyReport(hermesFixture));
+    const rows = aggregateDays("hermes", report.daily);
+
+    expect(rows).toEqual([
+      {
+        cacheCreationTokens: 20,
+        cacheReadTokens: 50,
+        costUsd: 0.34,
+        date: "2025-06-15",
+        inputTokens: 1_200,
+        model: "claude-sonnet-4-20250514",
+        outputTokens: 300,
+        source: "hermes",
+        totalTokens: 1_580,
       },
     ]);
   });

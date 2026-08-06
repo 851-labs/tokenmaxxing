@@ -17,6 +17,13 @@ describe("resolveSources", () => {
     });
   });
 
+  it("resolves Hermes to the focused ccusage subcommand", () => {
+    expect(resolveSources(["hermes"])).toEqual({
+      invalid: [],
+      sources: [{ source: "hermes", subcommand: "hermes" }],
+    });
+  });
+
   it("rejects unknown sources", () => {
     expect(resolveSources(["bogus"]).invalid).toEqual(["bogus"]);
   });

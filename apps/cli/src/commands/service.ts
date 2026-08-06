@@ -4204,6 +4204,7 @@ function capturedServiceEnv(
     "USERPROFILE",
     "LOCALAPPDATA",
     "APPDATA",
+    "HERMES_HOME",
     "TOKENMAXXING_CONFIG_DIR",
     "TOKENMAXXING_ENV",
     "TOKENMAXXING_API_URL",
