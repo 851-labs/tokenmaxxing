@@ -17,6 +17,7 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
 import { Route as InternalRouteImport } from './routes/internal'
+import { Route as FaviconDotsvgRouteImport } from './routes/favicon[.]svg'
 import { Route as DesignRouteImport } from './routes/design'
 import { Route as UserRouteImport } from './routes/$user'
 import { Route as IndexRouteImport } from './routes/index'
@@ -65,6 +66,11 @@ const InternalRoute = InternalRouteImport.update({
   path: '/internal',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FaviconDotsvgRoute = FaviconDotsvgRouteImport.update({
+  id: '/favicon.svg',
+  path: '/favicon.svg',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DesignRoute = DesignRouteImport.update({
   id: '/design',
   path: '/design',
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
+  '/favicon.svg': typeof FaviconDotsvgRoute
   '/internal': typeof InternalRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
@@ -124,6 +131,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
+  '/favicon.svg': typeof FaviconDotsvgRoute
   '/internal': typeof InternalRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
+  '/favicon.svg': typeof FaviconDotsvgRoute
   '/internal': typeof InternalRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$user'
     | '/design'
+    | '/favicon.svg'
     | '/internal'
     | '/llms.txt'
     | '/login'
@@ -178,6 +188,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$user'
     | '/design'
+    | '/favicon.svg'
     | '/internal'
     | '/llms.txt'
     | '/login'
@@ -195,6 +206,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$user'
     | '/design'
+    | '/favicon.svg'
     | '/internal'
     | '/llms.txt'
     | '/login'
@@ -213,6 +225,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   UserRoute: typeof UserRoute
   DesignRoute: typeof DesignRoute
+  FaviconDotsvgRoute: typeof FaviconDotsvgRoute
   InternalRoute: typeof InternalRoute
   LlmsDottxtRoute: typeof LlmsDottxtRoute
   LoginRoute: typeof LoginRoute
@@ -285,6 +298,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InternalRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/favicon.svg': {
+      id: '/favicon.svg'
+      path: '/favicon.svg'
+      fullPath: '/favicon.svg'
+      preLoaderRoute: typeof FaviconDotsvgRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/design': {
       id: '/design'
       path: '/design'
@@ -341,6 +361,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   UserRoute: UserRoute,
   DesignRoute: DesignRoute,
+  FaviconDotsvgRoute: FaviconDotsvgRoute,
   InternalRoute: InternalRoute,
   LlmsDottxtRoute: LlmsDottxtRoute,
   LoginRoute: LoginRoute,

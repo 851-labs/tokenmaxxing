@@ -1,9 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { handleDefaultFaviconRequest } from "./favicon[.]svg";
 import type { FaviconCache } from "./favicon/{$login}[.]svg";
 import { makeProfileFaviconHandler } from "./favicon/{$login}[.]svg";
 
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+
+describe("default favicon route", () => {
+  it("renders the shared gradient without an avatar", async () => {
+    const response = handleDefaultFaviconRequest();
+    const svg = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-favicon-source")).toBe("default");
+    expect(response.headers.get("content-type")).toContain("image/svg+xml");
+    expect(svg).toContain('id="gradient"');
+    expect(svg).not.toContain('id="avatar"');
+  });
+});
 
 describe("profile favicon route", () => {
   it("uses the lightweight identity and embeds a provider-sized avatar", async () => {
@@ -86,7 +100,7 @@ describe("profile favicon route", () => {
     await handler(routeContext("pondorasti", "?v=two"));
 
     expect(loadIdentity).toHaveBeenCalledOnce();
-    expect(cache.keys()).toEqual(["https://tokenmaxxing.sh/favicon/pondorasti.svg?v=9"]);
+    expect(cache.keys()).toEqual(["https://tokenmaxxing.sh/favicon/pondorasti.svg?v=10"]);
   });
 
   it("returns not found for an unknown profile", async () => {

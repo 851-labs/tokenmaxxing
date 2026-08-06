@@ -11,7 +11,7 @@ describe("root metadata", () => {
     expect(linkHref(head.links, "icon")).toBeUndefined();
     expect(linkHref(head.links, "apple-touch-icon")).toBe("/apple-touch-icon.png");
     expect(faviconUrlFromMatches([{ routeId: "__root__" }])).toBe(DEFAULT_FAVICON_URL);
-    expect(DEFAULT_FAVICON_URL).toBe("/favicon.png");
+    expect(DEFAULT_FAVICON_URL).toBe("/favicon.svg?v=10");
   });
 
   it("uses pondorasti profile image as the non-profile OG fallback", () => {

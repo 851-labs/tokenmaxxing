@@ -12,7 +12,7 @@ import { Footer } from "../components/footer";
 import { Nav } from "../components/nav";
 import {
   DEFAULT_APPLE_TOUCH_ICON_URL,
-  faviconMimeType,
+  FAVICON_MIME_TYPE,
   faviconUrlFromMatches,
 } from "../lib/favicon";
 import { organizationSchema, webSiteSchema } from "../lib/jsonld";
@@ -120,7 +120,7 @@ function RootDocument() {
 
 function FaviconLink() {
   const href = useRouterState({ select: (state) => faviconUrlFromMatches(state.matches) });
-  return <link rel="icon" href={href} type={faviconMimeType(href)} />;
+  return <link rel="icon" href={href} type={FAVICON_MIME_TYPE} />;
 }
 
 export { DEFAULT_OG_IMAGE_URL, FaviconLink, rootHead, Route };

@@ -1,6 +1,7 @@
 const DEFAULT_APPLE_TOUCH_ICON_URL = "/apple-touch-icon.png";
-const DEFAULT_FAVICON_URL = "/favicon.png";
-const PROFILE_FAVICON_LAYOUT_VERSION = "9";
+const FAVICON_LAYOUT_VERSION = "10";
+const DEFAULT_FAVICON_URL = `/favicon.svg?v=${FAVICON_LAYOUT_VERSION}`;
+const FAVICON_MIME_TYPE = "image/svg+xml";
 
 interface FaviconProfile {
   avatarUrl: string | null;
@@ -15,11 +16,7 @@ interface FaviconRouteMatch {
 function profileFaviconUrl(profile: FaviconProfile): string {
   return profile.avatarUrl === null
     ? DEFAULT_FAVICON_URL
-    : `/favicon/${encodeURIComponent(profile.login)}.svg?v=${PROFILE_FAVICON_LAYOUT_VERSION}`;
-}
-
-function faviconMimeType(href: string): "image/png" | "image/svg+xml" {
-  return href === DEFAULT_FAVICON_URL ? "image/png" : "image/svg+xml";
+    : `/favicon/${encodeURIComponent(profile.login)}.svg?v=${FAVICON_LAYOUT_VERSION}`;
 }
 
 function faviconUrlFromMatches(matches: readonly FaviconRouteMatch[]): string {
@@ -52,8 +49,8 @@ function faviconProfileFromLoaderData(value: unknown): FaviconProfile | null {
 export {
   DEFAULT_APPLE_TOUCH_ICON_URL,
   DEFAULT_FAVICON_URL,
-  PROFILE_FAVICON_LAYOUT_VERSION,
-  faviconMimeType,
+  FAVICON_LAYOUT_VERSION,
+  FAVICON_MIME_TYPE,
   faviconUrlFromMatches,
   profileFaviconUrl,
 };

@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ProfileIdentityResponse } from "@tokenmaxxing/api-contract";
 
 import { resolveApiUrl } from "../../lib/config";
-import { PROFILE_FAVICON_LAYOUT_VERSION } from "../../lib/favicon";
+import { FAVICON_LAYOUT_VERSION } from "../../lib/favicon";
 import {
   avatarFetchUrl,
   buildFaviconSvg,
@@ -151,7 +151,7 @@ function canonicalFaviconRequest(request: Request): Request {
   const url = new URL(request.url);
   url.hash = "";
   url.search = "";
-  url.searchParams.set("v", PROFILE_FAVICON_LAYOUT_VERSION);
+  url.searchParams.set("v", FAVICON_LAYOUT_VERSION);
   return new Request(url, { method: "GET" });
 }
 

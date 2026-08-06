@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_FAVICON_URL,
-  faviconMimeType,
+  FAVICON_MIME_TYPE,
   faviconUrlFromMatches,
   profileFaviconUrl,
 } from "./favicon";
@@ -54,7 +54,7 @@ describe("favicon URLs", () => {
         avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
         login: "alex test",
       }),
-    ).toBe("/favicon/alex%20test.svg?v=9");
+    ).toBe("/favicon/alex%20test.svg?v=10");
   });
 
   it("selects exactly one favicon from the active route data", () => {
@@ -73,13 +73,13 @@ describe("favicon URLs", () => {
           routeId: "/$user",
         },
       ]),
-    ).toBe("/favicon/pondorasti.svg?v=9");
+    ).toBe("/favicon/pondorasti.svg?v=10");
     expect(faviconUrlFromMatches([{ routeId: "__root__" }])).toBe(DEFAULT_FAVICON_URL);
   });
 
   it("describes the root asset as PNG and composites as SVG", () => {
-    expect(faviconMimeType(DEFAULT_FAVICON_URL)).toBe("image/png");
-    expect(faviconMimeType("/favicon/pondorasti.svg?v=9")).toBe("image/svg+xml");
+    expect(DEFAULT_FAVICON_URL).toBe("/favicon.svg?v=10");
+    expect(FAVICON_MIME_TYPE).toBe("image/svg+xml");
   });
 });
 
