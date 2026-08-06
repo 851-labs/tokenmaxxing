@@ -11,6 +11,8 @@ import type { CcusageDay } from "./schema";
  *     costs are filled by distributing the day cost over token weight.
  *   - models record (codex): per-model token rows, day cost distributed
  *     over token weight.
+ *   - agent summaries (including Hermes): per-model rows plus a day-level
+ *     total that may include reasoning tokens omitted from the breakdown.
  *   - neither (opencode): one row from the day totals — attributed to the
  *     single entry of modelsUsed when unambiguous, else "unknown".
  *
@@ -49,6 +51,7 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
       inputTokens: number;
       model: string;
       outputTokens: number;
+      totalTokens: number | undefined;
     }
 
     const entries: ModelTotals[] = [];
@@ -61,6 +64,7 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
           inputTokens: breakdown.inputTokens ?? 0,
           model: breakdown.modelName,
           outputTokens: breakdown.outputTokens ?? 0,
+          totalTokens: undefined,
         });
       }
     } else if (day.models !== undefined && Object.keys(day.models).length > 0) {
@@ -72,6 +76,7 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
           inputTokens: entry.inputTokens ?? 0,
           model,
           outputTokens: entry.outputTokens ?? 0,
+          totalTokens: entry.totalTokens,
         });
       }
     }
@@ -95,12 +100,13 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
     // weight (exact for single-model days, the overwhelming case).
     const tokensOf = (entry: ModelTotals) =>
       entry.inputTokens + entry.outputTokens + entry.cacheCreationTokens + entry.cacheReadTokens;
+    const totalTokens = modelTotalTokens(day.totalTokens, entries, tokensOf);
     const knownCost = entries.reduce((sum, entry) => sum + (entry.cost ?? 0), 0);
     const unpriced = entries.filter((entry) => entry.cost === undefined);
     const unpricedWeight = unpriced.reduce((sum, entry) => sum + tokensOf(entry), 0);
     const remainder = Math.max(dayCost - knownCost, 0);
 
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
       const cost =
         entry.cost ??
         (unpricedWeight > 0
@@ -115,7 +121,7 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
         model: entry.model,
         outputTokens: entry.outputTokens,
         source,
-        totalTokens: tokensOf(entry),
+        totalTokens: totalTokens[index]!,
       });
     }
   }
@@ -123,6 +129,39 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
   return [...merged.values()].sort((a, b) =>
     a.date === b.date ? a.model.localeCompare(b.model) : a.date.localeCompare(b.date),
   );
+}
+
+/** Preserve day-level tokens that ccusage does not expose in per-model fields. */
+function modelTotalTokens<T extends { totalTokens: number | undefined }>(
+  dayTotalTokens: number | undefined,
+  entries: readonly T[],
+  visibleTokensOf: (entry: T) => number,
+): number[] {
+  const totals = entries.map((entry) => Math.max(visibleTokensOf(entry), entry.totalTokens ?? 0));
+  const knownTotal = totals.reduce((sum, total) => sum + total, 0);
+  const unreported = Math.max(0, Math.trunc(dayTotalTokens ?? knownTotal) - knownTotal);
+  if (unreported === 0) {
+    return totals;
+  }
+
+  const weight = totals.reduce((sum, total) => sum + total, 0);
+  const shares = totals.map((total) =>
+    weight > 0 ? (unreported * total) / weight : unreported / totals.length,
+  );
+  const allocated = shares.map(Math.floor);
+  let remainder = unreported - allocated.reduce((sum, total) => sum + total, 0);
+  const allocationOrder = shares
+    .map((share, index) => ({ fraction: share - Math.floor(share), index }))
+    .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
+  for (const { index } of allocationOrder) {
+    if (remainder === 0) {
+      break;
+    }
+    allocated[index]! += 1;
+    remainder -= 1;
+  }
+
+  return totals.map((total, index) => total + allocated[index]!);
 }
 
 interface SourceSummary {

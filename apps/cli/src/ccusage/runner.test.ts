@@ -11,6 +11,7 @@ import {
 } from "./runner";
 
 const codex = { source: "codex", subcommand: "codex" };
+const hermes = { source: "hermes", subcommand: "hermes" };
 const pi = { source: "pi", subcommand: "pi" };
 
 async function ccusageErrorFor<A>(effect: Effect.Effect<A, CcusageRunError>) {
@@ -63,6 +64,26 @@ describe("ccusage commands", () => {
     expect(sessionCcusageCommand(pi)).toEqual([
       "ccusage@^20.0.19",
       "pi",
+      "session",
+      "--json",
+      "--mode",
+      "calculate",
+    ]);
+  });
+
+  it("builds focused Hermes daily and session commands", () => {
+    expect(dailyCcusageCommand(hermes)).toEqual([
+      "ccusage@^20.0.19",
+      "hermes",
+      "daily",
+      "--json",
+      "--breakdown",
+      "--mode",
+      "calculate",
+    ]);
+    expect(sessionCcusageCommand(hermes)).toEqual([
+      "ccusage@^20.0.19",
+      "hermes",
       "session",
       "--json",
       "--mode",
