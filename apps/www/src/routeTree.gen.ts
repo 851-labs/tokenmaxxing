@@ -23,6 +23,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as OgChar123loginChar125DotpngRouteImport } from './routes/og/{$login}[.]png'
 import { Route as OgCardLoginRouteImport } from './routes/og-card/$login'
 import { Route as LoginCliRouteImport } from './routes/login_.cli'
+import { Route as FaviconChar123loginChar125DotsvgRouteImport } from './routes/favicon/{$login}[.]svg'
 
 const TermsRoute = TermsRouteImport.update({
   id: '/terms',
@@ -95,6 +96,12 @@ const LoginCliRoute = LoginCliRouteImport.update({
   path: '/login/cli',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FaviconChar123loginChar125DotsvgRoute =
+  FaviconChar123loginChar125DotsvgRouteImport.update({
+    id: '/favicon/{$login}.svg',
+    path: '/favicon/{$login}.svg',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -108,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/stats': typeof StatsRoute
   '/terms': typeof TermsRoute
+  '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
   '/og/{$login}.png': typeof OgChar123loginChar125DotpngRoute
@@ -124,6 +132,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/stats': typeof StatsRoute
   '/terms': typeof TermsRoute
+  '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
   '/og/{$login}.png': typeof OgChar123loginChar125DotpngRoute
@@ -141,6 +150,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/stats': typeof StatsRoute
   '/terms': typeof TermsRoute
+  '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login_/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
   '/og/{$login}.png': typeof OgChar123loginChar125DotpngRoute
@@ -159,6 +169,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/stats'
     | '/terms'
+    | '/favicon/{$login}.svg'
     | '/login/cli'
     | '/og-card/$login'
     | '/og/{$login}.png'
@@ -175,6 +186,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/stats'
     | '/terms'
+    | '/favicon/{$login}.svg'
     | '/login/cli'
     | '/og-card/$login'
     | '/og/{$login}.png'
@@ -191,6 +203,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/stats'
     | '/terms'
+    | '/favicon/{$login}.svg'
     | '/login_/cli'
     | '/og-card/$login'
     | '/og/{$login}.png'
@@ -208,6 +221,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   StatsRoute: typeof StatsRoute
   TermsRoute: typeof TermsRoute
+  FaviconChar123loginChar125DotsvgRoute: typeof FaviconChar123loginChar125DotsvgRoute
   LoginCliRoute: typeof LoginCliRoute
   OgCardLoginRoute: typeof OgCardLoginRoute
   OgChar123loginChar125DotpngRoute: typeof OgChar123loginChar125DotpngRoute
@@ -313,6 +327,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginCliRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/favicon/{$login}.svg': {
+      id: '/favicon/{$login}.svg'
+      path: '/favicon/{$login}.svg'
+      fullPath: '/favicon/{$login}.svg'
+      preLoaderRoute: typeof FaviconChar123loginChar125DotsvgRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -328,6 +349,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   StatsRoute: StatsRoute,
   TermsRoute: TermsRoute,
+  FaviconChar123loginChar125DotsvgRoute: FaviconChar123loginChar125DotsvgRoute,
   LoginCliRoute: LoginCliRoute,
   OgCardLoginRoute: OgCardLoginRoute,
   OgChar123loginChar125DotpngRoute: OgChar123loginChar125DotpngRoute,

@@ -183,6 +183,12 @@ const leaderboardHandlers = HttpApiBuilder.group(TokenmaxxingApi, "leaderboard",
 
 const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (handlers) =>
   handlers
+    .handle("identity", ({ params }) =>
+      Effect.gen(function* () {
+        const profiles = yield* ProfilesService;
+        return yield* profiles.getIdentity(params.login);
+      }),
+    )
     .handle("get", ({ params }) =>
       Effect.gen(function* () {
         const profiles = yield* ProfilesService;

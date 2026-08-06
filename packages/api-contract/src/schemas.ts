@@ -19,6 +19,11 @@ const MeResponse = Schema.Struct({
   user: AuthUser,
 });
 
+const ProfileIdentityResponse = Schema.Struct({
+  avatarUrl: Schema.NullOr(Schema.String),
+  login: Schema.String,
+});
+
 const OAuthProviderId = Schema.Literals(["github", "google"]);
 
 type OAuthProviderId = typeof OAuthProviderId.Type;
@@ -611,6 +616,7 @@ export {
   ProfileDailyRange,
   ProfileDailyResponse,
   ProfileDailyRow,
+  ProfileIdentityResponse,
   ProfileResponse,
   ProfileStats,
   RawUsageReportInput,
