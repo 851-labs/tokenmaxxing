@@ -1,13 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import {
-  buildFaviconSvg,
-  faviconSvgResponse,
-  PROFILE_FAVICON_CACHE_CONTROL,
-} from "../lib/favicon-svg";
+import { buildFaviconSvg, FAVICON_CACHE_CONTROL, faviconSvgResponse } from "../lib/favicon-svg";
 
 function handleDefaultFaviconRequest(): Response {
-  return faviconSvgResponse(buildFaviconSvg(null), PROFILE_FAVICON_CACHE_CONTROL, "default");
+  return faviconSvgResponse(buildFaviconSvg(null), FAVICON_CACHE_CONTROL, "default");
 }
 
 const Route = createFileRoute("/favicon.svg")({

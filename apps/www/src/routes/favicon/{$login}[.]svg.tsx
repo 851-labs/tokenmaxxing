@@ -7,8 +7,8 @@ import { FAVICON_LAYOUT_VERSION } from "../../lib/favicon";
 import {
   avatarFetchUrl,
   buildFaviconSvg,
+  FAVICON_CACHE_CONTROL,
   faviconSvgResponse,
-  PROFILE_FAVICON_CACHE_CONTROL,
   responseImageDataUrl,
   TRANSIENT_FAVICON_CACHE_CONTROL,
 } from "../../lib/favicon-svg";
@@ -117,7 +117,7 @@ function makeProfileFaviconHandler(overrides: Partial<ProfileFaviconRouteDeps> =
 
     const response = faviconSvgResponse(
       buildFaviconSvg(avatarDataUrl),
-      transientAvatarFailure ? TRANSIENT_FAVICON_CACHE_CONTROL : PROFILE_FAVICON_CACHE_CONTROL,
+      transientAvatarFailure ? TRANSIENT_FAVICON_CACHE_CONTROL : FAVICON_CACHE_CONTROL,
       avatarDataUrl === null ? "fallback" : "profile",
       fallbackReason,
     );

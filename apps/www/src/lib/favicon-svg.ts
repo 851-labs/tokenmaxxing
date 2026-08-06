@@ -6,7 +6,7 @@ const FAVICON_LAYOUT = {
 
 const GRADIENT_CLIP_PATH = buildGradientClipPath();
 
-const PROFILE_FAVICON_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=3600";
+const FAVICON_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=3600";
 const TRANSIENT_FAVICON_CACHE_CONTROL = "public, max-age=30, stale-while-revalidate=300";
 const MAX_AVATAR_BYTES = 64 * 1024;
 const AVATAR_FETCH_SIZE = 64;
@@ -235,7 +235,7 @@ export {
   faviconSvgResponse,
   GRADIENT_CLIP_PATH,
   MAX_AVATAR_BYTES,
-  PROFILE_FAVICON_CACHE_CONTROL,
+  FAVICON_CACHE_CONTROL,
   responseImageDataUrl,
   TRANSIENT_FAVICON_CACHE_CONTROL,
 };
