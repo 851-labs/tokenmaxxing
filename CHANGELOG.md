@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.6.0 - 2026-08-05
+
 ### Added
 
 - Added Hermes Agent as a supported ccusage source.
