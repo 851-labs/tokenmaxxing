@@ -1,4 +1,4 @@
-import { devices, usageDays, usageSourceStats, users } from "@tokenmaxxing/db";
+import { devices, usageDays, usageSourceStats, userAccounts, users } from "@tokenmaxxing/db";
 import { and, asc, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { Effect } from "effect";
 import { Layer } from "effect";
@@ -30,6 +30,28 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
                 name: row.name,
               },
             });
+      }),
+    githubIdentity: (userId) =>
+      Effect.gen(function* () {
+        const rows = yield* database.use((db) =>
+          db
+            .select({
+              login: userAccounts.login,
+              starredTokenmaxxing: userAccounts.starredTokenmaxxing,
+            })
+            .from(userAccounts)
+            .where(and(eq(userAccounts.userId, userId), eq(userAccounts.provider, "github")))
+            .orderBy(asc(userAccounts.createdAt))
+            .limit(1),
+        );
+
+        const account = rows[0];
+        return account?.login === null || account === undefined
+          ? null
+          : {
+              login: account.login,
+              starredTokenmaxxing: account.starredTokenmaxxing,
+            };
       }),
     leaderboardRank: (input) =>
       Effect.gen(function* () {

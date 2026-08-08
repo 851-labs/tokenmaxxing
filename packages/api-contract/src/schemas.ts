@@ -409,7 +409,12 @@ const ProfileStats = Schema.Struct({
   totalTokens: Schema.Number,
 });
 
+const ProfileBadgeId = Schema.Literals(["owner", "contributor", "starred", "discord"]);
+
+type ProfileBadgeId = typeof ProfileBadgeId.Type;
+
 const ProfileResponse = Schema.Struct({
+  badges: Schema.Array(ProfileBadgeId),
   stats: ProfileStats,
   user: AuthUser,
 });
@@ -616,6 +621,7 @@ export {
   ProfileDailyRange,
   ProfileDailyResponse,
   ProfileDailyRow,
+  ProfileBadgeId,
   ProfileIdentityResponse,
   ProfileResponse,
   ProfileStats,

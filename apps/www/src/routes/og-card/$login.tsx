@@ -1,5 +1,6 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 
+import { ProfileBadges } from "../../components/profile-badges";
 import { formatOgNumber, formatOgTokens, formatOgUsd } from "../../lib/og";
 import { loadProfileOgData, type ProfileOgData } from "../../lib/og-data";
 
@@ -64,8 +65,9 @@ function OgProfileHeader({ data }: { data: ProfileOgData }) {
             src={profile.user.avatarUrl}
           />
         )}
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-4">
           <h1 className="truncate text-5xl font-semibold tracking-normal">{profile.user.login}</h1>
+          <ProfileBadges badges={profile.badges} size="og" />
         </div>
       </div>
     </header>

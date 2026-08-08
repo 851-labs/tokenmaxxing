@@ -40,6 +40,7 @@ interface GoogleOAuthConfig {
 interface AppConfigShape {
   apiWorkerName: string;
   corsOrigins: string[];
+  discordGithubLogins: string[];
   github: GitHubOAuthConfig;
   google: GoogleOAuthConfig;
   productName: string;
@@ -61,9 +62,12 @@ class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
     const githubClientSecret = yield* Config.redacted("GITHUB_CLIENT_SECRET");
     const googleClientId = yield* Config.string("GOOGLE_CLIENT_ID");
     const googleClientSecret = yield* Config.redacted("GOOGLE_CLIENT_SECRET");
+    const discordGithubLogins = yield* Config.string("DISCORD_GITHUB_LOGINS").pipe(
+      Config.withDefault(""),
+    );
 
     return makeAppConfig(
-      {},
+      { DISCORD_GITHUB_LOGINS: discordGithubLogins },
       {
         github: {
           clientId: githubClientId,
@@ -79,6 +83,7 @@ class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
 }
 
 interface AppConfigEnv {
+  DISCORD_GITHUB_LOGINS?: string;
   TOKENMAXXING_ENV?: string;
 }
 
@@ -93,10 +98,22 @@ function makeAppConfig(env: AppConfigEnv, secrets: AppConfigSecrets): AppConfigS
   return {
     apiWorkerName,
     corsOrigins: corsOriginsFor(urls),
+    discordGithubLogins: parseLoginList(env.DISCORD_GITHUB_LOGINS),
     productName,
     urls,
     ...secrets,
   };
+}
+
+function parseLoginList(value: string | undefined): string[] {
+  return [
+    ...new Set(
+      (value ?? "")
+        .split(",")
+        .map((login) => login.trim().toLowerCase())
+        .filter((login) => login.length > 0),
+    ),
+  ];
 }
 
 function corsOriginsFor(urls: RuntimeUrls): string[] {

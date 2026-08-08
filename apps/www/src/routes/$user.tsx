@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { LinkSimple } from "@phosphor-icons/react/ssr";
+import { ShareNetwork } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import type { ProfileDailyResponse, ProfileDailyRow } from "@tokenmaxxing/api-contract";
@@ -18,6 +18,7 @@ import {
 } from "../components/charts/scale";
 import { Legend, StackedBars, type StackedDay } from "../components/charts/stacked-bars";
 import { WeekdayBars } from "../components/charts/weekday-bars";
+import { ProfileBadges } from "../components/profile-badges";
 import { StatCard } from "../components/stat-card";
 import { Avatar } from "../components/ui/avatar";
 import { Button } from "../components/ui/button";
@@ -29,11 +30,13 @@ import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_WIDTH,
   profileOgDescription,
+  profileOgImagePath,
   profileOgImageUrl,
   profileOgTitle,
   profileUrl,
 } from "../lib/og";
 import { profileDailyQueryOptions, profileQueryOptions } from "../lib/queries";
+import { shareProfileImage } from "../lib/share-profile";
 
 const Route = createFileRoute("/$user")({
   loader: async ({ context, params }) => {
@@ -107,12 +110,21 @@ function ProfilePage() {
 
   return (
     <>
-      <header className="flex items-center justify-between gap-4 px-4 py-8">
-        <div className="flex min-w-0 items-center gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-4 px-4 py-8">
+        <div className="flex min-w-0 flex-[1_1_240px] items-center gap-4">
           <Avatar alt={`${owner.login} avatar`} priority size={56} src={owner.avatarUrl} />
-          <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{owner.login}</h1>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">
+              {owner.login}
+            </h1>
+            <ProfileBadges badges={profile.badges} />
+          </div>
         </div>
-        <ProfileShareButton url={profileUrl(profile)} />
+        <ProfileShareButton
+          imagePath={profileOgImagePath(profile)}
+          login={owner.login}
+          url={profileUrl(profile)}
+        />
       </header>
 
       {daily.days.length === 0 ? (
@@ -128,33 +140,53 @@ function ProfilePage() {
   );
 }
 
-function ProfileShareButton({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false);
+type ShareStatus = "downloaded" | "error" | "idle" | "sharing";
 
-  const copyProfileUrl = async () => {
-    if (navigator.clipboard === undefined) {
-      return;
-    }
+function ProfileShareButton({
+  imagePath,
+  login,
+  url,
+}: {
+  imagePath: string;
+  login: string;
+  url: string;
+}) {
+  const [status, setStatus] = useState<ShareStatus>("idle");
 
+  const shareImage = async () => {
+    setStatus("sharing");
     try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      const outcome = await shareProfileImage({ imagePath, login, profileUrl: url });
+      setStatus(outcome === "downloaded" ? "downloaded" : "idle");
+      if (outcome === "downloaded") {
+        window.setTimeout(() => setStatus("idle"), 1500);
+      }
     } catch {
-      return;
+      setStatus("error");
+      window.setTimeout(() => setStatus("idle"), 2000);
     }
   };
 
+  const label =
+    status === "sharing"
+      ? "Preparing…"
+      : status === "downloaded"
+        ? "Downloaded"
+        : status === "error"
+          ? "Try again"
+          : "Share image";
+
   return (
     <Button
-      aria-label={copied ? "Profile link copied" : "Share profile"}
-      className="shrink-0"
-      onClick={() => void copyProfileUrl()}
+      aria-label={label}
+      className="ml-auto shrink-0"
+      disabled={status === "sharing"}
+      onClick={() => void shareImage()}
       size="sm"
       variant="outline"
     >
-      <LinkSimple className="size-4" />
-      {copied ? "Copied" : "Share"}
+      <ShareNetwork className="size-4" />
+      {label}
     </Button>
   );
 }

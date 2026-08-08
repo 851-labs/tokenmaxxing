@@ -7,6 +7,7 @@ import {
   IngestUsageInput,
   ProfileDailyResponse,
   ProfileIdentityResponse,
+  ProfileResponse,
   StatsResponse,
   SyncUsageInput,
   UsageCheckInInput,
@@ -181,6 +182,41 @@ describe("profile identity responses", () => {
       avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
       login: "pondorasti",
     });
+  });
+});
+
+describe("profile responses", () => {
+  it("carries profile-only badge identifiers", async () => {
+    const value = {
+      badges: ["owner", "contributor", "starred", "discord"],
+      stats: {
+        activeDays: 0,
+        avgSpendPerActiveDay: 0,
+        currentStreakDays: 0,
+        deviceCount: 0,
+        firstDate: null,
+        lastDate: null,
+        leaderboardRank: null,
+        longestStreakDays: 0,
+        peakDay: null,
+        sessionCount: 0,
+        sources: [],
+        topModel: null,
+        totalSpendUsd: 0,
+        totalTokens: 0,
+      },
+      user: {
+        avatarUrl: null,
+        id: "user_123",
+        login: "pondorasti",
+        name: null,
+      },
+    };
+
+    await expect(Schema.decodeUnknownPromise(ProfileResponse)(value)).resolves.toEqual(value);
+    await expect(
+      Schema.decodeUnknownPromise(ProfileResponse)({ ...value, badges: ["unknown"] }),
+    ).rejects.toBeDefined();
   });
 });
 

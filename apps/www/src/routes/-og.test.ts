@@ -23,6 +23,8 @@ describe("profile OG card", () => {
     expect(stats).toContain("pondorasti");
     expect(stats).toContain("Total spend");
     expect(stats).toContain("Top spend model");
+    expect(stats).toContain("/badges/owner.png");
+    expect(stats).toContain('title="Owner"');
   });
 });
 
@@ -198,6 +200,7 @@ function ogData(): { daily: Daily; profile: Profile } {
 
 function profile(): Profile {
   return {
+    badges: ["owner", "contributor"],
     stats: {
       activeDays: 7,
       avgSpendPerActiveDay: 12.34,

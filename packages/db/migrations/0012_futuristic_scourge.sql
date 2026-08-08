@@ -1,0 +1,1 @@
+ALTER TABLE `user_accounts` ADD `starred_tokenmaxxing` integer DEFAULT false NOT NULL;

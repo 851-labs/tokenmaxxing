@@ -55,10 +55,10 @@ function TermsPage() {
         </Section>
 
         <Section title="Public content">
-          Profiles and leaderboard totals are public. Your username, avatar, and aggregated usage
-          totals are visible to anyone. Device hostnames are shown only to you in settings and in
-          your own per-device breakdown. Don&apos;t publish anything you aren&apos;t comfortable
-          making public.
+          Profiles and leaderboard totals are public. Your username, avatar, profile badges, and
+          aggregated usage totals are visible to anyone. Device hostnames are shown only to you in
+          settings and in your own per-device breakdown. Don&apos;t publish anything you aren&apos;t
+          comfortable making public.
         </Section>
 
         <Section title="Data accuracy">

@@ -18,6 +18,7 @@ import { GitHubClient, makeGitHubClient } from "./github/client";
 import { GoogleClient, makeGoogleClient } from "./google/client";
 import { LeaderboardRepositoryLive } from "./leaderboard/d1";
 import { LeaderboardService, makeLeaderboardService } from "./leaderboard/service";
+import { makeProfileBadges, ProfileBadges } from "./profiles/badges";
 import { makeProfilesService, ProfilesService } from "./profiles/service";
 import { ProfilesRepositoryLive } from "./profiles/d1";
 import { StatsRepositoryLive } from "./stats/d1";
@@ -88,8 +89,10 @@ const ApiWorker = Cloudflare.Worker(
     const leaderboard = yield* makeLeaderboardService().pipe(
       Effect.provide(LeaderboardRepositoryLive.pipe(Layer.provide(drizzleLayer))),
     );
+    const profileBadges = yield* makeProfileBadges().pipe(Effect.provideService(AppConfig, config));
     const profiles = yield* makeProfilesService().pipe(
       Effect.provide(ProfilesRepositoryLive.pipe(Layer.provide(drizzleLayer))),
+      Effect.provideService(ProfileBadges, profileBadges),
     );
     const stats = yield* makeStatsService().pipe(
       Effect.provide(StatsRepositoryLive.pipe(Layer.provide(drizzleLayer))),

@@ -32,6 +32,9 @@ const userAccounts = sqliteTable(
     login: text("login"),
     name: text("name"),
     avatarUrl: text("avatar_url"),
+    starredTokenmaxxing: integer("starred_tokenmaxxing", { mode: "boolean" })
+      .notNull()
+      .default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },

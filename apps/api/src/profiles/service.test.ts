@@ -3,11 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import { UserNotFound } from "@tokenmaxxing/api-contract";
 import type {
+  ProfileBadgeId,
   ProfileDailyResponse,
   ProfileIdentityResponse,
   ProfileResponse,
 } from "@tokenmaxxing/api-contract";
 
+import { ProfileBadges } from "./badges";
 import { makeProfilesService, profileDailyRange, ProfilesRepository } from "./service";
 
 describe("profileDailyRange", () => {
@@ -68,6 +70,7 @@ interface TestProfilesService {
 async function makeProfileService(
   shadowBanned: boolean,
   onLeaderboardRank?: (input: { since: string | null; userId: string }) => void,
+  badges: ProfileBadgeId[] = [],
 ): Promise<TestProfilesService> {
   return (await Effect.runPromise(
     makeProfilesService().pipe(
@@ -96,11 +99,16 @@ async function makeProfileService(
                 })
               : Option.none(),
           ),
+        githubIdentity: () =>
+          Effect.succeed({ login: "target-github", starredTokenmaxxing: false }),
         leaderboardRank: (input) => {
           onLeaderboardRank?.(input);
           return Effect.succeed(7);
         },
         stats: () => Effect.succeed(profileStats),
+      }),
+      Effect.provideService(ProfileBadges, {
+        resolve: () => Effect.succeed(badges),
       }),
     ),
   )) as unknown as TestProfilesService;
@@ -126,8 +134,13 @@ describe("ProfilesService shadow-ban visibility", () => {
                 },
               }),
             ),
+          githubIdentity: () =>
+            Effect.succeed({ login: "target-github", starredTokenmaxxing: false }),
           leaderboardRank,
           stats,
+        }),
+        Effect.provideService(ProfileBadges, {
+          resolve: () => Effect.succeed([]),
         }),
       ),
     )) as unknown as TestProfilesService;
@@ -159,9 +172,10 @@ describe("ProfilesService shadow-ban visibility", () => {
   });
 
   it("keeps visible profiles public", async () => {
-    const service = await makeProfileService(false);
+    const service = await makeProfileService(false, undefined, ["contributor", "starred"]);
 
     await expect(Effect.runPromise(service.getProfile("target", null))).resolves.toMatchObject({
+      badges: ["contributor", "starred"],
       stats: { leaderboardRank: 7 },
       user: { id: "user_target", login: "target" },
     });

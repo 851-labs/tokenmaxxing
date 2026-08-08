@@ -31,14 +31,15 @@ function PrivacyPage() {
     <div className="px-4 py-10 sm:py-14">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Privacy Policy</h1>
-        <p className="mt-3 text-sm text-muted-foreground">Last updated: June 20, 2026</p>
+        <p className="mt-3 text-sm text-muted-foreground">Last updated: August 8, 2026</p>
       </header>
 
       <div className="mt-10 space-y-8">
         <Section title="What we collect">
-          tokenmaxxing collects daily usage aggregates only: the date, model name, agent source,
-          token counts, and an API-equivalent cost estimate. When you sign in we also store your
-          OAuth profile basics (username and avatar) and the hostnames of the devices you sync from.
+          Usage data is limited to daily aggregates: the date, model name, agent source, token
+          counts, and an API-equivalent cost estimate. When you sign in we also store your OAuth
+          profile basics (username and avatar), whether your connected GitHub account has starred
+          the tokenmaxxing repository, and the hostnames of the devices you sync from.
         </Section>
 
         <Section title="What we never collect">
@@ -57,8 +58,9 @@ function PrivacyPage() {
 
         <Section title="What is public and what is private">
           Profiles and leaderboard totals are public — your username, avatar, and aggregated usage
-          are visible to anyone. Device hostnames are private and shown only to you in settings and
-          in your own per-device breakdown.
+          are visible to anyone. Profile badges, including contributor, repository star, and Discord
+          membership badges, are also public. Device hostnames are private and shown only to you in
+          settings and in your own per-device breakdown.
         </Section>
 
         <Section title="How we use your data">
@@ -73,9 +75,9 @@ function PrivacyPage() {
         </Section>
 
         <Section title="Third parties">
-          We rely on your chosen OAuth provider to sign you in, and on the public GitHub API to show
-          the repository&apos;s star count. We don&apos;t sell your data or share it with
-          advertisers.
+          We rely on your chosen OAuth provider to sign you in, and on GitHub&apos;s API to check
+          repository contributors, your connected account&apos;s star status, and the repository
+          star count. We don&apos;t sell your data or share it with advertisers.
         </Section>
 
         <Section title="Changes and contact">

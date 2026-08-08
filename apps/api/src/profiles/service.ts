@@ -15,6 +15,7 @@ import type {
 
 import type { DatabaseError } from "../database";
 import { windowStart } from "../leaderboard/service";
+import { ProfileBadges, type GitHubBadgeIdentity } from "./badges";
 
 /**
  * Public profile dashboards: lifetime stats for the header cards plus the
@@ -51,6 +52,7 @@ type ProfileStatsWithoutRank = Omit<typeof ProfileStats.Type, "leaderboardRank">
 
 interface ProfilesRepositoryShape {
   findUserByLogin(login: string): Effect.Effect<Option.Option<ProfileUser>, DatabaseError, any>;
+  githubIdentity(userId: string): Effect.Effect<GitHubBadgeIdentity | null, DatabaseError, any>;
   leaderboardRank(input: {
     since: string | null;
     userId: string;
@@ -72,6 +74,7 @@ class ProfilesRepository extends Context.Service<ProfilesRepository, ProfilesRep
 
 const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
   const repository = yield* ProfilesRepository;
+  const profileBadges = yield* ProfileBadges;
 
   const requireUser = Effect.fn("ProfilesService.requireUser")(function* (
     login: string,
@@ -95,18 +98,22 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
     }),
     getProfile: Effect.fn("ProfilesService.getProfile")(function* (login, viewerUserId) {
       const user = yield* requireUser(login, viewerUserId);
-      const [stats, leaderboardRank] = yield* Effect.all(
+      const [stats, leaderboardRank, badges] = yield* Effect.all(
         [
           repository.stats(user.id),
           repository.leaderboardRank({
             since: windowStart(DEFAULT_LEADERBOARD_WINDOW, new Date()),
             userId: user.id,
           }),
+          repository.githubIdentity(user.id).pipe(
+            Effect.orDie,
+            Effect.flatMap((identity) => profileBadges.resolve(identity)),
+          ),
         ],
         { concurrency: "unbounded" },
       ).pipe(Effect.orDie);
 
-      return { stats: { ...stats, leaderboardRank }, user };
+      return { badges, stats: { ...stats, leaderboardRank }, user };
     }),
     getDaily: Effect.fn("ProfilesService.getDaily")(function* (login, query, viewerUserId) {
       const user = yield* requireUser(login, viewerUserId);

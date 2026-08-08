@@ -157,6 +157,7 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
                 emailVerified: profile.emailVerified,
                 login: profile.login,
                 name: profile.name,
+                starredTokenmaxxing: profile.starredTokenmaxxing,
                 updatedAt: now,
                 userId,
               },
@@ -284,6 +285,7 @@ function accountInsert(userId: string, profile: OAuthProfile, now: Date) {
     name: profile.name,
     provider: profile.provider,
     providerAccountId: profile.providerAccountId,
+    starredTokenmaxxing: profile.starredTokenmaxxing ?? false,
     updatedAt: now,
     userId,
   };

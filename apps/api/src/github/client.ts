@@ -6,8 +6,8 @@ import { AppConfig, type GitHubOAuthConfig } from "../config";
 import type { OAuthProfile } from "../auth/service";
 
 /**
- * Every call this worker makes to GitHub: the OAuth code exchange and the
- * user profile read. Identity only — no repo access, no GitHub App.
+ * Every call this worker makes to GitHub: OAuth exchange, identity reads, and
+ * the authenticated user's public Tokenmaxxing star check. No repo write access.
  */
 
 class GitHubApiError extends Data.TaggedError("GitHubApiError")<{
@@ -52,6 +52,32 @@ const makeGitHubClient = Effect.fn("makeGitHubClient")(function* () {
     return yield* response.json.pipe(Effect.mapError((cause) => new GitHubApiError({ cause })));
   });
 
+  const checkTokenmaxxingStar = Effect.fn("GitHubClient.checkTokenmaxxingStar")(function* (
+    accessToken: string,
+  ) {
+    const request = HttpClientRequest.get(
+      "https://api.github.com/user/starred/851-labs/tokenmaxxing",
+      {
+        headers: githubHeaders(accessToken),
+      },
+    );
+    const response = yield* http
+      .execute(request)
+      .pipe(Effect.mapError((cause) => new GitHubApiError({ cause })));
+    if (response.status === 204) {
+      return true;
+    }
+    if (response.status === 404) {
+      return false;
+    }
+
+    return yield* Effect.fail(
+      new GitHubApiError({
+        cause: new Error(`GitHub responded ${response.status} for ${request.url}`),
+      }),
+    );
+  });
+
   return GitHubClient.of({
     exchangeCode: Effect.fn("GitHubClient.exchangeCode")(function* (code, redirectUri) {
       const payload = (yield* requestJson(
@@ -91,6 +117,9 @@ const makeGitHubClient = Effect.fn("makeGitHubClient")(function* () {
       const email = yield* fetchPrimaryVerifiedEmail(accessToken).pipe(
         Effect.catchCause(() => Effect.succeed(null)),
       );
+      const starredTokenmaxxing = yield* checkTokenmaxxingStar(accessToken).pipe(
+        Effect.catchCause(() => Effect.succeed(undefined)),
+      );
 
       return {
         avatarUrl: payload.avatar_url ?? null,
@@ -100,6 +129,7 @@ const makeGitHubClient = Effect.fn("makeGitHubClient")(function* () {
         name: payload.name ?? null,
         provider: "github",
         providerAccountId: String(payload.id),
+        ...(starredTokenmaxxing === undefined ? {} : { starredTokenmaxxing }),
       };
     }),
   });

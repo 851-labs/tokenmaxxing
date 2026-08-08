@@ -20,7 +20,7 @@ describe("profile OG helpers", () => {
       totalTokens: 987_654,
     });
 
-    expect(profileOgVersion(base)).toBe("2026-06-21-12345-987654-7-s3");
+    expect(profileOgVersion(base)).toBe("2026-06-21-12345-987654-7-owner.starred-s4");
     expect(
       profileOgVersion(
         profile({
@@ -42,14 +42,14 @@ describe("profile OG helpers", () => {
     });
 
     expect(profileOgDescription(empty)).toBe("pondorasti has not synced usage yet.");
-    expect(profileOgImagePath(empty)).toBe("/og/pondorasti.png?v=none-0-0-0-s3");
+    expect(profileOgImagePath(empty)).toBe("/og/pondorasti.png?v=none-0-0-0-owner.starred-s4");
   });
 
   it("encodes logins in image and profile URLs", () => {
     const subject = profile({ login: "alex test" });
 
     expect(profileOgImageUrl(subject, "https://example.com")).toBe(
-      "https://example.com/og/alex%20test.png?v=2026-06-21-12345-987654-7-s3",
+      "https://example.com/og/alex%20test.png?v=2026-06-21-12345-987654-7-owner.starred-s4",
     );
     expect(profileUrl(subject, "https://example.com")).toBe("https://example.com/alex%20test");
   });
@@ -69,6 +69,7 @@ function profile({
   totalTokens?: number;
 } = {}): Profile {
   return {
+    badges: ["owner", "starred"],
     stats: {
       activeDays,
       avgSpendPerActiveDay: activeDays === 0 ? 0 : totalSpendUsd / activeDays,

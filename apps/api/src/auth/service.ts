@@ -23,6 +23,7 @@ interface OAuthProfile {
   name: string | null;
   provider: OAuthProviderId;
   providerAccountId: string;
+  starredTokenmaxxing?: boolean;
 }
 
 interface UserAccountSummary {
