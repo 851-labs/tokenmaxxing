@@ -15,7 +15,7 @@ import {
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { arch, homedir, hostname } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join, posix, win32 } from "node:path";
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 
@@ -576,7 +576,9 @@ function serviceInstallProgram(
         ),
         Effect.mapError((cause) => new ServiceInstallError({ cause })),
       );
-      const serviceEnv = capturedServiceEnv(env);
+      const serviceEnv = yield* Effect.promise(() =>
+        discoverHermesServiceEnv(capturedServiceEnv(env), platform),
+      );
       const wrapper = renderServiceWrapper({
         env: serviceEnv,
         logPath: paths.logPath,
@@ -688,14 +690,33 @@ function serviceRepairEffect(options: ServiceRepairOptions = {}) {
   return options.deferred ? program : humanFrame("Repair automatic sync", options, program);
 }
 
-function repairServiceProgram(options: ServiceRepairOptions = {}) {
+function repairServiceProgram(
+  options: ServiceRepairOptions = {},
+  runtime: {
+    env?: Record<string, string | undefined>;
+    installScheduler?: (paths: ServicePaths) => Effect.Effect<void, unknown>;
+    installServiceRunner?: (paths: ServicePaths) => Effect.Effect<ServiceRunnerInstall, unknown>;
+    platform?: NodeJS.Platform;
+    readNativeStatus?: (
+      paths: ServicePaths,
+    ) => Effect.Effect<{ active: boolean; detail: string }, unknown>;
+    writeFiles?: (
+      paths: ServicePaths,
+      wrapper: string,
+      metadata: ServiceMetadata,
+    ) => Effect.Effect<void, unknown>;
+    writeRunnerPointer?: (paths: ServicePaths, runnerPath: string) => Effect.Effect<void, unknown>;
+  } = {},
+) {
   return Effect.gen(function* () {
-    const env = process.env;
-    const platform = process.platform;
+    const env = runtime.env ?? process.env;
+    const platform = runtime.platform ?? process.platform;
     const paths = yield* servicePathsEffect(env, undefined, platform);
     const currentState = (yield* readServiceState(paths.statePath)) ?? { version: 1 as const };
     const existingMetadata = yield* readServiceMetadata(paths.metadataPath);
-    const initialNativeStatus = yield* readNativeSchedulerStatus(paths);
+    const initialNativeStatus = yield* (runtime.readNativeStatus ?? readNativeSchedulerStatus)(
+      paths,
+    );
     const reloadRequired = serviceReloadRequired(existingMetadata, currentState);
     const repairReason =
       parseServiceRepairReason(options.reason) ??
@@ -732,7 +753,10 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
 
       return yield* Effect.gen(function* () {
         const runnerSpinner = yield* humanSpinner("Installing service runner", options);
-        const runner = yield* installServiceRunnerForRepair(paths, { updatePointer: false }).pipe(
+        const runner = yield* (
+          runtime.installServiceRunner ??
+          ((servicePaths) => installServiceRunnerForRepair(servicePaths, { updatePointer: false }))
+        )(paths).pipe(
           Effect.tap((installedRunner) =>
             Effect.sync(() =>
               runnerSpinner.stop(
@@ -746,8 +770,11 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
           Effect.mapError((cause) => new ServiceRepairError({ cause })),
         );
 
+        const serviceEnv = yield* Effect.promise(() =>
+          discoverHermesServiceEnv(capturedServiceEnv(env), platform),
+        );
         const wrapper = renderServiceWrapper({
-          env: capturedServiceEnv(env),
+          env: serviceEnv,
           logPath: paths.logPath,
           platform,
           runnerPointerPath: paths.runnerPointerPath,
@@ -767,8 +794,10 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
         };
 
         const filesSpinner = yield* humanSpinner("Writing service files", options);
-        yield* writeServiceFiles(paths, wrapper, metadata).pipe(
-          Effect.flatMap(() => writeServiceRunnerPointer(paths, runner.path)),
+        yield* (runtime.writeFiles ?? writeServiceFiles)(paths, wrapper, metadata).pipe(
+          Effect.flatMap(() =>
+            (runtime.writeRunnerPointer ?? writeServiceRunnerPointer)(paths, runner.path),
+          ),
           Effect.tap(() => Effect.sync(() => filesSpinner.stop("Service files written"))),
           Effect.tapError(() =>
             Effect.sync(() => filesSpinner.error("Failed writing service files")),
@@ -776,7 +805,7 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
           Effect.mapError((cause) => new ServiceRepairError({ cause })),
         );
 
-        const nativeStatus = yield* readNativeSchedulerStatus(paths);
+        const nativeStatus = yield* (runtime.readNativeStatus ?? readNativeSchedulerStatus)(paths);
         const needsSchedulerInstall = serviceRepairNeedsSchedulerInstall({
           reason: repairReason,
           reloadRequired,
@@ -799,7 +828,7 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
         }
 
         const schedulerSpinner = yield* humanSpinner("Repairing scheduler", options);
-        yield* installNativeScheduler(paths).pipe(
+        yield* (runtime.installScheduler ?? installNativeScheduler)(paths).pipe(
           Effect.tap(() => Effect.sync(() => schedulerSpinner.stop("Scheduler repaired"))),
           Effect.tapError(() =>
             Effect.sync(() => schedulerSpinner.error("Failed repairing scheduler")),
@@ -807,7 +836,9 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
           Effect.mapError((cause) => new ServiceRepairError({ cause })),
         );
 
-        const repairedNativeStatus = yield* readNativeSchedulerStatus(paths);
+        const repairedNativeStatus = yield* (runtime.readNativeStatus ?? readNativeSchedulerStatus)(
+          paths,
+        );
         if (!repairedNativeStatus.active) {
           return yield* Effect.fail(new ServiceRepairError({ cause: repairedNativeStatus.detail }));
         }
@@ -4219,6 +4250,74 @@ function capturedServiceEnv(
   return captured;
 }
 
+interface HermesDiscoveryFs {
+  access: (path: string, mode: number) => Promise<void>;
+  readdir: (path: string) => Promise<string[]>;
+  realpath: (path: string) => Promise<string>;
+}
+
+async function discoverHermesServiceEnv(
+  env: Record<string, string>,
+  platform: NodeJS.Platform = process.platform,
+  fs: HermesDiscoveryFs = {
+    access,
+    readdir: (path) => readdir(path),
+    realpath,
+  },
+): Promise<Record<string, string>> {
+  if (env["HERMES_HOME"] !== undefined && env["HERMES_HOME"] !== "") {
+    return env;
+  }
+
+  const home = platform === "win32" ? env["USERPROFILE"] : env["HOME"];
+  if (home === undefined || home === "") {
+    return env;
+  }
+
+  const path = platform === "win32" ? win32 : posix;
+  const hermesRoot = path.join(home, ".hermes");
+
+  try {
+    const realRoot = await fs.realpath(hermesRoot);
+    const containmentKey = (value: string) => (platform === "win32" ? value.toLowerCase() : value);
+    const realRootKey = containmentKey(realRoot);
+    const roots: string[] = [];
+    const seen = new Set<string>();
+    const addRootWithReadableState = async (candidate: string) => {
+      const resolved = await fs.realpath(candidate);
+      const resolvedKey = containmentKey(resolved);
+      if (resolvedKey !== realRootKey && !resolvedKey.startsWith(`${realRootKey}${path.sep}`)) {
+        return;
+      }
+      const resolvedState = await fs.realpath(path.join(resolved, "state.db"));
+      if (!containmentKey(resolvedState).startsWith(`${realRootKey}${path.sep}`)) {
+        return;
+      }
+      await fs.access(resolvedState, constants.R_OK);
+      if (resolved.includes(",")) {
+        return;
+      }
+      if (!seen.has(resolvedKey)) {
+        seen.add(resolvedKey);
+        roots.push(resolved);
+      }
+    };
+
+    await addRootWithReadableState(hermesRoot).catch(() => undefined);
+    const profilesRoot = path.join(hermesRoot, "profiles");
+    const profileNames = await fs.readdir(profilesRoot).catch(() => []);
+    for (const profileName of profileNames.sort((left, right) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    )) {
+      await addRootWithReadableState(path.join(profilesRoot, profileName)).catch(() => undefined);
+    }
+
+    return roots.length === 0 ? env : { ...env, HERMES_HOME: roots.join(",") };
+  } catch {
+    return env;
+  }
+}
+
 function defaultPath(): string {
   return process.platform === "win32"
     ? "C:\\Windows\\System32;C:\\Windows"
@@ -4472,6 +4571,7 @@ export {
   deferredServiceRepairInvocation,
   durableTokenmaxxingCommandPath,
   detectAutoUpdateManager,
+  discoverHermesServiceEnv,
   findCommandOnPath,
   findTokenmaxxingCommandInstall,
   formatServiceLockStatus,
@@ -4487,6 +4587,7 @@ export {
   resolveServiceRunnerPackageJson,
   renderLaunchdPlist,
   renderServiceWrapper,
+  repairServiceProgram,
   renderSystemdTimer,
   refreshServiceAfterUpdate,
   installServiceRunner,

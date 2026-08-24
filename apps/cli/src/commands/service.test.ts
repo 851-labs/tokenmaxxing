@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -25,6 +34,7 @@ import {
   capturedServiceEnv,
   deferredServiceRepairInvocation,
   detectAutoUpdateManager,
+  discoverHermesServiceEnv,
   deterministicServiceJitterMs,
   durableTokenmaxxingCommandPath,
   extractServiceRunnerFromTarball,
@@ -41,6 +51,7 @@ import {
   resolveExecutableSiblingPackageJson,
   renderLaunchdPlist,
   renderServiceWrapper,
+  repairServiceProgram,
   renderSystemdTimer,
   runServiceAutoUpdate,
   scheduleDescription,
@@ -482,6 +493,125 @@ describe("servicePaths", () => {
 });
 
 describe("renderServiceWrapper", () => {
+  it("discovers the default Hermes root and profile roots for scheduled sync", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tokenmaxxing-hermes-"));
+    try {
+      const hermesRoot = join(home, ".hermes");
+      const alpha = join(hermesRoot, "profiles", "alpha");
+      const beta = join(hermesRoot, "profiles", "beta");
+      await mkdir(alpha, { recursive: true });
+      await mkdir(beta, { recursive: true });
+      await writeFile(join(hermesRoot, "state.db"), "default");
+      await writeFile(join(alpha, "state.db"), "alpha");
+      await writeFile(join(beta, "state.db"), "beta");
+
+      await expect(discoverHermesServiceEnv({ HOME: home }, "linux")).resolves.toEqual({
+        HOME: home,
+        HERMES_HOME: [hermesRoot, alpha, beta].join(","),
+      });
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps an explicit Hermes home unchanged", async () => {
+    const env = { HERMES_HOME: "/custom/one,/custom/two", HOME: "/home/alex" };
+    await expect(discoverHermesServiceEnv(env, "linux")).resolves.toBe(env);
+  });
+
+  it("sets only the default root when no profiles contain state", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tokenmaxxing-hermes-root-"));
+    try {
+      const hermesRoot = join(home, ".hermes");
+      await mkdir(join(hermesRoot, "profiles", "empty"), { recursive: true });
+      await writeFile(join(hermesRoot, "state.db"), "default");
+      await expect(discoverHermesServiceEnv({ HOME: home }, "darwin")).resolves.toEqual({
+        HOME: home,
+        HERMES_HOME: hermesRoot,
+      });
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
+  it("leaves Hermes home unset when no readable state exists", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tokenmaxxing-hermes-empty-"));
+    try {
+      await mkdir(join(home, ".hermes", "profiles", "empty"), { recursive: true });
+      await expect(discoverHermesServiceEnv({ HOME: home }, "linux")).resolves.toEqual({
+        HOME: home,
+      });
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
+  it("deduplicates profile aliases and ignores symlink escapes", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tokenmaxxing-hermes-links-"));
+    const outside = await mkdtemp(join(tmpdir(), "tokenmaxxing-hermes-outside-"));
+    try {
+      const hermesRoot = join(home, ".hermes");
+      const profile = join(hermesRoot, "profiles", "real");
+      const linkedStateProfile = join(hermesRoot, "profiles", "linked-state");
+      await mkdir(profile, { recursive: true });
+      await mkdir(linkedStateProfile, { recursive: true });
+      await writeFile(join(profile, "state.db"), "real");
+      await writeFile(join(outside, "state.db"), "outside");
+      await symlink(join(outside, "state.db"), join(linkedStateProfile, "state.db"));
+      await symlink(profile, join(hermesRoot, "profiles", "alias"));
+      await symlink(outside, join(hermesRoot, "profiles", "escape"));
+      expect((await discoverHermesServiceEnv({ HOME: home }, "linux"))["HERMES_HOME"]).toBe(
+        profile,
+      );
+    } finally {
+      await rm(home, { force: true, recursive: true });
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+
+  it("uses Windows path semantics and ignores unreadable profile state", async () => {
+    const fs = {
+      access: async (path: string) => {
+        if (path.includes("blocked")) throw new Error("EACCES");
+      },
+      readdir: async () => ["blocked", "alpha"],
+      realpath: async (path: string) => path,
+    };
+    await expect(
+      discoverHermesServiceEnv({ USERPROFILE: "C:\\Users\\alex" }, "win32", fs),
+    ).resolves.toEqual({
+      HERMES_HOME: "C:\\Users\\alex\\.hermes,C:\\Users\\alex\\.hermes\\profiles\\alpha",
+      USERPROFILE: "C:\\Users\\alex",
+    });
+  });
+
+  it("uses case-insensitive containment for Windows paths", async () => {
+    const fs = {
+      access: async () => undefined,
+      readdir: async () => ["alpha"],
+      realpath: async (path: string) => path.replace("C:\\Users\\alex", "c:\\users\\ALEX"),
+    };
+    await expect(
+      discoverHermesServiceEnv({ USERPROFILE: "C:\\Users\\alex" }, "win32", fs),
+    ).resolves.toEqual({
+      HERMES_HOME: "c:\\users\\ALEX\\.hermes,c:\\users\\ALEX\\.hermes\\profiles\\alpha",
+      USERPROFILE: "C:\\Users\\alex",
+    });
+  });
+
+  it("sorts profile names by code unit and skips comma-delimited paths", async () => {
+    const fs = {
+      access: async () => undefined,
+      readdir: async () => ["zeta", "a,comma", "Beta", "alpha"],
+      realpath: async (path: string) => path,
+    };
+    await expect(discoverHermesServiceEnv({ HOME: "/home/alex" }, "linux", fs)).resolves.toEqual({
+      HOME: "/home/alex",
+      HERMES_HOME:
+        "/home/alex/.hermes,/home/alex/.hermes/profiles/Beta,/home/alex/.hermes/profiles/alpha,/home/alex/.hermes/profiles/zeta",
+    });
+  });
+
   it("runs sync with a durable command without embedding package-manager updates", () => {
     const env = capturedServiceEnv({
       HERMES_HOME: "/data/hermes",
@@ -694,6 +824,52 @@ describe("serviceStateJson", () => {
 });
 
 describe("service repair helpers", () => {
+  it("preserves discovered Hermes roots during deferred repair", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-hermes-repair-"));
+    try {
+      const home = join(dir, "home");
+      const configDir = join(dir, "config");
+      const hermesRoot = join(home, ".hermes");
+      const profile = join(hermesRoot, "profiles", "alpha");
+      await mkdir(profile, { recursive: true });
+      await writeFile(join(hermesRoot, "state.db"), "default");
+      await writeFile(join(profile, "state.db"), "alpha");
+      const wrappers: string[] = [];
+      const { layer } = makeTestLayer({
+        initialConfig: {
+          apiUrl: "https://api.tokenmaxxing.example",
+          wwwUrl: "https://tokenmaxxing.example",
+        },
+      });
+
+      const exit = await Effect.runPromiseExit(
+        repairServiceProgram(
+          { deferred: true, json: true, reason: "reload-required" },
+          {
+            env: { HOME: home, TOKENMAXXING_CONFIG_DIR: configDir },
+            installServiceRunner: () =>
+              Effect.succeed({
+                packageName: "@851-labs/tokenmaxxing-linux-x64",
+                path: join(configDir, "runner"),
+                target: "linux-x64",
+                version: "0.6.0",
+              }),
+            platform: "linux",
+            readNativeStatus: () => Effect.succeed({ active: true, detail: "active" }),
+            writeFiles: (_paths, wrapper) => Effect.sync(() => wrappers.push(wrapper)),
+            writeRunnerPointer: () => Effect.void,
+          },
+        ).pipe(Effect.provide(layer)),
+      );
+
+      expect(exit._tag).toBe("Success");
+      expect(wrappers).toHaveLength(1);
+      expect(wrappers[0]).toContain(`export HERMES_HOME='${hermesRoot},${profile}'`);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
   it("prioritizes the reason that should drive automatic repair", () => {
     expect(
       serviceRepairReason({
@@ -2117,6 +2293,36 @@ describe("formatServiceStatusAutoUpdate", () => {
 });
 
 describe("serviceInstallProgram", () => {
+  it("writes discovered Hermes roots into the installed service wrapper", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tokenmaxxing-hermes-install-"));
+    try {
+      const hermesRoot = join(home, ".hermes");
+      const profile = join(hermesRoot, "profiles", "alpha");
+      await mkdir(profile, { recursive: true });
+      await writeFile(join(hermesRoot, "state.db"), "default");
+      await writeFile(join(profile, "state.db"), "alpha");
+      const { layer } = makeTestLayer({
+        initialConfig: {
+          apiUrl: "https://api.tokenmaxxing.example",
+          token: "tmx_existing",
+          wwwUrl: "https://tokenmaxxing.example",
+        },
+      });
+      const { runtime, written } = makeInstallRuntime({ env: { HOME: home } });
+
+      const exit = await Effect.runPromiseExit(
+        serviceInstallProgram({ force: false, refresh: false }, runtime).pipe(
+          Effect.provide(layer),
+        ),
+      );
+
+      expect(exit._tag).toBe("Success");
+      expect(written[0]?.wrapper).toContain(`export HERMES_HOME='${hermesRoot},${profile}'`);
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
   it("starts browser login and installs the service when no stored token exists", async () => {
     const { layer, state } = makeTestLayer({
       initialConfig: {
