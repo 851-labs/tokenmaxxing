@@ -148,11 +148,13 @@ const FAQ_ITEMS: { answer: ReactNode; answerText: string; question: string }[] =
         >
           ccusage
         </a>{" "}
-        to parse local usage from Claude Code, Codex, OpenCode, Gemini CLI, and Copilot CLI.
+        to parse local usage from Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI, Hermes, Pi,
+        Grok Build CLI, Amp, Qwen Code, Kimi, Kilo Code, Goose, Droid, Codebuff, and OpenClaw.
+        Supercharge is collected natively from its own local session store.
       </>
     ),
     answerText:
-      "tokenmaxxing uses ccusage to parse local usage from Claude Code, Codex, OpenCode, Gemini CLI, and Copilot CLI.",
+      "tokenmaxxing uses ccusage to parse local usage from Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI, Hermes, Pi, Grok Build CLI, Amp, Qwen Code, Kimi, Kilo Code, Goose, Droid, Codebuff, and OpenClaw. Supercharge is collected natively from its own local session store.",
   },
   {
     question: "What data gets uploaded?",

@@ -49,10 +49,12 @@ function PrivacyPage() {
 
         <Section title="How data is sourced">
           The CLI uses <ExternalLink href={CCUSAGE_URL}>ccusage</ExternalLink> to parse usage
-          locally from supported coding agents (Claude Code, Codex, OpenCode, Gemini CLI, and
-          Copilot CLI). It only reads usage data that still exists on your computer; if an agent has
-          already cleaned up its local logs, that data cannot be recovered or uploaded. You can
-          preview exactly what would be sent with <Code>tokenmaxxing sync --dry-run</Code>.
+          locally from supported coding agents (Claude Code, Codex, OpenCode, Gemini CLI, Copilot
+          CLI, Hermes, Pi, Grok Build CLI, Amp, Qwen Code, Kimi, Kilo Code, Goose, Droid, Codebuff,
+          and OpenClaw). Supercharge is collected natively from its own local session store. It only
+          reads usage data that still exists on your computer; if an agent has already cleaned up
+          its local logs, that data cannot be recovered or uploaded. You can preview exactly what
+          would be sent with <Code>tokenmaxxing sync --dry-run</Code>.
         </Section>
 
         <Section title="What is public and what is private">
