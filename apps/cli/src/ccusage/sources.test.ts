@@ -24,6 +24,21 @@ describe("resolveSources", () => {
     });
   });
 
+  it("resolves Grok to the focused ccusage subcommand", () => {
+    expect(resolveSources(["grok"])).toEqual({
+      invalid: [],
+      sources: [{ source: "grok", subcommand: "grok" }],
+    });
+  });
+
+  it("resolves Supercharge as a native (subcommand-less) source", () => {
+    const { invalid, sources } = resolveSources(["supercharge"]);
+
+    expect(invalid).toEqual([]);
+    expect(sources[0]?.source).toBe("supercharge");
+    expect(sources[0]?.subcommand).toBeUndefined();
+  });
+
   it("rejects unknown sources", () => {
     expect(resolveSources(["bogus"]).invalid).toEqual(["bogus"]);
   });

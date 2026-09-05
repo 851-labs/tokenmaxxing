@@ -5,6 +5,20 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Added
+
+- Added Amp, Codebuff, Droid, Goose, Grok Build CLI, Kilo Code, Kimi, OpenClaw, Qwen Code, and
+  Supercharge as supported sources. Supercharge is collected natively from its own session store
+  under the Supercharge data home (`SUPERCHARGE_HOME`, default `~/.supercharge`), independently of
+  ccusage.
+- Carried custom agent data-directory environment variables (`GROK_HOME`, `SUPERCHARGE_HOME`,
+  `AMP_DATA_DIR`, `QWEN_DATA_DIR`, `KIMI_DATA_DIR`, `KILO_DATA_DIR`, `GOOSE_PATH_ROOT`,
+  `DROID_SESSIONS_DIR`, `CODEBUFF_DATA_DIR`, `OPENCLAW_DIR`) into scheduled syncs.
+
+### Changed
+
+- Required ccusage 20.0.20 or newer, which adds the Grok Build CLI adapter.
+
 ## 0.6.0 - 2026-08-05
 
 ### Added

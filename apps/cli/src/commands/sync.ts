@@ -11,6 +11,7 @@ import type {
 
 import packageJson from "../../package.json";
 import { aggregateDays, summarize, type SourceSummary } from "../ccusage/aggregate";
+import type { CcusageDailyReport } from "../ccusage/schema";
 import {
   type CcusageReportKind,
   CcusageRunError,
@@ -20,6 +21,7 @@ import {
   runCcusageSessionReport,
 } from "../ccusage/runner";
 import { DEFAULT_SOURCE_NAMES, resolveSources } from "../ccusage/sources";
+import { collectSuperchargeDays, superchargeDailyReport } from "../ccusage/supercharge";
 import {
   ApiClientService,
   BrowserService,
@@ -126,6 +128,7 @@ interface SyncProgramOptions extends SyncOptions {
 interface SyncProgramRuntime {
   runDailyReport?: typeof runCcusageDailyReport | undefined;
   runSessionReport?: typeof runCcusageSessionReport | undefined;
+  runSuperchargeDaily?: typeof collectSuperchargeDays | undefined;
 }
 
 interface ResolveSyncAuthOptions {
@@ -156,6 +159,10 @@ type SyncSourceResult =
   | { source: string; status: "partial"; summary: SyncSourceSummary; issue: SyncSourceIssue }
   | { source: string; status: "skipped"; summary: null; reason: "no_data" }
   | { source: string; status: "synced"; summary: SyncSourceSummary };
+
+type SyncDailyOutcome =
+  | { error: CcusageRunError; _tag: "failure" }
+  | { _tag: "success"; report: CcusageDailyReport; sessions: number | null };
 
 type SyncStatus = "error" | "ok" | "partial";
 
@@ -255,6 +262,7 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
   return Effect.gen(function* () {
     const runDailyReport = runtime.runDailyReport ?? runCcusageDailyReport;
     const runSessionReport = runtime.runSessionReport ?? runCcusageSessionReport;
+    const runSuperchargeDaily = runtime.runSuperchargeDaily ?? collectSuperchargeDays;
     const requested = options.sources?.split(",") ?? DEFAULT_SOURCE_NAMES;
     const { invalid, sources } = resolveSources(requested);
     if (invalid.length > 0) {
@@ -272,16 +280,39 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
     const renderInlineResults = shouldRenderInlineSync(options);
     for (const source of sources) {
       const spinner = yield* humanSpinner(`Syncing ${source.source}`, options);
-      const dailyResult = yield* runDailyReport(source, { since: options.since }).pipe(
-        Effect.match({
-          onFailure: (error) => ({ error, _tag: "failure" as const }),
-          onSuccess: (report) => ({ report, _tag: "success" as const }),
-        }),
-      );
+      const isSupercharge = source.source === "supercharge";
+      // supercharge is collected natively (its sessions are not read through ccusage);
+      // every other source shells out to ccusage's focused subcommand.
+      const dailyOutcome: SyncDailyOutcome = isSupercharge
+        ? yield* runSuperchargeDaily().pipe(
+            Effect.map((collected) => ({
+              report: superchargeDailyReport(collected.days),
+              sessions: collected.sessions,
+            })),
+            Effect.mapError(
+              (error) =>
+                new CcusageRunError({
+                  cause: error,
+                  code: "command_failed",
+                  report: "daily",
+                  source: source.source,
+                }),
+            ),
+            Effect.match({
+              onFailure: (error) => ({ error, _tag: "failure" as const }),
+              onSuccess: (value) => ({ ...value, _tag: "success" as const }),
+            }),
+          )
+        : yield* runDailyReport(source, { since: options.since }).pipe(
+            Effect.match({
+              onFailure: (error) => ({ error, _tag: "failure" as const }),
+              onSuccess: (report) => ({ report, sessions: null, _tag: "success" as const }),
+            }),
+          );
 
-      if (dailyResult._tag === "failure") {
+      if (dailyOutcome._tag === "failure") {
         const result = {
-          issue: syncSourceIssue(dailyResult.error),
+          issue: syncSourceIssue(dailyOutcome.error),
           source: source.source,
           status: "failed" as const,
           summary: null,
@@ -294,7 +325,7 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
         continue;
       }
 
-      const dailyReport = dailyResult.report;
+      const dailyReport = dailyOutcome.report;
       if (dailyReport.daily.length === 0) {
         const result = {
           reason: "no_data" as const,
@@ -310,30 +341,41 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
 
       const sourceRows = aggregateDays(source.source, dailyReport.daily);
       rawReports.push({
-        command: dailyCcusageCommand(source, { since: options.since }),
+        command: isSupercharge
+          ? ["supercharge-native-collector"]
+          : dailyCcusageCommand(source, { since: options.since }),
         payload: dailyReport,
         reportKind: "daily",
         source: source.source,
       });
 
-      const sessionResult = yield* runSessionReport(source, { since: options.since }).pipe(
-        Effect.match({
-          onFailure: (error) => ({ error, _tag: "failure" as const }),
-          onSuccess: (report) => ({ report, _tag: "success" as const }),
-        }),
-      );
-      const sessionCount =
-        sessionResult._tag === "success" ? sessionResult.report.sessions.length : null;
-      const summary = { ...summarize(sourceRows), sessions: sessionCount };
+      // Native supercharge collection reports a real session count; ccusage
+      // sources report a session count from the focused session report.
+      const sessionOutcome =
+        dailyOutcome.sessions !== null
+          ? { sessionCount: dailyOutcome.sessions, issue: null as SyncSourceIssue | null }
+          : yield* runSessionReport(source, { since: options.since }).pipe(
+              Effect.match({
+                onFailure: (error) => ({
+                  issue: syncSourceIssue(error),
+                  sessionCount: null as number | null,
+                }),
+                onSuccess: (report) => ({
+                  issue: null as SyncSourceIssue | null,
+                  sessionCount: report.sessions.length,
+                }),
+              }),
+            );
+      const summary = { ...summarize(sourceRows), sessions: sessionOutcome.sessionCount };
       const result: SyncSourceResult =
-        sessionResult._tag === "failure"
-          ? {
-              issue: syncSourceIssue(sessionResult.error),
+        sessionOutcome.issue === null
+          ? { source: source.source, status: "synced", summary }
+          : {
+              issue: sessionOutcome.issue,
               source: source.source,
               status: "partial",
               summary,
-            }
-          : { source: source.source, status: "synced", summary };
+            };
       sourceSummaries[source.source] = summary;
       sourceResults.push(result);
       rows.push(...sourceRows);

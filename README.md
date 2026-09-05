@@ -47,9 +47,9 @@ installs automatic syncing, and opens your public profile.
 
 ## How it works
 
-tokenmaxxing uses [ccusage](https://ccusage.com/) to read local coding-agent
-usage, turn it into daily token and API-equivalent spend totals, and sync those
-aggregates to your public profile. The leaderboard lets you compare spend or
+tokenmaxxing uses [ccusage](https://ccusage.com/) to read local coding-agent usage
+and collects Supercharge from its own local session store. It turns that usage into daily token
+and API-equivalent spend totals, then syncs those aggregates to your public profile. The leaderboard lets you compare spend or
 tokens over the last 7 days, 30 days, or all time.
 
 Sync is idempotent and profiles aggregate across devices, so you can run
@@ -64,6 +64,16 @@ Sync is idempotent and profiles aggregate across devices, so you can run
 - GitHub Copilot CLI
 - Hermes
 - Pi
+- Supercharge
+- Grok Build CLI
+- Amp
+- Qwen Code
+- Kimi
+- Kilo Code
+- Goose
+- Droid
+- Codebuff
+- OpenClaw
 
 ## Usage
 

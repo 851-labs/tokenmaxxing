@@ -2,8 +2,9 @@
 
 CLI for [tokenmaxxing](https://tokenmaxxing.sh) — the social leaderboard
 for LLM token usage. Parses your local agent usage (Claude Code, Codex,
-OpenCode, Gemini CLI, Copilot CLI, Hermes, Pi) via
-[ccusage](https://github.com/ryoppippi/ccusage) and pushes daily aggregates
+OpenCode, Gemini CLI, Copilot CLI, Hermes, Pi, Grok Build CLI, Amp, Qwen Code, Kimi,
+Kilo Code, Goose, Droid, Codebuff, OpenClaw) via [ccusage](https://github.com/ryoppippi/ccusage).
+Supercharge is collected natively from its own local session store. The CLI pushes daily aggregates
 to your public profile.
 
 ## Usage
