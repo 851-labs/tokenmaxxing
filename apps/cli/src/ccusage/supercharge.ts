@@ -58,10 +58,18 @@ function sessionFiles(root: string): Effect.Effect<string[], SuperchargeCollectE
           }
         }
       };
-      await walk(root);
+      try {
+        await walk(root);
+      } catch (error) {
+        if (!isEnoent(error)) throw error;
+      }
       return files;
     },
   });
+}
+
+function isEnoent(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function readUpdates(path: string): Effect.Effect<string, SuperchargeCollectError> {
@@ -105,12 +113,13 @@ function parseUpdates(content: string): ParsedDay[] {
           ? record.timestamp * 1000
           : 0;
     if (timestampMs === 0) continue;
-    const date = new Date(timestampMs).toISOString().slice(0, 10);
+    const dateObj = new Date(timestampMs);
+    const date = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}-${String(dateObj.getDate()).padStart(2, "0")}`;
 
     for (const entry of modelUsageRows(usage)) {
       const dedupeKey = [
         params?.sessionId ?? "",
-        params?._meta?.eventId ?? "",
+        params?._meta?.eventId ?? record?._meta?.eventId ?? "",
         timestampMs,
         entry.model,
         entry.usage.inputTokens,
@@ -146,7 +155,8 @@ function hasTokens(entry: any): boolean {
   return (
     (entry?.inputTokens ?? 0) > 0 ||
     (entry?.outputTokens ?? 0) > 0 ||
-    (entry?.cachedReadTokens ?? 0) > 0
+    (entry?.cachedReadTokens ?? 0) > 0 ||
+    (entry?.cacheCreationTokens ?? 0) > 0
   );
 }
 
@@ -159,9 +169,7 @@ function collectSuperchargeDays(
   const readUpdatesFor = options.readUpdates ?? readUpdates;
 
   return listSessionFiles().pipe(
-    Effect.flatMap((files) =>
-      Effect.forEach(files, (file) => readUpdatesFor(file), { concurrency: "unbounded" }),
-    ),
+    Effect.flatMap((files) => Effect.forEach(files, (file) => readUpdatesFor(file))),
     Effect.map((contents) => {
       const days = contents.flatMap(parseUpdates);
       const sessions = new Set<string>();

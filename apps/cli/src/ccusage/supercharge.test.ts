@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -88,13 +91,36 @@ describe("collectSuperchargeDays", () => {
       output: 20,
       costUsd: 0.01,
     });
+    const otherTurn = turn("s1", "e2", 1750000000, "gpt-5.6-luna", {
+      input: 100,
+      output: 20,
+      costUsd: 0.01,
+    });
+    const cacheOnly = turn("s1", "e3", 1750000000, "gpt-5.6-luna", {
+      cacheCreation: 10,
+    });
     const listSessionFiles = () => Effect.succeed(["/root/sessions/p/s1/updates.jsonl"]);
-    const readUpdates = () => Effect.succeed([line, line].join("\n"));
+    const readUpdates = () => Effect.succeed([line, line, otherTurn, cacheOnly].join("\n"));
 
     const result = await Effect.runPromise(
       collectSuperchargeDays({ listSessionFiles, readUpdates }),
     );
-    expect(result.days).toHaveLength(1);
+    expect(result.days).toHaveLength(3);
+    expect(result.days.reduce((total, day) => total + day.usage.cacheCreationTokens, 0)).toBe(10);
+  });
+
+  it("treats a missing sessions directory as empty", async () => {
+    const root = await mkdtemp(`${tmpdir()}/tokenmaxxing-supercharge-`);
+    const previous = process.env.SUPERCHARGE_HOME;
+    process.env.SUPERCHARGE_HOME = root;
+    try {
+      const result = await Effect.runPromise(collectSuperchargeDays());
+      expect(result).toEqual({ days: [], sessions: 0 });
+    } finally {
+      if (previous === undefined) delete process.env.SUPERCHARGE_HOME;
+      else process.env.SUPERCHARGE_HOME = previous;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -144,6 +170,7 @@ describe("superchargeDailyReport", () => {
     expect(luna?.inputTokens).toBe(150);
     expect(luna?.outputTokens).toBe(25);
     expect(luna?.totalCost).toBeCloseTo(0.015);
+    expect(luna?.totalTokens).toBe(175);
     expect(luna?.modelBreakdowns?.[0]?.modelName).toBe("gpt-5.6-luna");
     expect(luna?.modelBreakdowns?.[0]?.cost).toBeCloseTo(0.015);
   });
