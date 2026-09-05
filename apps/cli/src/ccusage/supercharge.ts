@@ -224,7 +224,12 @@ function superchargeDailyReport(days: readonly ParsedDay[]): { daily: CcusageDay
       cacheReadTokens: (existing.cacheReadTokens ?? 0) + usage.cacheReadTokens,
       totalCost: (existing.totalCost ?? 0) + usage.costUsd,
       costUSD: (existing.costUSD ?? 0) + usage.costUsd,
-      totalTokens: (existing.totalTokens ?? 0) + usage.inputTokens + usage.outputTokens,
+      totalTokens:
+        (existing.totalTokens ?? 0) +
+        usage.inputTokens +
+        usage.outputTokens +
+        usage.cacheCreationTokens +
+        usage.cacheReadTokens,
       modelBreakdowns:
         prev === undefined
           ? undefined
