@@ -2,6 +2,7 @@ import { Context } from "effect";
 import { Effect } from "effect";
 
 import { DeviceMissing } from "@tokenmaxxing/api-contract";
+import type { InvalidUsage } from "@tokenmaxxing/api-contract";
 import type {
   CliIdentity,
   RawUsageReportInput,
@@ -25,6 +26,7 @@ import {
 } from "./ccusage";
 import { normalizeUsageDays } from "./models";
 import type { RawUsageStorageError } from "./raw-store";
+import { sanitizeUsageDays } from "./validation";
 
 /**
  * Usage ingestion: normalized daily reports are stored first, then current
@@ -64,13 +66,13 @@ interface UsageServiceShape {
     device: UsageDevice,
     reports: readonly RawUsageReportInput[],
     sourceStats?: readonly SourceUsageStatsInput[],
-  ): Effect.Effect<SyncResult, DeviceMissing, any>;
+  ): Effect.Effect<SyncResult, DeviceMissing | InvalidUsage, any>;
   syncBatch(
     identity: typeof CliIdentity.Type,
     device: UsageDevice,
     days: readonly UsageDayInput[],
     sourceStats?: readonly SourceUsageStatsInput[],
-  ): Effect.Effect<SyncResult, DeviceMissing, any>;
+  ): Effect.Effect<SyncResult, DeviceMissing | InvalidUsage, any>;
 }
 
 interface UsageDevice {
@@ -341,7 +343,8 @@ function writeStructuredUsage(
   coveredDays: readonly CoveredUsageDay[] = [],
 ) {
   return Effect.gen(function* () {
-    const normalizedDays = normalizeUsageDays(days);
+    const sanitizedDays = yield* sanitizeUsageDays(days);
+    const normalizedDays = normalizeUsageDays(sanitizedDays);
     for (let offset = 0; offset < normalizedDays.length; offset += UPSERT_CHUNK_SIZE) {
       yield* repository
         .upsertChunk(

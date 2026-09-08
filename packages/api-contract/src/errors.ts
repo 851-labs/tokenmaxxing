@@ -63,11 +63,18 @@ class DeviceMissing extends Schema.TaggedErrorClass<DeviceMissing>()(
   { httpApiStatus: 400 },
 ) {}
 
+class InvalidUsage extends Schema.TaggedErrorClass<InvalidUsage>()(
+  "InvalidUsage",
+  { message: Schema.String },
+  { httpApiStatus: 400 },
+) {}
+
 export {
   AdminUserNotFound,
   DeviceNotFound,
   DeviceMissing,
   Forbidden,
+  InvalidUsage,
   LoginCodeExpired,
   LoginCodeNotFound,
   TokenNotFound,

@@ -8,6 +8,7 @@ import {
   DeviceNotFound,
   DeviceMissing,
   Forbidden,
+  InvalidUsage,
   LoginCodeExpired,
   LoginCodeNotFound,
   TokenNotFound,
@@ -132,7 +133,7 @@ class UsageGroup extends HttpApiGroup.make("usage")
     HttpApiEndpoint.post("ingest", "/usage/ingest", {
       payload: IngestUsageInput,
       success: SyncUsageResponse,
-      error: DeviceMissing,
+      error: [DeviceMissing, InvalidUsage],
     }),
   )
   .add(
@@ -141,7 +142,7 @@ class UsageGroup extends HttpApiGroup.make("usage")
     HttpApiEndpoint.post("sync", "/usage/sync", {
       payload: SyncUsageInput,
       success: SyncUsageResponse,
-      error: DeviceMissing,
+      error: [DeviceMissing, InvalidUsage],
     }),
   )
   .add(
