@@ -458,6 +458,7 @@ describe("servicePaths", () => {
       backend: "launchd",
       configDir: "/tmp/tokenmaxxing",
       definitionPath: "/Users/alex/Library/LaunchAgents/sh.tokenmaxxing.sync.plist",
+      launcherPath: null,
       lockPath: "/tmp/tokenmaxxing/service.lock",
       logPath: "/tmp/tokenmaxxing/service.log",
       metadataPath: "/tmp/tokenmaxxing/service.json",
@@ -600,7 +601,7 @@ describe("native scheduler templates", () => {
       "/MO",
       "5",
       "/TR",
-      '"C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync.cmd"',
+      '"wscript.exe \\"C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync.vbs\\""',
       "/F",
     ]);
   });

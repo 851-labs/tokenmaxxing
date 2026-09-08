@@ -66,6 +66,7 @@ const WINDOWS_TASK_NAME = "tokenmaxxing-sync";
 const POSIX_WRAPPER_NAME = "tokenmaxxing.sh";
 const LEGACY_POSIX_WRAPPER_NAME = "service-sync.sh";
 const WINDOWS_WRAPPER_NAME = "service-sync.cmd";
+const WINDOWS_LAUNCHER_NAME = "service-sync.vbs";
 const PACKAGE_NAME = "@851-labs/tokenmaxxing";
 const SERVICE_RUNNER_DIR_NAME = "service-runners";
 const SERVICE_RUNNER_POINTER_NAME = "service-runner-current";
@@ -120,6 +121,7 @@ interface ServicePaths {
   backend: ServiceBackend;
   configDir: string;
   definitionPath: string | null;
+  launcherPath: string | null;
   lockPath: string;
   logPath: string;
   metadataPath: string;
@@ -3418,6 +3420,7 @@ function servicePaths({
       backend,
       configDir,
       definitionPath: join(home, "Library", "LaunchAgents", `${SERVICE_LABEL}.plist`),
+      launcherPath: null,
       lockPath,
       logPath,
       metadataPath,
@@ -3435,6 +3438,7 @@ function servicePaths({
       backend,
       configDir,
       definitionPath: join(systemdDir, `${SYSTEMD_NAME}.service`),
+      launcherPath: null,
       lockPath,
       logPath,
       metadataPath,
@@ -3450,6 +3454,7 @@ function servicePaths({
     backend,
     configDir,
     definitionPath: null,
+    launcherPath: join(configDir, WINDOWS_LAUNCHER_NAME),
     lockPath,
     logPath,
     metadataPath,
@@ -3905,6 +3910,14 @@ exit /b %ERRORLEVEL%\r
 `;
 }
 
+function renderWindowsLauncher(wrapperPath: string): string {
+  return `CreateObject("WScript.Shell").Run ${vbsString(wrapperPath)}, 0, True\r\n`;
+}
+
+function vbsString(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
 function renderWindowsLogRotation(logPath: string): string {
   const quotedLogPath = cmdQuote(logPath);
   const moves = Array.from({ length: SERVICE_LOG_ROTATIONS - 1 }, (_, index) => {
@@ -3986,6 +3999,9 @@ function writeServiceFiles(
       if (paths.backend !== "windows-task-scheduler") {
         await chmod(paths.wrapperPath, 0o755);
       }
+      if (paths.backend === "windows-task-scheduler" && paths.launcherPath !== null) {
+        await writeFileAtomic(paths.launcherPath, renderWindowsLauncher(paths.wrapperPath));
+      }
       await writeFileAtomic(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
 
       if (paths.backend === "launchd" && paths.definitionPath !== null) {
@@ -4004,6 +4020,9 @@ function removeServiceFiles(paths: ServicePaths): Effect.Effect<void, unknown> {
   return Effect.tryPromise({
     try: async () => {
       await rm(paths.wrapperPath, { force: true });
+      if (paths.launcherPath !== null) {
+        await rm(paths.launcherPath, { force: true });
+      }
       for (const legacyWrapperPath of legacyServiceWrapperPaths(paths)) {
         await rm(legacyWrapperPath, { force: true });
       }
@@ -4062,6 +4081,11 @@ function installNativeScheduler(paths: ServicePaths): Effect.Effect<void, unknow
 }
 
 function windowsTaskCreateArgs(paths: ServicePaths): string[] {
+  const taskRun =
+    paths.launcherPath === null
+      ? cmdQuote(paths.wrapperPath)
+      : cmdQuote(`wscript.exe ${cmdQuote(paths.launcherPath)}`);
+
   return [
     "/Create",
     "/TN",
@@ -4071,7 +4095,7 @@ function windowsTaskCreateArgs(paths: ServicePaths): string[] {
     "/MO",
     String(SERVICE_INTERVAL_MINUTES),
     "/TR",
-    cmdQuote(paths.wrapperPath),
+    taskRun,
     "/F",
   ];
 }
