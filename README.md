@@ -84,7 +84,10 @@ tokenmaxxing logout                        # Revoke this device's CLI token
 
 The background service supports macOS, Linux, and Windows. It uses the global
 `tokenmaxxing` binary and keeps itself current through the package manager that
-installed the CLI when that package manager can be detected.
+installed the CLI when that package manager can be detected. Custom Claude
+(`CLAUDE_CONFIG_DIR`) and Codex (`CODEX_HOME`) log roots are captured at
+`tokenmaxxing service install` or `tokenmaxxing service repair`; rerun one of
+those after changing them.
 
 ## Privacy
 

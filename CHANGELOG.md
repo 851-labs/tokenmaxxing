@@ -5,6 +5,10 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Carried custom `CLAUDE_CONFIG_DIR` and `CODEX_HOME` locations into scheduled syncs.
+
 ## 0.6.0 - 2026-08-05
 
 ### Added

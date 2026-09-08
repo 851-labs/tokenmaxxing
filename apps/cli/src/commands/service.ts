@@ -4205,6 +4205,8 @@ function capturedServiceEnv(
     "LOCALAPPDATA",
     "APPDATA",
     "HERMES_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
     "TOKENMAXXING_CONFIG_DIR",
     "TOKENMAXXING_ENV",
     "TOKENMAXXING_API_URL",

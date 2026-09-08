@@ -1,8 +1,12 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
+
+const execFileAsync = promisify(execFile);
 
 import { Cause, Effect, Layer } from "effect";
 import type { AuthUser } from "@tokenmaxxing/api-contract";
@@ -481,9 +485,44 @@ describe("servicePaths", () => {
   });
 });
 
+describe("capturedServiceEnv", () => {
+  it("captures nonempty Claude and Codex log roots and omits empty values", () => {
+    expect(
+      capturedServiceEnv({
+        CLAUDE_CONFIG_DIR: "/synthetic/Claude Logs, extra",
+        CODEX_HOME: "/synthetic/Codex Logs",
+        HERMES_HOME: "/data/hermes",
+        HOME: "/home/alex",
+        PATH: "/usr/bin",
+        TOKENMAXXING_API_TOKEN: "tmx_secret",
+      }),
+    ).toEqual({
+      CLAUDE_CONFIG_DIR: "/synthetic/Claude Logs, extra",
+      CODEX_HOME: "/synthetic/Codex Logs",
+      HERMES_HOME: "/data/hermes",
+      HOME: "/home/alex",
+      PATH: "/usr/bin",
+    });
+
+    expect(
+      capturedServiceEnv({
+        CLAUDE_CONFIG_DIR: "",
+        CODEX_HOME: undefined,
+        HOME: "/home/alex",
+        PATH: "/usr/bin",
+      }),
+    ).toEqual({
+      HOME: "/home/alex",
+      PATH: "/usr/bin",
+    });
+  });
+});
+
 describe("renderServiceWrapper", () => {
   it("runs sync with a durable command without embedding package-manager updates", () => {
     const env = capturedServiceEnv({
+      CLAUDE_CONFIG_DIR: "/synthetic/Claude Logs, extra",
+      CODEX_HOME: "/synthetic/Codex Logs",
       HERMES_HOME: "/data/hermes",
       HOME: "/home/alex",
       PATH: "/usr/local/bin:/usr/bin",
@@ -503,6 +542,8 @@ describe("renderServiceWrapper", () => {
     expect(wrapper).toContain("[ ! -r '/home/alex/.config/tokenmaxxing/service-runner-current' ]");
     expect(wrapper).toContain('"$runner" service run --scheduled');
     expect(wrapper).toContain("export HERMES_HOME='/data/hermes'");
+    expect(wrapper).toContain("export CLAUDE_CONFIG_DIR='/synthetic/Claude Logs, extra'");
+    expect(wrapper).toContain("export CODEX_HOME='/synthetic/Codex Logs'");
     expect(wrapper).not.toContain("bun update");
     expect(wrapper).not.toContain("npm install");
     expect(wrapper).not.toContain("pnpm add");
@@ -544,8 +585,13 @@ describe("renderServiceWrapper", () => {
   });
 
   it("renders Windows wrappers without package-manager updates", () => {
+    const env = capturedServiceEnv({
+      CLAUDE_CONFIG_DIR: "C:\\Users\\alex\\Claude Logs",
+      CODEX_HOME: "C:\\Users\\alex\\Codex Logs",
+      PATH: "C:\\Windows\\System32",
+    });
     const wrapper = renderServiceWrapper({
-      env: { PATH: "/usr/bin" },
+      env,
       logPath: "/tmp/tokenmaxxing.log",
       platform: "win32",
       runnerPointerPath: "C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing\\service-runner-current",
@@ -561,6 +607,55 @@ describe("renderServiceWrapper", () => {
     expect(wrapper).toContain('move /y "%TOKENMAXXING_LOG%" "%TOKENMAXXING_LOG%.1"');
     expect(wrapper).toContain("set /p TOKENMAXXING_SERVICE_RUNNER=<");
     expect(wrapper).toContain("service run --scheduled");
+    expect(wrapper).toContain('set "CLAUDE_CONFIG_DIR=C:\\Users\\alex\\Claude Logs"');
+    expect(wrapper).toContain('set "CODEX_HOME=C:\\Users\\alex\\Codex Logs"');
+  });
+
+  it("passes captured Claude and Codex roots through a generated POSIX wrapper", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tokenmaxxing-service-env-"));
+    try {
+      const runnerPath = join(root, "fake-runner");
+      const pointerPath = join(root, "service-runner-current");
+      const logPath = join(root, "service.log");
+      const claudeRoot = join(root, "Claude Logs, extra");
+      const codexRoot = join(root, "Codex Logs");
+
+      await writeFile(
+        runnerPath,
+        `#!/bin/sh
+printf 'CLAUDE_CONFIG_DIR=%s\\n' "$CLAUDE_CONFIG_DIR"
+printf 'CODEX_HOME=%s\\n' "$CODEX_HOME"
+`,
+        { encoding: "utf8", mode: 0o755 },
+      );
+      await chmod(runnerPath, 0o755);
+      await writeFile(pointerPath, `${runnerPath}\n`, "utf8");
+
+      const wrapperPath = join(root, "tokenmaxxing.sh");
+      await writeFile(
+        wrapperPath,
+        renderServiceWrapper({
+          env: capturedServiceEnv({
+            CLAUDE_CONFIG_DIR: claudeRoot,
+            CODEX_HOME: codexRoot,
+            HOME: root,
+            PATH: "/usr/bin:/bin",
+          }),
+          logPath,
+          platform: "linux",
+          runnerPointerPath: pointerPath,
+        }),
+        { encoding: "utf8", mode: 0o755 },
+      );
+      await chmod(wrapperPath, 0o755);
+
+      await execFileAsync("/bin/sh", [wrapperPath], { timeout: 5000 });
+      const log = await readFile(logPath, "utf8");
+      expect(log).toContain(`CLAUDE_CONFIG_DIR=${claudeRoot}`);
+      expect(log).toContain(`CODEX_HOME=${codexRoot}`);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
   });
 });
 
