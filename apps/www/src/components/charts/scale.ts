@@ -42,6 +42,8 @@ function niceMax(value: number): number {
 }
 
 const MODEL_SERIES_LIMIT = 10;
+/** Trailing window (ending at the newest charted row) that shares ranking weight with lifetime totals. */
+const RECENT_WINDOW_DAYS = 30;
 const OTHER_MODEL_SERIES = "Other";
 const OTHER_MODEL_SERIES_COLOR = "#9ca3af";
 
@@ -67,23 +69,45 @@ interface ModelSeriesSelection {
 
 /**
  * Keep the highest-value raw model names and collapse only the remaining long
- * tail. Ranking across the full chart range keeps stack positions stable from
- * day to day.
+ * tail. Models rank by lifetime share plus share of the trailing
+ * `RECENT_WINDOW_DAYS`, so a newly adopted model surfaces right away instead
+ * of sitting in "Other" until it outgrows models with months of history.
+ * Ranking across the full chart range keeps stack positions stable from day
+ * to day.
  */
-function selectModelSeries<Row extends { key: string }>(
+function selectModelSeries<Row extends { date: string; key: string }>(
   rows: readonly Row[],
   value: (row: Row) => number,
   limit = MODEL_SERIES_LIMIT,
 ): ModelSeriesSelection {
-  const valueByModel = new Map<string, number>();
+  const recentSince = recentWindowStart(rows);
+  const lifetimeByModel = new Map<string, number>();
+  const recentByModel = new Map<string, number>();
+  let lifetimeTotal = 0;
+  let recentTotal = 0;
   for (const row of rows) {
-    valueByModel.set(row.key, (valueByModel.get(row.key) ?? 0) + value(row));
+    const rowValue = value(row);
+    lifetimeByModel.set(row.key, (lifetimeByModel.get(row.key) ?? 0) + rowValue);
+    lifetimeTotal += rowValue;
+    if (row.date >= recentSince) {
+      recentByModel.set(row.key, (recentByModel.get(row.key) ?? 0) + rowValue);
+      recentTotal += rowValue;
+    }
   }
 
-  const ranked = [...valueByModel.entries()]
+  const share = (byModel: ReadonlyMap<string, number>, total: number, model: string) =>
+    total > 0 ? (byModel.get(model) ?? 0) / total : 0;
+  const ranked = [...lifetimeByModel.keys()]
+    .map(
+      (model) =>
+        [
+          model,
+          share(lifetimeByModel, lifetimeTotal, model) + share(recentByModel, recentTotal, model),
+        ] as const,
+    )
     .sort(
-      ([leftModel, leftValue], [rightModel, rightValue]) =>
-        rightValue - leftValue || leftModel.localeCompare(rightModel),
+      ([leftModel, leftScore], [rightModel, rightScore]) =>
+        rightScore - leftScore || leftModel.localeCompare(rightModel),
     )
     .map(([model]) => model);
   const safeLimit = Math.max(Math.floor(limit), 1);
@@ -98,6 +122,24 @@ function selectModelSeries<Row extends { key: string }>(
     label: (model) => (visibleSet.has(model) ? model : OTHER_MODEL_SERIES),
     order,
   };
+}
+
+/** First day of the trailing window, counted back from the newest charted row. */
+function recentWindowStart(rows: readonly { date: string }[]): string {
+  let last = "";
+  for (const row of rows) {
+    if (row.date > last) {
+      last = row.date;
+    }
+  }
+  if (last === "") {
+    return last;
+  }
+
+  const cursor = new Date(`${last}T00:00:00Z`);
+  cursor.setUTCDate(cursor.getUTCDate() - (RECENT_WINDOW_DAYS - 1));
+
+  return cursor.toISOString().slice(0, 10);
 }
 
 /** Stable raw-model color assignment shared by every metric on a page. */

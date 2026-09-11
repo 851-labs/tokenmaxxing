@@ -5,6 +5,10 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Changed
+
+- Ranked usage-chart model series by lifetime share plus trailing 30-day share so newly adopted models (for example `claude-fable-5-1`) show by name instead of collapsing into Other.
+
 ## 0.6.0 - 2026-08-05
 
 ### Added
