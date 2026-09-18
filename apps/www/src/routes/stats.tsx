@@ -257,7 +257,7 @@ function ModelSection({ selected }: { selected: SelectedStats }) {
 
 function SourceSection({ selected }: { selected: SelectedStats }) {
   return (
-    <section className="grid grid-cols-1 gap-px bg-border xl:grid-cols-2">
+    <section className="grid grid-cols-1 gap-px bg-border">
       <RankPanel entries={selected.sources} metric="tokens" title={`Sources ${selected.label}`} />
     </section>
   );
