@@ -4,34 +4,23 @@ import { ChartGrid } from "./axis";
 import { barLayout, CHART_AXIS, CHART_WIDTH, formatUsd, linearScale, niceMax } from "./scale";
 import { anchorLeft, ChartTooltip } from "./tooltip";
 
-/** Spend bucketed by weekday (Monday-first) with the peak day called out. */
+/** Spend bucketed by weekday (Monday-first); hovering a bar dims the others. */
 
 /** Monday-first axis tick labels, matching the screenshot (M T W T F S S). */
 const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
-/** Monday-first short names for the peak-day heading and tooltips. */
+/** Monday-first short names for tooltips. */
 const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const HEIGHT = 180;
 const BAR_AREA = HEIGHT - 12;
-/** Fixed dark-blue tint; the peak day renders at full opacity, others dimmed. */
+/** Fixed dark-blue tint; non-hovered bars dim while another bar is hovered. */
 const ACCENT = "#2563eb";
 
 /** `spend` is length-7, Monday-first: spend[0] = Mon … spend[6] = Sun. */
 function WeekdayBars({ spend }: { spend: number[] }) {
   const [hovered, setHovered] = useState<number | null>(null);
 
-  const { max, peakIndex } = useMemo(() => {
-    let peak = 0;
-    let peakValue = spend[0] ?? 0;
-    for (let index = 1; index < spend.length; index += 1) {
-      if ((spend[index] ?? 0) > peakValue) {
-        peakValue = spend[index] ?? 0;
-        peak = index;
-      }
-    }
-
-    return { max: niceMax(peakValue), peakIndex: peakValue > 0 ? peak : null };
-  }, [spend]);
+  const max = useMemo(() => niceMax(Math.max(...spend, 0)), [spend]);
 
   const y = linearScale(max, BAR_AREA);
   const { barWidth, slot } = barLayout(WEEKDAY_LABELS.length, 0.55, 64);
@@ -61,7 +50,6 @@ function WeekdayBars({ spend }: { spend: number[] }) {
           const value = spend[index] ?? 0;
           const height = Math.max(y(value), 2);
           const x = CHART_AXIS + slot * index + (slot - barWidth) / 2;
-          const isPeak = index === peakIndex;
           return (
             <g key={`${label}-${index}`} onPointerEnter={() => setHovered(index)}>
               {/* Invisible hover target spanning the full column. */}
@@ -75,7 +63,7 @@ function WeekdayBars({ spend }: { spend: number[] }) {
               <rect
                 fill={ACCENT}
                 height={height}
-                opacity={isPeak ? 1 : 0.4}
+                opacity={hovered === null || hovered === index ? 1 : 0.45}
                 width={barWidth}
                 x={x}
                 y={HEIGHT - height}
