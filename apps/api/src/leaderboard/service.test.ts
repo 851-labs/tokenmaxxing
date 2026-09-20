@@ -22,6 +22,6 @@ describe("windowStart", () => {
     expect(start).toBe("2025-12-07");
     // The whole windowing scheme rests on string comparison matching date
     // order for zero-padded ISO days.
-    expect("2025-12-07" < "2026-01-05").toBe(true);
+    expect(start !== null && start < "2026-01-05").toBe(true);
   });
 });
