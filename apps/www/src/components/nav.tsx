@@ -37,7 +37,7 @@ function Nav() {
             FAQ
           </Link>
         </nav>
-        <div className="justify-self-end">
+        <div className="col-start-3 justify-self-end">
           <UserMenu />
         </div>
       </div>
