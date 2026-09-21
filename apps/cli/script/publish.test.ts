@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { createMainPackageJson } from "./publish-manifest";
 import { npmDistTagForVersion, parsePublishCliArgs } from "./publish-options";

@@ -1,10 +1,8 @@
 pre-commit:
   parallel: true
   commands:
-    fmt:
-      run: bun run fmt
-    lint:
-      run: bun run lint
+    check:
+      run: bun run check
     typecheck:
       run: bun run typecheck
     test:

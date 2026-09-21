@@ -34,7 +34,7 @@
     "build:native-packages": "bun script/build-service-runners.ts",
     "build:service-runners": "bun script/build-service-runners.ts",
     "publish:release": "bun script/publish.ts",
-    "test": "vitest run --passWithNoTests",
+    "test": "vp -C ../.. test run --project cli",
     "typecheck": "tsc --project tsconfig.json"
   },
   "devDependencies": {
@@ -44,6 +44,6 @@
     "@types/bun": "catalog:",
     "effect": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   }
 }

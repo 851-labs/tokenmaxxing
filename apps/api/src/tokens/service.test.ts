@@ -1,6 +1,6 @@
 import { DeviceNotFound, type CliTokenSummary } from "@tokenmaxxing/api-contract";
 import { Effect, Option } from "effect";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { makeTokensService, TokensRepository, type TokensRepositoryShape } from "./service";
 

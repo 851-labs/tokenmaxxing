@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import type { ProfileDailyResponse, ProfileResponse } from "@tokenmaxxing/api-contract";
 
 import type { OgBrowser, OgR2Bucket, OgRuntimeEnv } from "../lib/og-runtime";

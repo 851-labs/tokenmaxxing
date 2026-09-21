@@ -8,7 +8,7 @@
   "scripts": {
     "build": "bun run typecheck",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "test": "vitest run --passWithNoTests",
+    "test": "vp -C ../.. test run --project db",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
@@ -20,6 +20,6 @@
     "better-sqlite3": "catalog:",
     "drizzle-kit": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   }
 }

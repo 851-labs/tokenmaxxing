@@ -1,6 +1,6 @@
 import { Cause, Effect, Layer, Option } from "effect";
 import type { AuthUser } from "@tokenmaxxing/api-contract";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { CcusageRunError } from "../ccusage/runner";
 import {

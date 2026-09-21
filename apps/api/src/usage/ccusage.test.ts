@@ -1,6 +1,6 @@
 import type { RawUsageReportInput } from "@tokenmaxxing/api-contract";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { parseRawUsageReports } from "./ccusage";
 

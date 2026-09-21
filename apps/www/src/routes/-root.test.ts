@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH } from "../lib/og";
 import { DEFAULT_FAVICON_URL, faviconUrlFromMatches } from "../lib/favicon";

@@ -6,7 +6,7 @@ import { gzipSync } from "node:zlib";
 
 import { Cause, Effect, Layer } from "effect";
 import type { AuthUser } from "@tokenmaxxing/api-contract";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import packageJson from "../../package.json";
 import {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import type { UsageDayInput } from "@tokenmaxxing/api-contract";
 
 import { normalizeCcusageModelName, normalizeUsageDays } from "./models";

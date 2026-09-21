@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect";
 import type { AuthUser } from "@tokenmaxxing/api-contract";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   ApiClientService,

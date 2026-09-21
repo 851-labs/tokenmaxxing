@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "test": "vitest run --passWithNoTests",
+    "build": "vp build",
+    "test": "vp -C ../.. test run --project www",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
@@ -32,6 +32,6 @@
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   }
 }

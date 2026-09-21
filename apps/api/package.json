@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bun run typecheck",
-    "test": "vitest run --passWithNoTests",
+    "test": "vp -C ../.. test run --project api",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
@@ -15,8 +15,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
-    "@effect/vitest": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   }
 }

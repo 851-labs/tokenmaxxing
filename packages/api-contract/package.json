@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "bun run typecheck",
-    "test": "vitest run --passWithNoTests",
+    "test": "vp -C ../.. test run --project api-contract",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
@@ -16,6 +16,6 @@
   "devDependencies": {
     "@types/bun": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   }
 }

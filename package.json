@@ -12,7 +12,6 @@
       "@cloudflare/workers-types": "5.20260921.1",
       "@effect/platform-bun": "4.0.0-rc.117",
       "@effect/platform-node": "4.0.0-rc.117",
-      "@effect/vitest": "4.0.0-rc.117",
       "@fontsource/geist-mono": "5.3.0",
       "@fontsource/geist-sans": "5.3.0",
       "@phosphor-icons/react": "2.1.10",
@@ -33,15 +32,12 @@
       "drizzle-orm": "0.45.3",
       "effect": "4.0.0-rc.117",
       "lefthook": "2.1.14",
-      "oxfmt": "0.70.0",
-      "oxlint": "1.85.0",
-      "oxlint-tsgolint": "7.0.2002",
       "react": "19.3.0",
       "react-dom": "19.3.0",
       "tailwindcss": "4.3.3",
-      "turbo": "2.11.2",
       "typescript": "7.0.2",
-      "vite": "8.3.0",
+      "vite": "npm:@voidzero-dev/vite-plus-core@0.3.3",
+      "vite-plus": "0.3.3",
       "vitest": "5.0.1",
       "zod": "4.6.5"
     }
@@ -51,14 +47,15 @@
     "dev": "alchemy dev",
     "deploy": "ALCHEMY_STATE=cloudflare alchemy deploy --env-file .env.production --stage prod",
     "plan": "ALCHEMY_STATE=cloudflare alchemy plan --env-file .env.production --stage prod",
-    "build": "turbo build",
-    "db:generate": "turbo db:generate",
-    "test": "turbo test",
-    "typecheck": "turbo typecheck",
-    "lint": "oxlint --disable-nested-config --type-aware --type-check --no-error-on-unmatched-pattern",
-    "lint:fix": "oxlint --disable-nested-config --fix --type-aware --type-check --no-error-on-unmatched-pattern",
-    "fmt": "oxfmt --disable-nested-config --check",
-    "fmt:fix": "oxfmt --disable-nested-config"
+    "build": "vp run --cache -r build",
+    "db:generate": "vp run --no-cache @tokenmaxxing/db#db:generate",
+    "test": "vp run test:all",
+    "typecheck": "vp run --cache -r typecheck",
+    "lint": "vp lint",
+    "lint:fix": "vp lint --fix",
+    "fmt": "vp fmt --check",
+    "fmt:fix": "vp fmt",
+    "check": "vp check"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
@@ -69,15 +66,14 @@
     "alchemy": "catalog:",
     "effect": "catalog:",
     "lefthook": "catalog:",
-    "oxfmt": "catalog:",
-    "oxlint": "catalog:",
-    "oxlint-tsgolint": "catalog:",
-    "turbo": "catalog:",
     "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:",
     "vitest": "catalog:"
   },
   "overrides": {
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "vite": "catalog:"
   },
   "packageManager": "bun@1.4.2"
 }

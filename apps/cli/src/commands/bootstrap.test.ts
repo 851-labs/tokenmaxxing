@@ -1,6 +1,6 @@
 import { Cause, Effect, Layer } from "effect";
 import type { AuthUser } from "@tokenmaxxing/api-contract";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { ConsoleService, TerminalService, type TokenmaxxingApiClient } from "../services";
 import {
