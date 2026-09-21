@@ -67,7 +67,7 @@ function InternalPage() {
         Devices
       </h2>
       <div className="overflow-x-auto border-b border-border">
-        <table className="w-full min-w-[72rem] table-fixed text-left text-sm">
+        <table className="w-full min-w-6xl table-fixed text-left text-sm">
           <thead className="border-b border-border bg-muted/40 text-xs uppercase text-muted-foreground">
             <tr>
               <th className="w-[18%] p-3 font-medium">Machine</th>
@@ -150,7 +150,7 @@ function UsersTable({ data }: { data: AdminUsersData }) {
       </div>
       {adding ? <ShadowBanUserForm onClose={() => setAdding(false)} users={data.users} /> : null}
       <div className="overflow-x-auto border-b border-border">
-        <table className="w-full min-w-[54rem] table-fixed text-left text-sm">
+        <table className="w-full min-w-216 table-fixed text-left text-sm">
           <thead className="border-b border-border bg-muted/40 text-xs uppercase text-muted-foreground">
             <tr>
               <th className="w-[25%] p-3 font-medium">User</th>

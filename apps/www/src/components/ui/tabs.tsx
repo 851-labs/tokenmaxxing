@@ -16,7 +16,7 @@ function Tabs<Value extends string>({ options, value, onChange }: TabsProps<Valu
     <BaseTabs.Root onValueChange={(next) => onChange(next as Value)} value={value}>
       <BaseTabs.List className="relative inline-flex border border-border p-0.5">
         <BaseTabs.Indicator
-          className="absolute left-[var(--active-tab-left)] top-[var(--active-tab-top)] z-0 h-[var(--active-tab-height)] w-[var(--active-tab-width)] bg-foreground transition-all duration-200 ease-out"
+          className="absolute left-(--active-tab-left) top-(--active-tab-top) z-0 h-(--active-tab-height) w-(--active-tab-width) bg-foreground transition-all duration-200 ease-out"
           renderBeforeHydration
         />
         {options.map((option) => (
@@ -24,7 +24,7 @@ function Tabs<Value extends string>({ options, value, onChange }: TabsProps<Valu
             className={cn(
               "relative z-10 px-2.5 py-1 text-xs font-medium transition-colors",
               "text-muted-foreground hover:text-foreground",
-              "data-[active]:text-background data-[active]:hover:text-background",
+              "data-active:text-background data-active:hover:text-background",
             )}
             key={option.value}
             value={option.value}

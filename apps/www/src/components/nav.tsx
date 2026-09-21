@@ -95,7 +95,7 @@ function UserMenu() {
           </Menu.Item>
           <Menu.Separator />
           <Menu.Item
-            className="text-red-500 data-[highlighted]:bg-red-500/10 data-[highlighted]:text-red-500"
+            className="text-red-500 data-highlighted:bg-red-500/10 data-highlighted:text-red-500"
             icon={<SignOut />}
             onClick={() => signout.mutate()}
           >

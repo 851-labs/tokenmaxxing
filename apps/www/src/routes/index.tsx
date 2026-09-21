@@ -464,7 +464,7 @@ function HeroSection() {
                   className={cn(
                     "relative z-10 px-4 py-2.5 font-mono text-sm transition-colors",
                     "text-muted-foreground hover:text-foreground",
-                    "data-[active]:text-foreground",
+                    "data-active:text-foreground",
                   )}
                   key={option.value}
                   value={option.value}
@@ -522,13 +522,13 @@ function FaqSection() {
         {FAQ_ITEMS.map((item) => (
           <Collapsible.Root className="px-4 py-4" key={item.question}>
             <Collapsible.Trigger className="group flex w-full cursor-pointer items-center gap-2 bg-transparent p-0 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-accent">
-              <span className="w-4 shrink-0 text-center font-mono text-muted-foreground transition-transform group-data-[panel-open]:rotate-45">
+              <span className="w-4 shrink-0 text-center font-mono text-muted-foreground transition-transform group-data-panel-open:rotate-45">
                 +
               </span>
               <span>{item.question}</span>
             </Collapsible.Trigger>
             <Collapsible.Panel
-              className="h-[var(--collapsible-panel-height)] overflow-hidden transition-[height,opacity] duration-200 ease-out data-[ending-style]:h-0 data-[ending-style]:opacity-0 data-[starting-style]:h-0 data-[starting-style]:opacity-0"
+              className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0"
               hiddenUntilFound
             >
               <div className="ml-6 max-w-2xl pt-3 text-sm leading-6 text-muted-foreground">

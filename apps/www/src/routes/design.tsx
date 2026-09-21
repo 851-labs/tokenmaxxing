@@ -191,7 +191,7 @@ function DesignPage() {
             <Menu.Item icon={<Copy />}>Copy link</Menu.Item>
             <Menu.Separator />
             <Menu.Item
-              className="text-red-500 data-[highlighted]:bg-red-500/10 data-[highlighted]:text-red-500"
+              className="text-red-500 data-highlighted:bg-red-500/10 data-highlighted:text-red-500"
               icon={<Trash />}
             >
               Delete
@@ -262,7 +262,7 @@ function OgHtmlPreview({ src, title }: { src: string; title: string }) {
 
   return (
     <div
-      className="relative aspect-[1200/630] max-w-full overflow-hidden border border-border bg-muted"
+      className="relative aspect-1200/630 max-w-full overflow-hidden border border-border bg-muted"
       ref={ref}
     >
       <iframe
@@ -285,7 +285,7 @@ function OgPngPreview({ alt, src }: { alt: string; src: string }) {
 
   if (isLocalhost) {
     return (
-      <div className="flex aspect-[1200/630] w-full flex-col justify-center gap-2 border border-border bg-muted p-4 text-sm text-muted-foreground">
+      <div className="flex aspect-1200/630 w-full flex-col justify-center gap-2 border border-border bg-muted p-4 text-sm text-muted-foreground">
         <p className="font-medium text-foreground">PNG preview unavailable in local dev</p>
         <p>
           Cloudflare Browser runs remotely and cannot capture <Code>tokenmaxxing.localhost</Code>.
@@ -298,7 +298,7 @@ function OgPngPreview({ alt, src }: { alt: string; src: string }) {
   return (
     <img
       alt={alt}
-      className="aspect-[1200/630] w-full border border-border bg-muted object-cover"
+      className="aspect-1200/630 w-full border border-border bg-muted object-cover"
       loading="lazy"
       src={src}
     />

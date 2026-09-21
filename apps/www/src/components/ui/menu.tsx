@@ -51,12 +51,12 @@ function MenuContent({
       >
         <BaseMenu.Popup
           className={cn(
-            "min-w-[9rem] origin-[var(--transform-origin)] border border-border bg-card p-1 text-sm text-foreground shadow-lg outline-none",
+            "min-w-36 origin-(--transform-origin) border border-border bg-card p-1 text-sm text-foreground shadow-lg outline-none",
             // Tailwind v4 emits `scale-*` as the standalone `scale` property, so it
             // must be named in the transition (alongside opacity) or it snaps.
             "transition-[opacity,scale] duration-150 ease-out",
-            "data-[starting-style]:scale-95 data-[starting-style]:opacity-0",
-            "data-[ending-style]:scale-95 data-[ending-style]:opacity-0",
+            "data-starting-style:scale-95 data-starting-style:opacity-0",
+            "data-ending-style:scale-95 data-ending-style:opacity-0",
             className,
           )}
           {...rest}
@@ -78,7 +78,7 @@ function MenuItem({ children, className, icon, ...rest }: MenuItemProps) {
     <BaseMenu.Item
       className={cn(
         "flex cursor-default select-none items-center gap-2 px-2.5 py-1.5 outline-none",
-        "data-[highlighted]:bg-muted data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "data-highlighted:bg-muted data-disabled:pointer-events-none data-disabled:opacity-50",
         className,
       )}
       {...rest}
