@@ -22,7 +22,7 @@ const stack = Stack(
     const www = yield* Cloudflare.Website.Vite("www", {
       name: "tokenmaxxing-www",
       rootDir: "./apps/www",
-      url: false,
+      workersDev: false,
       compatibility: {
         date: "2026-06-02",
         flags: ["nodejs_compat"],

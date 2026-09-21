@@ -45,8 +45,8 @@ const userFacingErrorTags = new Set([
   "WriteCliTokenError",
 ]);
 
-const verboseGlobalFlag = GlobalFlag.setting("verbose")({
-  flag: Flag.boolean("verbose").pipe(
+const verboseGlobalFlag = GlobalFlag.Setting("verbose")({
+  flag: Flag.Boolean("verbose").pipe(
     Flag.withDescription("Print internal stack traces on failures"),
   ),
 });

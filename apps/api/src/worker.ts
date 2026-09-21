@@ -36,7 +36,7 @@ const ApiWorker = Cloudflare.Worker(
   {
     name: "tokenmaxxing-api",
     main: import.meta.filename,
-    url: false,
+    workersDev: false,
     compatibility: {
       date: "2026-06-02",
       flags: ["nodejs_compat"],

@@ -111,7 +111,7 @@ interface BrowserLoginResult {
 const loginCommand = Command.make(
   "login",
   {
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => loginEffect({ json }),
 ).pipe(Command.withDescription("Log in to tokenmaxxing via your browser"));

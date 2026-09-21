@@ -165,5 +165,3 @@ describe("whoamiEffect", () => {
     expect(logs).toEqual([JSON.stringify({ user })]);
   });
 });
-
-export {};

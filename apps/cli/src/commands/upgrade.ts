@@ -79,7 +79,7 @@ const npmLatestUrl = "https://registry.npmjs.org/@851-labs%2Ftokenmaxxing/latest
 const upgradeCommand = Command.make(
   "upgrade",
   {
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => upgradeEffect({ json }),
 ).pipe(Command.withDescription("Upgrade the globally installed CLI"));

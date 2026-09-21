@@ -374,5 +374,3 @@ describe("formatHighlight", () => {
     expect(formatHighlight("pondorasti", { env: { NO_COLOR: "" } })).toBe("pondorasti");
   });
 });
-
-export {};

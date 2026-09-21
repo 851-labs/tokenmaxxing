@@ -4,7 +4,7 @@
 
 - Prefer native Effect errors over plain JavaScript `Error` subclasses in Effect code.
 - Use `Data.TaggedError` for internal typed errors that stay inside the Effect error channel.
-- Use `Schema.TaggedErrorClass` when an error is part of a public schema or wire contract.
+- Use `Schema.TaggedError` when an error is part of a public schema or wire contract.
 - Avoid `throw` for expected domain failures; return `Effect.fail(...)` with a typed error instead.
 
 ## Export Style

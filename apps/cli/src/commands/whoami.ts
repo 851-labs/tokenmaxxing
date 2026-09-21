@@ -19,7 +19,7 @@ class WhoamiError extends Data.TaggedError("WhoamiError")<{
 const whoamiCommand = Command.make(
   "whoami",
   {
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => whoamiEffect({ json }),
 ).pipe(Command.withDescription("Show the signed-in user"));

@@ -431,11 +431,11 @@ class ServiceRepairError extends Data.TaggedError("ServiceRepairError")<{
 const installCommand = Command.make(
   "install",
   {
-    force: Flag.boolean("force").pipe(
+    force: Flag.Boolean("force").pipe(
       Flag.withDescription("Deprecated; service install uses a managed runner"),
     ),
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
-    refresh: Flag.boolean("refresh").pipe(Flag.withHidden),
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    refresh: Flag.Boolean("refresh").pipe(Flag.withHidden),
   },
   ({ force, json, refresh }) => serviceInstallEffect({ force, json, refresh }),
 ).pipe(Command.withDescription("Install automatic sync"));
@@ -443,7 +443,7 @@ const installCommand = Command.make(
 const uninstallCommand = Command.make(
   "uninstall",
   {
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => serviceUninstallEffect({ json }),
 ).pipe(Command.withDescription("Uninstall automatic sync"));
@@ -451,7 +451,7 @@ const uninstallCommand = Command.make(
 const statusCommand = Command.make(
   "status",
   {
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => serviceStatusEffect({ json }),
 ).pipe(Command.withDescription("Show automatic sync service status"));
@@ -459,7 +459,7 @@ const statusCommand = Command.make(
 const doctorCommand = Command.make(
   "doctor",
   {
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => serviceDoctorEffect({ json }),
 ).pipe(Command.withDescription("Check automatic sync service health"));
@@ -467,9 +467,9 @@ const doctorCommand = Command.make(
 const repairCommand = Command.make(
   "repair",
   {
-    deferred: Flag.boolean("deferred").pipe(Flag.withHidden),
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
-    reason: Flag.string("reason").pipe(Flag.optional, Flag.withHidden),
+    deferred: Flag.Boolean("deferred").pipe(Flag.withHidden),
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    reason: Flag.String("reason").pipe(Flag.optional, Flag.withHidden),
   },
   ({ deferred, json, reason }) =>
     serviceRepairEffect({ deferred, json, reason: Option.getOrUndefined(reason) }),
@@ -478,11 +478,11 @@ const repairCommand = Command.make(
 const runCommand = Command.make(
   "run",
   {
-    force: Flag.boolean("force").pipe(
+    force: Flag.Boolean("force").pipe(
       Flag.withDescription("Deprecated; service runs sync every time"),
     ),
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
-    scheduled: Flag.boolean("scheduled").pipe(Flag.withHidden),
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    scheduled: Flag.Boolean("scheduled").pipe(Flag.withHidden),
   },
   ({ force, json, scheduled }) => serviceRunEffect({ force, json, scheduled }),
 ).pipe(Command.withDescription("Run the automatic sync job now"));

@@ -8,7 +8,7 @@
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
-    "@base-ui-components/react": "catalog:",
+    "@base-ui/react": "catalog:",
     "@fontsource/geist-mono": "catalog:",
     "@fontsource/geist-sans": "catalog:",
     "@phosphor-icons/react": "catalog:",
@@ -21,7 +21,7 @@
     "effect": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "tailwind-merge": "^3.6.0",
+    "tailwind-merge": "^3.7.0",
     "zod": "catalog:"
   },
   "devDependencies": {

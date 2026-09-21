@@ -57,10 +57,10 @@ class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
 ) {
   /** Secrets resolve from .env at deploy time and bind as secret_text. */
   static readonly fromEnv = Effect.gen(function* () {
-    const githubClientId = yield* Config.string("GITHUB_CLIENT_ID");
-    const githubClientSecret = yield* Config.redacted("GITHUB_CLIENT_SECRET");
-    const googleClientId = yield* Config.string("GOOGLE_CLIENT_ID");
-    const googleClientSecret = yield* Config.redacted("GOOGLE_CLIENT_SECRET");
+    const githubClientId = yield* Config.String("GITHUB_CLIENT_ID");
+    const githubClientSecret = yield* Config.Redacted("GITHUB_CLIENT_SECRET");
+    const googleClientId = yield* Config.String("GOOGLE_CLIENT_ID");
+    const googleClientSecret = yield* Config.Redacted("GOOGLE_CLIENT_SECRET");
 
     return makeAppConfig(
       {},

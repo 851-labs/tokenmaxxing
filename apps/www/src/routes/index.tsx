@@ -1,5 +1,5 @@
-import { Collapsible } from "@base-ui-components/react/collapsible";
-import { Tabs as BaseTabs } from "@base-ui-components/react/tabs";
+import { Collapsible } from "@base-ui/react/collapsible";
+import { Tabs as BaseTabs } from "@base-ui/react/tabs";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, stripSearchParams, useNavigate } from "@tanstack/react-router";
 import {

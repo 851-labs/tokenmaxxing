@@ -308,5 +308,3 @@ describe("formatUpgradeSuccess", () => {
     ).toBe("Upgraded tokenmaxxing");
   });
 });
-
-export {};

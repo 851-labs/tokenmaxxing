@@ -9,71 +9,26 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TermsRouteImport } from './routes/terms'
-import { Route as StatsRouteImport } from './routes/stats'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
-import { Route as PrivacyRouteImport } from './routes/privacy'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
-import { Route as InternalRouteImport } from './routes/internal'
-import { Route as FaviconDotsvgRouteImport } from './routes/favicon[.]svg'
-import { Route as DesignRouteImport } from './routes/design'
-import { Route as UserRouteImport } from './routes/$user'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as OgChar123loginChar125DotpngRouteImport } from './routes/og/{$login}[.]png'
-import { Route as OgCardLoginRouteImport } from './routes/og-card/$login'
-import { Route as LoginCliRouteImport } from './routes/login_.cli'
+import { Route as UserRouteImport } from './routes/$user'
+import { Route as DesignRouteImport } from './routes/design'
+import { Route as FaviconDotsvgRouteImport } from './routes/favicon[.]svg'
+import { Route as InternalRouteImport } from './routes/internal'
+import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as StatsRouteImport } from './routes/stats'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as FaviconChar123loginChar125DotsvgRouteImport } from './routes/favicon/{$login}[.]svg'
+import { Route as LoginCliRouteImport } from './routes/login_.cli'
+import { Route as OgCardLoginRouteImport } from './routes/og-card/$login'
+import { Route as OgChar123loginChar125DotpngRouteImport } from './routes/og/{$login}[.]png'
 
-const TermsRoute = TermsRouteImport.update({
-  id: '/terms',
-  path: '/terms',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const StatsRoute = StatsRouteImport.update({
-  id: '/stats',
-  path: '/stats',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RobotsDottxtRoute = RobotsDottxtRouteImport.update({
-  id: '/robots.txt',
-  path: '/robots.txt',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PrivacyRoute = PrivacyRouteImport.update({
-  id: '/privacy',
-  path: '/privacy',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LlmsDottxtRoute = LlmsDottxtRouteImport.update({
-  id: '/llms.txt',
-  path: '/llms.txt',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const InternalRoute = InternalRouteImport.update({
-  id: '/internal',
-  path: '/internal',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FaviconDotsvgRoute = FaviconDotsvgRouteImport.update({
-  id: '/favicon.svg',
-  path: '/favicon.svg',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DesignRoute = DesignRouteImport.update({
-  id: '/design',
-  path: '/design',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const UserRoute = UserRouteImport.update({
@@ -81,31 +36,76 @@ const UserRoute = UserRouteImport.update({
   path: '/$user',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const DesignRoute = DesignRouteImport.update({
+  id: '/design',
+  path: '/design',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OgChar123loginChar125DotpngRoute =
-  OgChar123loginChar125DotpngRouteImport.update({
-    id: '/og/{$login}.png',
-    path: '/og/{$login}.png',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const OgCardLoginRoute = OgCardLoginRouteImport.update({
-  id: '/og-card/$login',
-  path: '/og-card/$login',
+const FaviconDotsvgRoute = FaviconDotsvgRouteImport.update({
+  id: '/favicon.svg',
+  path: '/favicon.svg',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LoginCliRoute = LoginCliRouteImport.update({
-  id: '/login_/cli',
-  path: '/login/cli',
+const InternalRoute = InternalRouteImport.update({
+  id: '/internal',
+  path: '/internal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LlmsDottxtRoute = LlmsDottxtRouteImport.update({
+  id: '/llms.txt',
+  path: '/llms.txt',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RobotsDottxtRoute = RobotsDottxtRouteImport.update({
+  id: '/robots.txt',
+  path: '/robots.txt',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StatsRoute = StatsRouteImport.update({
+  id: '/stats',
+  path: '/stats',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FaviconChar123loginChar125DotsvgRoute =
   FaviconChar123loginChar125DotsvgRouteImport.update({
     id: '/favicon/{$login}.svg',
     path: '/favicon/{$login}.svg',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const LoginCliRoute = LoginCliRouteImport.update({
+  id: '/login_/cli',
+  path: '/login/cli',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OgCardLoginRoute = OgCardLoginRouteImport.update({
+  id: '/og-card/$login',
+  path: '/og-card/$login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OgChar123loginChar125DotpngRoute =
+  OgChar123loginChar125DotpngRouteImport.update({
+    id: '/og/{$login}.png',
+    path: '/og/{$login}.png',
     getParentRoute: () => rootRouteImport,
   } as any)
 
@@ -242,74 +242,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/terms': {
-      id: '/terms'
-      path: '/terms'
-      fullPath: '/terms'
-      preLoaderRoute: typeof TermsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/stats': {
-      id: '/stats'
-      path: '/stats'
-      fullPath: '/stats'
-      preLoaderRoute: typeof StatsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/robots.txt': {
-      id: '/robots.txt'
-      path: '/robots.txt'
-      fullPath: '/robots.txt'
-      preLoaderRoute: typeof RobotsDottxtRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/privacy': {
-      id: '/privacy'
-      path: '/privacy'
-      fullPath: '/privacy'
-      preLoaderRoute: typeof PrivacyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/llms.txt': {
-      id: '/llms.txt'
-      path: '/llms.txt'
-      fullPath: '/llms.txt'
-      preLoaderRoute: typeof LlmsDottxtRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/internal': {
-      id: '/internal'
-      path: '/internal'
-      fullPath: '/internal'
-      preLoaderRoute: typeof InternalRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/favicon.svg': {
-      id: '/favicon.svg'
-      path: '/favicon.svg'
-      fullPath: '/favicon.svg'
-      preLoaderRoute: typeof FaviconDotsvgRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/design': {
-      id: '/design'
-      path: '/design'
-      fullPath: '/design'
-      preLoaderRoute: typeof DesignRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$user': {
@@ -319,25 +256,81 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UserRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/design': {
+      id: '/design'
+      path: '/design'
+      fullPath: '/design'
+      preLoaderRoute: typeof DesignRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/og/{$login}.png': {
-      id: '/og/{$login}.png'
-      path: '/og/{$login}.png'
-      fullPath: '/og/{$login}.png'
-      preLoaderRoute: typeof OgChar123loginChar125DotpngRouteImport
+    '/favicon.svg': {
+      id: '/favicon.svg'
+      path: '/favicon.svg'
+      fullPath: '/favicon.svg'
+      preLoaderRoute: typeof FaviconDotsvgRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/og-card/$login': {
-      id: '/og-card/$login'
-      path: '/og-card/$login'
-      fullPath: '/og-card/$login'
-      preLoaderRoute: typeof OgCardLoginRouteImport
+    '/internal': {
+      id: '/internal'
+      path: '/internal'
+      fullPath: '/internal'
+      preLoaderRoute: typeof InternalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/llms.txt': {
+      id: '/llms.txt'
+      path: '/llms.txt'
+      fullPath: '/llms.txt'
+      preLoaderRoute: typeof LlmsDottxtRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/robots.txt': {
+      id: '/robots.txt'
+      path: '/robots.txt'
+      fullPath: '/robots.txt'
+      preLoaderRoute: typeof RobotsDottxtRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/stats': {
+      id: '/stats'
+      path: '/stats'
+      fullPath: '/stats'
+      preLoaderRoute: typeof StatsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/favicon/{$login}.svg': {
+      id: '/favicon/{$login}.svg'
+      path: '/favicon/{$login}.svg'
+      fullPath: '/favicon/{$login}.svg'
+      preLoaderRoute: typeof FaviconChar123loginChar125DotsvgRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login_/cli': {
@@ -347,11 +340,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginCliRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/favicon/{$login}.svg': {
-      id: '/favicon/{$login}.svg'
-      path: '/favicon/{$login}.svg'
-      fullPath: '/favicon/{$login}.svg'
-      preLoaderRoute: typeof FaviconChar123loginChar125DotsvgRouteImport
+    '/og-card/$login': {
+      id: '/og-card/$login'
+      path: '/og-card/$login'
+      fullPath: '/og-card/$login'
+      preLoaderRoute: typeof OgCardLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/og/{$login}.png': {
+      id: '/og/{$login}.png'
+      path: '/og/{$login}.png'
+      fullPath: '/og/{$login}.png'
+      preLoaderRoute: typeof OgChar123loginChar125DotpngRouteImport
       parentRoute: typeof rootRouteImport
     }
   }

@@ -49,7 +49,7 @@ interface BootstrapRuntime {
 const bootstrapCommand = Command.make(
   "bootstrap",
   {
-    service: Flag.string("service").pipe(
+    service: Flag.String("service").pipe(
       Flag.optional,
       Flag.withDescription("Whether to install automatic sync (yes or no)"),
     ),

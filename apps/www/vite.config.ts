@@ -14,7 +14,7 @@ const config = defineConfig({
   // React instance for SSR instead of pre-bundling it (which resolves React to
   // null and forces a client-render fallback).
   ssr: {
-    noExternal: ["@base-ui-components/react"],
+    noExternal: ["@base-ui/react"],
   },
   plugins: [tanstackStart(), react(), tailwindcss()],
 });

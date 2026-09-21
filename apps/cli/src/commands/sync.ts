@@ -86,15 +86,15 @@ const ANSI_STYLE_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 
 const syncCommand = Command.make(
   "sync",
   {
-    dryRun: Flag.boolean("dry-run").pipe(
+    dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription("Aggregate locally but push nothing"),
     ),
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
-    since: Flag.string("since").pipe(
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    since: Flag.String("since").pipe(
       Flag.optional,
       Flag.withDescription("Only sync days on or after this date (YYYY-MM-DD)"),
     ),
-    sources: Flag.string("sources").pipe(
+    sources: Flag.String("sources").pipe(
       Flag.optional,
       Flag.withDescription(
         `Comma-separated agents to sync (default: ${DEFAULT_SOURCE_NAMES.join(",")})`,

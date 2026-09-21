@@ -374,6 +374,11 @@ const requestIdLayer = HttpRouter.middleware(
 );
 
 const HttpPlatformStub = Layer.succeed(HttpPlatform.HttpPlatform, {
+  platform: "web",
+  compression: HttpPlatform.makeCompressionWeb({
+    algorithms: ["gzip", "deflate"],
+    transform: HttpPlatform.compressionTransformWeb,
+  }),
   fileResponse: () => Effect.die("HttpPlatform.fileResponse not supported"),
   fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
 });

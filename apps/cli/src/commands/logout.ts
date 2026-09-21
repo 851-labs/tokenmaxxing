@@ -7,7 +7,7 @@ import { humanFrame, humanLog, humanSpinner, writeJson } from "../output";
 const logoutCommand = Command.make(
   "logout",
   {
-    json: Flag.boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => logoutEffect({ json }),
 ).pipe(Command.withDescription("Log out and revoke this device's CLI token"));

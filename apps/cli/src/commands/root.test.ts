@@ -63,5 +63,3 @@ describe("root command", () => {
     expect(result.output).not.toContain("--json");
   });
 });
-
-export {};
