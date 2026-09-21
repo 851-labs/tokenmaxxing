@@ -1,5 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 
+import { cn } from "../../lib/cn";
+
 /**
  * The shared hover tooltip for every dashboard chart: a floating card with a
  * title, optional subtitle, and optional colour-swatched rows. Presentational
@@ -55,7 +57,10 @@ function ChartTooltip({
 }) {
   return (
     <div
-      className={`pointer-events-none absolute top-0 z-10 border border-border bg-card p-3 text-xs shadow-lg ${className ?? ""}`}
+      className={cn(
+        "pointer-events-none absolute top-0 z-10 border border-border bg-card p-3 text-xs shadow-lg",
+        className,
+      )}
       style={style}
     >
       <p className="font-medium">{title}</p>

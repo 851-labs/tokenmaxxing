@@ -10,6 +10,7 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import { Footer } from "../components/footer";
 import { Nav } from "../components/nav";
+import { cn } from "../lib/cn";
 import {
   DEFAULT_APPLE_TOUCH_ICON_URL,
   FAVICON_MIME_TYPE,
@@ -107,7 +108,7 @@ function RootDocument() {
         {isOgCard ? null : <Nav />}
         <main
           id="content"
-          className={isOgCard ? "" : "mx-4 max-w-5xl border-x border-border lg:mx-auto"}
+          className={cn(!isOgCard && "mx-4 max-w-5xl border-x border-border lg:mx-auto")}
         >
           <Outlet />
         </main>

@@ -11,6 +11,7 @@ import { Code } from "../components/ui/code";
 import { Input, Textarea } from "../components/ui/input";
 import { Menu } from "../components/ui/menu";
 import { Tabs } from "../components/ui/tabs";
+import { cn } from "../lib/cn";
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH } from "../lib/og";
 
 const Route = createFileRoute("/design")({
@@ -117,7 +118,7 @@ function DesignPage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {COLOR_TOKENS.map((token) => (
             <div className="flex flex-col gap-1.5" key={token.name}>
-              <div className={`h-16 rounded-lg border border-border ${token.swatch}`} />
+              <div className={cn("h-16 rounded-lg border border-border", token.swatch)} />
               <Code>{token.name}</Code>
             </div>
           ))}
