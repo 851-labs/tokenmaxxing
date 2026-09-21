@@ -1,10 +1,10 @@
 [submodule ".repos/alchemy-effect"]
 	path = .repos/alchemy-effect
-	url = https://github.com/alchemy-run/alchemy-effect
+	url = https://github.com/alchemy-run/alchemy
 	branch = main
 [submodule ".repos/effect-smol"]
 	path = .repos/effect-smol
-	url = https://github.com/Effect-TS/effect-smol
+	url = https://github.com/Effect-TS/effect
 	branch = main
 [submodule ".repos/opencode"]
 	path = .repos/opencode
