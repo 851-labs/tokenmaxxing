@@ -155,6 +155,14 @@ describe("D1 deleteDevice", () => {
     expect([...bucket.objects.keys()].sort()).toEqual([rawKey("foreign"), rawKey("kept")]);
   });
 
+  it("finds the device's raw reports through an index", async () => {
+    const repository = await makeRepository(makeMemoryBucket());
+
+    await runTest(repository.deleteDevice("user", "doomed", NOW));
+
+    expect(database.tableScans("usage_raw_batches")).toEqual([]);
+  });
+
   function deviceIds(table: string): string[] {
     const column = table === "devices" ? "id" : "device_id";
 

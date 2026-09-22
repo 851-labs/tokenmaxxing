@@ -125,6 +125,14 @@ describe("D1 mergeUsers", () => {
     ).toEqual({ objectKey: "users/source/devices/source-device/ccusage/codex/daily/a.json" });
   });
 
+  it("re-homes raw reports through an index", async () => {
+    const repository = await makeRepository();
+
+    await runTest(repository.mergeUsers({ sourceUserId: "source", targetUserId: "target" }));
+
+    expect(database.tableScans("usage_raw_batches")).toEqual([]);
+  });
+
   it("carries a source shadow ban onto the target", async () => {
     database.sqlite
       .prepare(
