@@ -2,7 +2,7 @@ import * as Context from "effect/Context";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 
 import { Unauthorized } from "./errors";
-import { AuthUser, CliIdentity } from "./schemas";
+import type { AuthUser, CliIdentity } from "./schemas";
 
 /**
  * Middleware DEFINITIONS the contract's groups reference — the server
@@ -10,7 +10,7 @@ import { AuthUser, CliIdentity } from "./schemas";
  * see them only as error surface + OpenAPI metadata.
  */
 
-class CurrentUser extends Context.Service<CurrentUser, typeof AuthUser.Type>()(
+class CurrentUser extends Context.Service<CurrentUser, AuthUser>()(
   "@tokenmaxxing/api/CurrentUser",
 ) {}
 
@@ -39,7 +39,7 @@ const AllowCliToken = Context.Reference<boolean>("@tokenmaxxing/api/AllowCliToke
   defaultValue: () => false,
 });
 
-class CurrentCliIdentity extends Context.Service<CurrentCliIdentity, typeof CliIdentity.Type>()(
+class CurrentCliIdentity extends Context.Service<CurrentCliIdentity, CliIdentity>()(
   "@tokenmaxxing/api/CurrentCliIdentity",
 ) {}
 

@@ -1,7 +1,14 @@
 import { Context, Effect, Option } from "effect";
 
 import { DeviceNotFound, TokenNotFound } from "@tokenmaxxing/api-contract";
-import type { CliIdentity, CliTokenSummary, DeviceSummary } from "@tokenmaxxing/api-contract";
+import type {
+  CliIdentity,
+  CliTokenSummary,
+  DeviceId,
+  DeviceSummary,
+  TokenId,
+  UserId,
+} from "@tokenmaxxing/api-contract";
 
 import { CLI_TOKEN_PREFIX, hashCliToken } from "../auth/crypto";
 import type { DatabaseError } from "../database";
@@ -15,20 +22,20 @@ import type { RawUsageStorageError } from "../usage/raw-store";
 
 interface TokensServiceShape {
   /** Resolves a raw `tmx_` bearer; touches lastUsedAt on success. */
-  resolveCliToken(rawToken: string): Effect.Effect<Option.Option<typeof CliIdentity.Type>>;
-  listDevices(userId: string): Effect.Effect<(typeof DeviceSummary.Type)[]>;
-  listTokens(userId: string): Effect.Effect<(typeof CliTokenSummary.Type)[]>;
-  deleteDevice(userId: string, deviceId: string): Effect.Effect<void, DeviceNotFound>;
-  revokeToken(userId: string, tokenId: string): Effect.Effect<void, TokenNotFound>;
+  resolveCliToken(rawToken: string): Effect.Effect<Option.Option<CliIdentity>>;
+  listDevices(userId: UserId): Effect.Effect<DeviceSummary[]>;
+  listTokens(userId: UserId): Effect.Effect<CliTokenSummary[]>;
+  deleteDevice(userId: UserId, deviceId: DeviceId): Effect.Effect<void, DeviceNotFound>;
+  revokeToken(userId: UserId, tokenId: TokenId): Effect.Effect<void, TokenNotFound>;
 }
 
 interface TokensRepositoryShape {
   findIdentityByHash(
     tokenHash: string,
     now: Date,
-  ): Effect.Effect<Option.Option<typeof CliIdentity.Type>, DatabaseError>;
-  listDevices(userId: string): Effect.Effect<(typeof DeviceSummary.Type)[], DatabaseError>;
-  listTokens(userId: string): Effect.Effect<(typeof CliTokenSummary.Type)[], DatabaseError>;
+  ): Effect.Effect<Option.Option<CliIdentity>, DatabaseError>;
+  listDevices(userId: string): Effect.Effect<DeviceSummary[], DatabaseError>;
+  listTokens(userId: string): Effect.Effect<CliTokenSummary[], DatabaseError>;
   /** Removes the device, its usage rows and raw reports (rows and stored
    * objects), and revokes its tokens. */
   deleteDevice(

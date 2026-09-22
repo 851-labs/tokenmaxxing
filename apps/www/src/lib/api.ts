@@ -4,19 +4,8 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import { createIsomorphicFn } from "@tanstack/react-start";
-import {
-  AdminUserNotFound,
-  CliUpgradeRequired,
-  DeviceMissing,
-  DeviceNotFound,
-  Forbidden,
-  LoginCodeExpired,
-  LoginCodeNotFound,
-  TokenmaxxingApi,
-  TokenNotFound,
-  Unauthorized,
-  UserNotFound,
-} from "@tokenmaxxing/api-contract";
+import { ApiErrors, TokenmaxxingApi } from "@tokenmaxxing/api-contract";
+import type { ApiError, ApiErrorTag } from "@tokenmaxxing/api-contract";
 
 import { resolveApiUrl } from "./config";
 
@@ -31,20 +20,6 @@ import { resolveApiUrl } from "./config";
  */
 
 type TokenmaxxingApiClient = HttpApiClient.ForApi<typeof TokenmaxxingApi>;
-
-/** Contract failures are deliberate 4xx answers; retrying cannot change them. */
-const CONTRACT_ERRORS = [
-  AdminUserNotFound,
-  CliUpgradeRequired,
-  DeviceMissing,
-  DeviceNotFound,
-  Forbidden,
-  LoginCodeExpired,
-  LoginCodeNotFound,
-  TokenNotFound,
-  Unauthorized,
-  UserNotFound,
-] as const;
 
 class SignOutFailed extends Data.TaggedError("SignOutFailed")<{
   message: string;
@@ -92,40 +67,33 @@ async function runApi<A, E>(
   );
 }
 
-/** Best-effort message extraction from the contract's tagged errors. */
-function errorMessage(error: unknown, fallback: string): string {
-  const inner = apiError(error);
-  const message = (inner as { message?: unknown }).message;
-  if (typeof message === "string" && message.length > 0) {
-    return message;
-  }
-
-  return fallback;
+/**
+ * The contract error a failed `runApi` call rejected with, if any. The derived
+ * client decodes error bodies into the contract's tagged error classes, and
+ * `runPromise` rejects with that failure itself — anything else (network,
+ * decode, defects) is not an API error.
+ */
+function apiError(error: unknown): ApiError | null {
+  return ApiErrors.some((ErrorClass) => error instanceof ErrorClass) ? (error as ApiError) : null;
 }
 
-function isApiError(error: unknown, tag: string): boolean {
-  const inner = apiError(error);
-  const innerTag = (inner as { _tag?: unknown })._tag;
+function isApiError<const Tag extends ApiErrorTag>(
+  error: unknown,
+  tag: Tag,
+): error is Extract<ApiError, { readonly _tag: Tag }> {
+  return apiError(error)?._tag === tag;
+}
 
-  return innerTag === tag;
+/** The API's human-readable message for contract errors; `fallback` otherwise. */
+function errorMessage(error: unknown, fallback: string): string {
+  const message = apiError(error)?.message;
+
+  return message === undefined || message.length === 0 ? fallback : message;
 }
 
 /** Transport failures and 5xx are worth retrying; contract 4xx failures are not. */
 function isRetryableApiError(error: unknown): boolean {
-  const inner = apiError(error);
-
-  return !CONTRACT_ERRORS.some((ContractError) => inner instanceof ContractError);
-}
-
-function apiError(error: unknown): unknown {
-  if (typeof error === "object" && error !== null) {
-    const cause = (error as { cause?: unknown }).cause ?? error;
-    return typeof cause === "object" && cause !== null && "_tag" in cause && cause._tag === "Fail"
-      ? ((cause as { error?: unknown }).error ?? cause)
-      : cause;
-  }
-
-  return error;
+  return apiError(error) === null;
 }
 
 /** Raw routes (OAuth signout) sit outside the derived client. */

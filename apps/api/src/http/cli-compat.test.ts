@@ -1,11 +1,18 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Context, Effect, Exit, Layer, Option, Scope } from "effect";
+import { Context, Effect, Exit, Layer, Option, Schema, Scope } from "effect";
 import * as FileSystem from "effect/FileSystem";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
-import { CliUpgradeRequired, LoginCodeNotFound, TokenmaxxingApi } from "@tokenmaxxing/api-contract";
+import {
+  CliUpgradeRequired,
+  DeviceId,
+  LoginCodeNotFound,
+  TokenId,
+  TokenmaxxingApi,
+  UserId,
+} from "@tokenmaxxing/api-contract";
 
 import { AdminService } from "../admin/service";
 import { AuthService } from "../auth/service";
@@ -53,9 +60,78 @@ const fixtures: Array<{ file: string; fixture: CliRequestFixture }> = ["current"
       })),
 );
 
+/**
+ * Frozen copies of the response and error decoders released CLIs bundle (the
+ * pre-cleanup contract; older releases require a subset of these fields).
+ * Released CLIs ignore unknown fields, so the server may add fields but must
+ * never drop, rename or retype one of these, or change an error `_tag`. Never
+ * update these to match the current contract — they are the compatibility
+ * target.
+ */
+const ReleasedAuthUser = Schema.Struct({
+  avatarUrl: Schema.NullOr(Schema.String),
+  id: Schema.String,
+  login: Schema.String,
+  name: Schema.NullOr(Schema.String),
+});
+
+const ReleasedSyncUsageResponse = Schema.Struct({
+  received: Schema.Number,
+  syncedAt: Schema.String,
+  upserted: Schema.Number,
+});
+
+const RELEASED_CLI_RESPONSES: Record<string, Schema.Top> = {
+  "cliLogin.poll": Schema.Union([
+    Schema.Struct({ status: Schema.Literal("pending") }),
+    Schema.Struct({
+      status: Schema.Literal("complete"),
+      token: Schema.String,
+      user: ReleasedAuthUser,
+    }),
+  ]),
+  "cliLogin.start": Schema.Struct({
+    code: Schema.String,
+    deviceCode: Schema.optional(Schema.String),
+    expiresAt: Schema.String,
+    intervalSeconds: Schema.Number,
+    userCode: Schema.String,
+    verificationUri: Schema.String,
+  }),
+  "me.me": Schema.Struct({ user: ReleasedAuthUser }),
+  "usage.checkIn": Schema.Struct({ checkedInAt: Schema.String }),
+  "usage.ingest": ReleasedSyncUsageResponse,
+  "usage.logout": Schema.Struct({ ok: Schema.Boolean }),
+  "usage.sync": ReleasedSyncUsageResponse,
+};
+
+const RELEASED_CLI_ERRORS: Record<string, Schema.Top> = {
+  CliUpgradeRequired: Schema.TaggedStruct("CliUpgradeRequired", { message: Schema.String }),
+  DeviceMissing: Schema.TaggedStruct("DeviceMissing", { message: Schema.String }),
+  LoginCodeExpired: Schema.TaggedStruct("LoginCodeExpired", { code: Schema.String }),
+  LoginCodeNotFound: Schema.TaggedStruct("LoginCodeNotFound", { code: Schema.String }),
+  Unauthorized: Schema.TaggedStruct("Unauthorized", { message: Schema.String }),
+};
+
+function decodeReleased(schema: Schema.Top | undefined, body: unknown) {
+  expect(schema).toBeDefined();
+  return Schema.decodeUnknownSync(schema as Schema.Codec<unknown>)(body);
+}
+
+/** A typed CLI error: same status and tag, decodable by released CLIs, and
+ * carrying the human-readable `message` every wire error now has. */
+async function expectCliError(response: Response, status: number, tag: string) {
+  const body = (await response.json()) as { _tag?: unknown; message?: unknown };
+
+  expect(response.status).toBe(status);
+  expect(body._tag).toBe(tag);
+  expect(typeof body.message).toBe("string");
+  decodeReleased(RELEASED_CLI_ERRORS[tag], body);
+}
+
 const user = {
   avatarUrl: null,
-  id: "user_123",
+  id: UserId.make("user_123"),
   login: "alex",
   name: null,
 };
@@ -80,8 +156,14 @@ beforeAll(async () => {
     resolveCliToken: (rawToken) =>
       Effect.succeed(
         rawToken === "tmx_fixture"
-          ? Option.some({ deviceId: "device_123", tokenId: "token_123", user })
-          : Option.none(),
+          ? Option.some({
+              deviceId: DeviceId.make("device_123"),
+              tokenId: TokenId.make("token_123"),
+              user,
+            })
+          : rawToken === "tmx_no_device"
+            ? Option.some({ deviceId: null, tokenId: TokenId.make("token_456"), user })
+            : Option.none(),
       ),
     revokeToken: () => Effect.void,
   });
@@ -216,6 +298,12 @@ describe("recorded CLI requests", () => {
     expect({ body: await response.text(), status: response.status }).toMatchObject({ status: 200 });
   });
 
+  it.each(fixtures)("$file gets a response released CLIs can decode", async ({ fixture }) => {
+    const response = await send(fixture);
+
+    decodeReleased(RELEASED_CLI_RESPONSES[fixture.endpoint], await response.json());
+  });
+
   it.each(fixtures.filter(({ fixture }) => fixture.body !== undefined))(
     "$file is rejected with an undeclared top-level property",
     async ({ fixture }) => {
@@ -247,8 +335,7 @@ describe("CLI error responses", () => {
       }),
     );
 
-    expect(response.status).toBe(401);
-    expect(await response.json()).toMatchObject({ _tag: "Unauthorized" });
+    await expectCliError(response, 401, "Unauthorized");
   });
 
   it("a revoked or unknown CLI token is 401 Unauthorized", async () => {
@@ -259,15 +346,14 @@ describe("CLI error responses", () => {
       }),
     );
 
-    expect(response.status).toBe(401);
+    await expectCliError(response, 401, "Unauthorized");
   });
 
   it("an unknown device code is 404 LoginCodeNotFound", async () => {
     const poll = byFile("current/cliLogin.poll.json");
     const response = await send(poll, { deviceCode: "unknown-device-code" });
 
-    expect(response.status).toBe(404);
-    expect(await response.json()).toMatchObject({ _tag: "LoginCodeNotFound" });
+    await expectCliError(response, 404, "LoginCodeNotFound");
   });
 
   it("an upgrade-required start is 426 CliUpgradeRequired", async () => {
@@ -277,8 +363,20 @@ describe("CLI error responses", () => {
       deviceName: "upgrade-required-host",
     });
 
-    expect(response.status).toBe(426);
-    expect(await response.json()).toMatchObject({ _tag: "CliUpgradeRequired" });
+    await expectCliError(response, 426, "CliUpgradeRequired");
+  });
+
+  it("a token without a device is 400 DeviceMissing (TokenDeviceUnbound)", async () => {
+    const checkIn = byFile("current/usage.checkIn.json");
+    const response = await handle(
+      new Request(`https://api.tokenmaxxing.sh${checkIn.path}`, {
+        body: JSON.stringify(checkIn.body),
+        headers: { authorization: "Bearer tmx_no_device", "content-type": "application/json" },
+        method: checkIn.method,
+      }),
+    );
+
+    await expectCliError(response, 400, "DeviceMissing");
   });
 });
 

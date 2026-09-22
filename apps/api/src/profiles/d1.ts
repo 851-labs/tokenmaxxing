@@ -5,7 +5,7 @@ import { Effect, Layer, Option } from "effect";
 import { DEFAULT_LEADERBOARD_METRIC } from "@tokenmaxxing/api-contract";
 
 import { Drizzle, firstRow } from "../database";
-import { publicUserColumns } from "../public-user";
+import { authUserColumns, toAuthUser } from "../public-user";
 import { singleAggregateRow, usageAggregates } from "../usage/aggregates";
 import { userRank } from "../usage/ranking";
 import { makeProfilesService, ProfilesRepository, ProfilesService } from "./service";
@@ -19,14 +19,17 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
       Effect.gen(function* () {
         const rows = yield* database.use((db) =>
           db
-            .select({ shadowBannedAt: users.shadowBannedAt, user: publicUserColumns })
+            .select({ shadowBannedAt: users.shadowBannedAt, user: authUserColumns })
             .from(users)
             .where(eq(users.login, login))
             .limit(1),
         );
 
         return firstRow(rows).pipe(
-          Option.map((row) => ({ shadowBanned: row.shadowBannedAt !== null, user: row.user })),
+          Option.map((row) => ({
+            shadowBanned: row.shadowBannedAt !== null,
+            user: toAuthUser(row.user),
+          })),
         );
       }),
     leaderboardRank: (input) =>
@@ -127,8 +130,8 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
           peakDay: peakSpendDay(dayRows),
           sessionCount,
           sources: sourceRows.map((row) => row.source),
+          spendUsd: totalSpendUsd,
           topModel: topModels[0] ?? null,
-          totalSpendUsd,
           totalTokens: totals.totalTokens,
         };
       }),
@@ -145,10 +148,10 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
         const rows = yield* database.use((db) =>
           db
             .select({
-              costUsd: sql<number>`sum(${usageDays.costUsd})`,
               date: usageDays.date,
               key: sql<string>`${key}`.as("group_key"),
               outputTokens: sql<number>`sum(${usageDays.outputTokens})`,
+              spendUsd: sql<number>`sum(${usageDays.costUsd})`,
               totalTokens: sql<number>`sum(${usageDays.totalTokens})`,
             })
             .from(usageDays)

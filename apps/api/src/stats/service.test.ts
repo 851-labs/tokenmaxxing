@@ -2,81 +2,61 @@ import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import { StatsResponse } from "@tokenmaxxing/api-contract";
+import type { StatsTotals, StatsWindow } from "@tokenmaxxing/api-contract";
 
 import { type EdgeCacheLike, makeEdgeJsonCache } from "../cloudflare/edge-cache";
-import { makeStatsService, StatsRepository, type StatsSnapshot } from "./service";
+import {
+  makeStatsService,
+  StatsRepository,
+  statsWindowStarts,
+  type StatsSnapshot,
+  type StatsWindowStarts,
+} from "./service";
+
+const emptyTotals: StatsTotals = {
+  activeDays: 0,
+  cacheCreationTokens: 0,
+  cacheReadTokens: 0,
+  deviceCount: 0,
+  firstDate: null,
+  inputTokens: 0,
+  lastDate: null,
+  outputTokens: 0,
+  rowCount: 0,
+  spendUsd: 0,
+  totalTokens: 0,
+  userCount: 0,
+};
+
+function emptyWindow(since: string | null): StatsWindow {
+  return { modelsBySpend: [], modelsByTokens: [], since, sources: [], totals: emptyTotals };
+}
 
 const emptySnapshot: StatsSnapshot = {
-  allTime: {
-    activeDates: 0,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
-    deviceCount: 0,
-    firstDate: null,
-    inputTokens: 0,
-    lastDate: null,
-    outputTokens: 0,
-    rowCount: 0,
-    totalSpendUsd: 0,
-    totalTokens: 0,
-    userCount: 0,
-  },
   daily: [],
   dailyByModel: [],
-  last30d: {
-    activeDates: 0,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
-    deviceCount: 0,
-    firstDate: null,
-    inputTokens: 0,
-    lastDate: null,
-    outputTokens: 0,
-    rowCount: 0,
-    totalSpendUsd: 0,
-    totalTokens: 0,
-    userCount: 0,
-  },
-  peaks: {
-    spend: null,
-    tokens: null,
-  },
-  sources: {
-    allTime: [],
-    last30d: [],
-    year2026: [],
-  },
-  topModels: {
-    allTimeBySpend: [],
-    allTimeByTokens: [],
-    last30dBySpend: [],
-    last30dByTokens: [],
-    year2026BySpend: [],
-    year2026ByTokens: [],
-  },
-  topUsers: {
-    bySpend: [],
-    byTokens: [],
-  },
-  year2026: {
-    activeDates: 0,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
-    deviceCount: 0,
-    firstDate: null,
-    inputTokens: 0,
-    lastDate: null,
-    outputTokens: 0,
-    rowCount: 0,
-    totalSpendUsd: 0,
-    totalTokens: 0,
-    userCount: 0,
+  peaks: { spend: null, tokens: null },
+  topUsers: { bySpend: [], byTokens: [] },
+  windows: {
+    allTime: emptyWindow(null),
+    last30d: emptyWindow("2026-06-10"),
+    ytd: emptyWindow("2026-01-01"),
   },
 };
 
+describe("statsWindowStarts", () => {
+  it("derives year-to-date from the current UTC year instead of a fixed year", () => {
+    expect(statsWindowStarts(new Date("2027-01-05T12:00:00.000Z"))).toEqual({
+      allTime: null,
+      last30d: "2026-12-07",
+      ytd: "2027-01-01",
+    });
+  });
+});
+
 describe("StatsService.getStats", () => {
-  it("adds generatedAt, the last-30d lower bound, and the future-date ceiling", async () => {
-    const calls: Array<{ last30dSince: string; limit: number; until: string }> = [];
+  it("asks for every window plus the future-date ceiling, and adds generatedAt", async () => {
+    const calls: Array<{ limit: number; until: string; windows: StatsWindowStarts }> = [];
     const service = await Effect.runPromise(
       makeStatsService({
         now: () => new Date("2026-07-09T20:00:00.000Z"),
@@ -93,11 +73,15 @@ describe("StatsService.getStats", () => {
 
     const response = await Effect.runPromise(service.getStats());
 
-    expect(calls).toEqual([{ last30dSince: "2026-06-10", limit: 10, until: "2026-07-10" }]);
+    expect(calls).toEqual([
+      {
+        limit: 10,
+        until: "2026-07-10",
+        windows: { allTime: null, last30d: "2026-06-10", ytd: "2026-01-01" },
+      },
+    ]);
     expect(response.generatedAt).toBe("2026-07-09T20:00:00.000Z");
-    expect(response.last30dSince).toBe("2026-06-10");
-    expect(response.year2026Since).toBe("2026-01-01");
-    expect(response.allTime.totalTokens).toBe(0);
+    expect(response.windows.allTime.totals.totalTokens).toBe(0);
   });
 
   it("serves repeat reads from the edge cache without touching D1", async () => {

@@ -1,3 +1,5 @@
+import { DeviceId, UserId } from "@tokenmaxxing/api-contract";
+
 import type { AdminDeviceSnapshot, AdminUserSnapshot } from "./fleet";
 import type { LatestCliRelease } from "./npm-registry";
 
@@ -13,11 +15,15 @@ const latestRelease: LatestCliRelease = {
   },
 };
 
-function device(input: Partial<AdminDeviceSnapshot> = {}): AdminDeviceSnapshot {
+function device(
+  input: Partial<Omit<AdminDeviceSnapshot, "id">> & { id?: string } = {},
+): AdminDeviceSnapshot {
+  const { id = "device_123", ...rest } = input;
+
   return {
     arch: "arm64",
     createdAt: "2026-06-19T18:00:00.000Z",
-    id: "device_123",
+    id: DeviceId.make(id),
     lastCheckInAt: null,
     lastSyncAt: "2026-06-19T19:30:00.000Z",
     name: "Mac.localdomain",
@@ -46,7 +52,7 @@ function device(input: Partial<AdminDeviceSnapshot> = {}): AdminDeviceSnapshot {
     serviceStatus: null,
     serviceTemplateVersion: null,
     version: "0.5.4",
-    ...input,
+    ...rest,
   };
 }
 
@@ -63,7 +69,7 @@ function snapshot(input: Partial<AdminUserSnapshot> = {}): AdminUserSnapshot {
     deviceUsage: [
       {
         activeDays: 12,
-        deviceId: "device_123",
+        deviceId: DeviceId.make("device_123"),
         lastUsageDate: "2026-06-19",
         sources: ["codex"],
         totalSpendUsd: 34.56,
@@ -73,8 +79,16 @@ function snapshot(input: Partial<AdminUserSnapshot> = {}): AdminUserSnapshot {
     devices: [device()],
     sources: ["codex"],
     tokens: [
-      { deviceId: "device_123", lastUsedAt: "2026-06-19T19:31:00.000Z", revokedAt: null },
-      { deviceId: "device_123", lastUsedAt: null, revokedAt: "2026-06-18T00:00:00.000Z" },
+      {
+        deviceId: DeviceId.make("device_123"),
+        lastUsedAt: "2026-06-19T19:31:00.000Z",
+        revokedAt: null,
+      },
+      {
+        deviceId: DeviceId.make("device_123"),
+        lastUsedAt: null,
+        revokedAt: "2026-06-18T00:00:00.000Z",
+      },
     ],
     usage: {
       activeDays: 12,
@@ -85,7 +99,7 @@ function snapshot(input: Partial<AdminUserSnapshot> = {}): AdminUserSnapshot {
     user: {
       avatarUrl: null,
       createdAt: "2026-06-18T00:00:00.000Z",
-      id: "user_123",
+      id: UserId.make("user_123"),
       login: "pondorasti",
       name: "Alexandru",
       updatedAt: "2026-06-19T00:00:00.000Z",

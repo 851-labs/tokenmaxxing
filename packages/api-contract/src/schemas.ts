@@ -1,6 +1,32 @@
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 
 import { DateKey } from "./date-key";
+
+/**
+ * Wire schemas. Conventions:
+ *
+ * - Money on responses is `spendUsd`; token counts are `*Tokens`; day counts
+ *   are `activeDays`; date bounds are `firstDate`/`lastDate`. The exception is
+ *   `UsageDayInput.costUsd`, which released CLIs already send.
+ * - Ids are branded strings. The brand is type-only (the wire stays a plain
+ *   string) and exists so swapped arguments fail to compile.
+ * - `PublicUser` is what anonymous pages see; `AuthUser` (with the internal
+ *   id) is reserved for the caller's own identity and the admin surface.
+ * - Every schema exports a same-named type alias.
+ */
+
+const UserId = Schema.String.pipe(Schema.brand("UserId"));
+
+type UserId = typeof UserId.Type;
+
+const DeviceId = Schema.String.pipe(Schema.brand("DeviceId"));
+
+type DeviceId = typeof DeviceId.Type;
+
+const TokenId = Schema.String.pipe(Schema.brand("TokenId"));
+
+type TokenId = typeof TokenId.Type;
 
 const HealthResponse = Schema.Struct({
   ok: Schema.Boolean,
@@ -8,11 +34,22 @@ const HealthResponse = Schema.Struct({
   service: Schema.String,
 });
 
-const AuthUser = Schema.Struct({
+type HealthResponse = typeof HealthResponse.Type;
+
+const PublicUser = Schema.Struct({
   avatarUrl: Schema.NullOr(Schema.String),
-  id: Schema.String,
   login: Schema.String,
   name: Schema.NullOr(Schema.String),
+});
+
+type PublicUser = typeof PublicUser.Type;
+
+/** PublicUser plus the internal id, in the field order released CLIs pinned. */
+const AuthUser = Schema.Struct({
+  avatarUrl: PublicUser.fields.avatarUrl,
+  id: UserId,
+  login: PublicUser.fields.login,
+  name: PublicUser.fields.name,
 });
 
 type AuthUser = typeof AuthUser.Type;
@@ -21,10 +58,11 @@ const MeResponse = Schema.Struct({
   user: AuthUser,
 });
 
-const ProfileIdentityResponse = Schema.Struct({
-  avatarUrl: Schema.NullOr(Schema.String),
-  login: Schema.String,
-});
+type MeResponse = typeof MeResponse.Type;
+
+const ProfileIdentityResponse = PublicUser.mapFields(Struct.pick(["avatarUrl", "login"]));
+
+type ProfileIdentityResponse = typeof ProfileIdentityResponse.Type;
 
 const OAuthProviderId = Schema.Literals(["github", "google"]);
 
@@ -40,10 +78,18 @@ const UserAccountSummary = Schema.Struct({
   providerAccountId: Schema.String,
 });
 
+type UserAccountSummary = typeof UserAccountSummary.Type;
+
+const ListAccountsResponse = Schema.Struct({
+  accounts: Schema.Array(UserAccountSummary),
+});
+
+type ListAccountsResponse = typeof ListAccountsResponse.Type;
+
 /** Identity resolved from a `tmx_` bearer token (CLI clients). */
 const CliIdentity = Schema.Struct({
-  deviceId: Schema.NullOr(Schema.String),
-  tokenId: Schema.String,
+  deviceId: Schema.NullOr(DeviceId),
+  tokenId: TokenId,
   user: AuthUser,
 });
 
@@ -52,21 +98,37 @@ type CliIdentity = typeof CliIdentity.Type;
 const DeviceSummary = Schema.Struct({
   arch: Schema.NullOr(Schema.String),
   createdAt: Schema.String,
-  id: Schema.String,
+  id: DeviceId,
   lastSyncAt: Schema.NullOr(Schema.String),
   name: Schema.String,
   platform: Schema.String,
   version: Schema.NullOr(Schema.String),
 });
 
+type DeviceSummary = typeof DeviceSummary.Type;
+
+const ListDevicesResponse = Schema.Struct({
+  devices: Schema.Array(DeviceSummary),
+});
+
+type ListDevicesResponse = typeof ListDevicesResponse.Type;
+
 const CliTokenSummary = Schema.Struct({
   createdAt: Schema.String,
-  deviceId: Schema.NullOr(Schema.String),
-  id: Schema.String,
+  deviceId: Schema.NullOr(DeviceId),
+  id: TokenId,
   lastUsedAt: Schema.NullOr(Schema.String),
   name: Schema.NullOr(Schema.String),
   revokedAt: Schema.NullOr(Schema.String),
 });
+
+type CliTokenSummary = typeof CliTokenSummary.Type;
+
+const ListTokensResponse = Schema.Struct({
+  tokens: Schema.Array(CliTokenSummary),
+});
+
+type ListTokensResponse = typeof ListTokensResponse.Type;
 
 /**
  * Device-code CLI login (RFC 8628 shaped). Current CLIs send
@@ -77,9 +139,16 @@ const CliTokenSummary = Schema.Struct({
  */
 const CliLoginFlow = Schema.Literal("device_code");
 
+type CliLoginFlow = typeof CliLoginFlow.Type;
+
+/**
+ * Flat `device*` fields rather than a nested device struct: released CLIs send
+ * exactly this shape, so it stays frozen. `deviceId` is minted by the CLI and
+ * becomes the device row id.
+ */
 const CliLoginStartInput = Schema.Struct({
   deviceArch: Schema.optional(Schema.String),
-  deviceId: Schema.String,
+  deviceId: DeviceId,
   deviceName: Schema.String,
   devicePlatform: Schema.String,
   deviceVersion: Schema.optional(Schema.String),
@@ -87,6 +156,8 @@ const CliLoginStartInput = Schema.Struct({
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
+
+type CliLoginStartInput = typeof CliLoginStartInput.Type;
 
 const CliLoginStartResponse = Schema.Struct({
   /** Legacy alias of `userCode`, kept for pre-device-code CLIs. */
@@ -99,11 +170,15 @@ const CliLoginStartResponse = Schema.Struct({
   verificationUri: Schema.String,
 });
 
+type CliLoginStartResponse = typeof CliLoginStartResponse.Type;
+
 const CliLoginDeviceCodePollInput = Schema.Struct({
   deviceCode: Schema.String,
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
+
+type CliLoginDeviceCodePollInput = typeof CliLoginDeviceCodePollInput.Type;
 
 /** Pre-device-code CLIs poll with the user code; see the legacy sunset. */
 const CliLoginLegacyPollInput = Schema.Struct({
@@ -111,6 +186,8 @@ const CliLoginLegacyPollInput = Schema.Struct({
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
+
+type CliLoginLegacyPollInput = typeof CliLoginLegacyPollInput.Type;
 
 const CliLoginPollInput = Schema.Union([CliLoginDeviceCodePollInput, CliLoginLegacyPollInput]);
 
@@ -124,6 +201,8 @@ const CliLoginPollResponse = Schema.Union([
     user: AuthUser,
   }),
 ]);
+
+type CliLoginPollResponse = typeof CliLoginPollResponse.Type;
 
 /** What the approval page shows so the user knows which device they admit. */
 const CliLoginRequestSummary = Schema.Struct({
@@ -146,10 +225,14 @@ const CliLoginApproveInput = Schema.Struct({
   parseOptions: { onExcessProperty: "error" },
 });
 
+type CliLoginApproveInput = typeof CliLoginApproveInput.Type;
+
 const CliLoginApproveResponse = Schema.Struct({
   deviceName: Schema.String,
   ok: Schema.Boolean,
 });
+
+type CliLoginApproveResponse = typeof CliLoginApproveResponse.Type;
 
 /**
  * Agents the CLI can sync, in CLI display order. Input schemas only accept
@@ -165,8 +248,12 @@ type UsageSource = typeof UsageSource.Type;
 /** Token counts are non-negative safe integers (ccusage never emits fractions). */
 const TokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
+type TokenCount = typeof TokenCount.Type;
+
 /** USD amounts are finite and non-negative; rejects JSON "NaN"/"Infinity" too. */
 const UsdAmount = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
+
+type UsdAmount = typeof UsdAmount.Type;
 
 const boundedString = (maxLength: number) => Schema.String.check(Schema.isMaxLength(maxLength));
 
@@ -189,9 +276,12 @@ const UsageDeviceInput = Schema.Struct({
   version: Schema.optional(boundedString(64)),
 });
 
+type UsageDeviceInput = typeof UsageDeviceInput.Type;
+
 /**
  * One day of usage for one (source, model) pair, as aggregated by the CLI
  * from ccusage output. `date` is an opaque YYYY-MM-DD local-time bucket.
+ * `costUsd` predates the `spendUsd` convention and is frozen by released CLIs.
  */
 const UsageDayInput = Schema.Struct({
   cacheCreationTokens: TokenCount,
@@ -241,15 +331,15 @@ type RawUsageReportInput = typeof RawUsageReportInput.Type;
 
 const ServiceCheckInStatus = Schema.Literals(["started", "success", "failure"]);
 
-type ServiceCheckInStatusValue = typeof ServiceCheckInStatus.Type;
+type ServiceCheckInStatus = typeof ServiceCheckInStatus.Type;
 
 const ServiceAutoUpdateManager = Schema.Literals(["bun", "npm", "pnpm", "registry", "yarn"]);
 
-type ServiceAutoUpdateManagerValue = typeof ServiceAutoUpdateManager.Type;
+type ServiceAutoUpdateManager = typeof ServiceAutoUpdateManager.Type;
 
 const ServiceAutoUpdateStatus = Schema.Literals(["failure", "not-needed", "skipped", "success"]);
 
-type ServiceAutoUpdateStatusValue = typeof ServiceAutoUpdateStatus.Type;
+type ServiceAutoUpdateStatus = typeof ServiceAutoUpdateStatus.Type;
 
 const ServiceAutoUpdateReason = Schema.Literals([
   "disabled",
@@ -265,7 +355,7 @@ const ServiceAutoUpdateReason = Schema.Literals([
   "version-unchanged",
 ]);
 
-type ServiceAutoUpdateReasonValue = typeof ServiceAutoUpdateReason.Type;
+type ServiceAutoUpdateReason = typeof ServiceAutoUpdateReason.Type;
 
 const ServiceAutoUpdate = Schema.Struct({
   attemptedAt: Schema.optional(Schema.NullOr(Schema.String)),
@@ -280,6 +370,8 @@ const ServiceAutoUpdate = Schema.Struct({
   status: ServiceAutoUpdateStatus,
 });
 
+type ServiceAutoUpdate = typeof ServiceAutoUpdate.Type;
+
 const ServiceRepairReason = Schema.Literals([
   "auto-updated",
   "reload-required",
@@ -287,37 +379,45 @@ const ServiceRepairReason = Schema.Literals([
   "service-failure",
 ]);
 
-type ServiceRepairReasonValue = typeof ServiceRepairReason.Type;
+type ServiceRepairReason = typeof ServiceRepairReason.Type;
 
 const ServiceRepairStatus = Schema.Literals(["failure", "scheduled", "success"]);
 
-type ServiceRepairStatusValue = typeof ServiceRepairStatus.Type;
+type ServiceRepairStatus = typeof ServiceRepairStatus.Type;
+
+const ServiceCheckInInput = Schema.Struct({
+  autoUpdate: Schema.optional(ServiceAutoUpdate),
+  backend: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.String),
+  reloadRequired: Schema.optional(Schema.Boolean),
+  repairAttemptedAt: Schema.optional(Schema.String),
+  repairCompletedAt: Schema.optional(Schema.String),
+  repairError: Schema.optional(Schema.String),
+  repairReason: Schema.optional(ServiceRepairReason),
+  repairStatus: Schema.optional(ServiceRepairStatus),
+  runnerTarget: Schema.optional(Schema.String),
+  runnerVersion: Schema.optional(Schema.String),
+  schedulerActive: Schema.optional(Schema.Boolean),
+  status: ServiceCheckInStatus,
+  templateVersion: Schema.optional(Schema.Number),
+});
+
+type ServiceCheckInInput = typeof ServiceCheckInInput.Type;
 
 const UsageCheckInInput = Schema.Struct({
   device: UsageDeviceInput,
-  service: Schema.Struct({
-    autoUpdate: Schema.optional(ServiceAutoUpdate),
-    backend: Schema.optional(Schema.String),
-    error: Schema.optional(Schema.String),
-    reloadRequired: Schema.optional(Schema.Boolean),
-    repairAttemptedAt: Schema.optional(Schema.String),
-    repairCompletedAt: Schema.optional(Schema.String),
-    repairError: Schema.optional(Schema.String),
-    repairReason: Schema.optional(ServiceRepairReason),
-    repairStatus: Schema.optional(ServiceRepairStatus),
-    runnerTarget: Schema.optional(Schema.String),
-    runnerVersion: Schema.optional(Schema.String),
-    schedulerActive: Schema.optional(Schema.Boolean),
-    status: ServiceCheckInStatus,
-    templateVersion: Schema.optional(Schema.Number),
-  }),
+  service: ServiceCheckInInput,
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
 
+type UsageCheckInInput = typeof UsageCheckInInput.Type;
+
 const UsageCheckInResponse = Schema.Struct({
   checkedInAt: Schema.String,
 });
+
+type UsageCheckInResponse = typeof UsageCheckInResponse.Type;
 
 const IngestUsageInput = Schema.Struct({
   device: UsageDeviceInput,
@@ -327,6 +427,8 @@ const IngestUsageInput = Schema.Struct({
   parseOptions: { onExcessProperty: "error" },
 });
 
+type IngestUsageInput = typeof IngestUsageInput.Type;
+
 const SyncUsageInput = Schema.Struct({
   days: boundedArray(UsageDayInput, MAX_SYNC_DAYS),
   device: UsageDeviceInput,
@@ -335,29 +437,41 @@ const SyncUsageInput = Schema.Struct({
   parseOptions: { onExcessProperty: "error" },
 });
 
+type SyncUsageInput = typeof SyncUsageInput.Type;
+
 const SyncUsageResponse = Schema.Struct({
   received: Schema.Number,
   syncedAt: Schema.String,
   upserted: Schema.Number,
 });
 
+type SyncUsageResponse = typeof SyncUsageResponse.Type;
+
 const LeaderboardMetric = Schema.Literals(["spend", "tokens"]);
-const LeaderboardWindow = Schema.Literals(["all", "30d", "7d"]);
 
 type LeaderboardMetric = typeof LeaderboardMetric.Type;
+
+const LeaderboardWindow = Schema.Literals(["all", "30d", "7d"]);
+
 type LeaderboardWindow = typeof LeaderboardWindow.Type;
 
 const DEFAULT_LEADERBOARD_METRIC = "spend" as const satisfies LeaderboardMetric;
 const DEFAULT_LEADERBOARD_WINDOW = "30d" as const satisfies LeaderboardWindow;
 
-const LeaderboardEntry = Schema.Struct({
+/** One public user's usage over some window; the leaderboard adds `rank`. */
+const UserUsageMetric = Schema.Struct({
   activeDays: Schema.Number,
   lastDate: Schema.NullOr(Schema.String),
-  rank: Schema.Number,
   spendUsd: Schema.Number,
   totalTokens: Schema.Number,
-  user: AuthUser,
+  user: PublicUser,
 });
+
+type UserUsageMetric = typeof UserUsageMetric.Type;
+
+const LeaderboardEntry = UserUsageMetric.mapFields(Struct.assign({ rank: Schema.Number }));
+
+type LeaderboardEntry = typeof LeaderboardEntry.Type;
 
 const LeaderboardResponse = Schema.Struct({
   entries: Schema.Array(LeaderboardEntry),
@@ -365,8 +479,10 @@ const LeaderboardResponse = Schema.Struct({
   window: LeaderboardWindow,
 });
 
+type LeaderboardResponse = typeof LeaderboardResponse.Type;
+
 const StatsTotals = Schema.Struct({
-  activeDates: Schema.Number,
+  activeDays: Schema.Number,
   cacheCreationTokens: Schema.Number,
   cacheReadTokens: Schema.Number,
   deviceCount: Schema.Number,
@@ -375,11 +491,14 @@ const StatsTotals = Schema.Struct({
   lastDate: Schema.NullOr(Schema.String),
   outputTokens: Schema.Number,
   rowCount: Schema.Number,
-  totalSpendUsd: Schema.Number,
+  spendUsd: Schema.Number,
   totalTokens: Schema.Number,
   userCount: Schema.Number,
 });
 
+type StatsTotals = typeof StatsTotals.Type;
+
+/** One calendar day across all public users; also used for peak days. */
 const StatsDailyPoint = Schema.Struct({
   date: Schema.String,
   spendUsd: Schema.Number,
@@ -387,14 +506,19 @@ const StatsDailyPoint = Schema.Struct({
   userCount: Schema.Number,
 });
 
+type StatsDailyPoint = typeof StatsDailyPoint.Type;
+
+/** One (date, key) cell; `key` is the model or source being grouped. */
 const StatsDailyModelPoint = Schema.Struct({
-  costUsd: Schema.Number,
   date: Schema.String,
   key: Schema.String,
   outputTokens: Schema.Number,
   rowCount: Schema.Number,
+  spendUsd: Schema.Number,
   totalTokens: Schema.Number,
 });
+
+type StatsDailyModelPoint = typeof StatsDailyModelPoint.Type;
 
 const StatsRankedMetric = Schema.Struct({
   key: Schema.String,
@@ -404,52 +528,40 @@ const StatsRankedMetric = Schema.Struct({
   userCount: Schema.Number,
 });
 
-const StatsUserMetric = Schema.Struct({
-  activeDays: Schema.Number,
-  lastDate: Schema.NullOr(Schema.String),
-  spendUsd: Schema.Number,
-  totalTokens: Schema.Number,
-  user: AuthUser,
+type StatsRankedMetric = typeof StatsRankedMetric.Type;
+
+/** `ytd` starts on Jan 1 of the server's current UTC year. */
+const StatsWindowId = Schema.Literals(["allTime", "last30d", "ytd"]);
+
+type StatsWindowId = typeof StatsWindowId.Type;
+
+const StatsWindow = Schema.Struct({
+  modelsBySpend: Schema.Array(StatsRankedMetric),
+  modelsByTokens: Schema.Array(StatsRankedMetric),
+  /** Inclusive YYYY-MM-DD lower bound; null = all time. */
+  since: Schema.NullOr(Schema.String),
+  sources: Schema.Array(StatsRankedMetric),
+  totals: StatsTotals,
 });
 
-const StatsPeakDay = Schema.Struct({
-  date: Schema.String,
-  spendUsd: Schema.Number,
-  totalTokens: Schema.Number,
-  userCount: Schema.Number,
-});
+type StatsWindow = typeof StatsWindow.Type;
 
 const StatsResponse = Schema.Struct({
-  allTime: StatsTotals,
   daily: Schema.Array(StatsDailyPoint),
   dailyByModel: Schema.Array(StatsDailyModelPoint),
   generatedAt: Schema.String,
-  last30d: StatsTotals,
-  last30dSince: Schema.String,
   peaks: Schema.Struct({
-    spend: Schema.NullOr(StatsPeakDay),
-    tokens: Schema.NullOr(StatsPeakDay),
-  }),
-  sources: Schema.Struct({
-    allTime: Schema.Array(StatsRankedMetric),
-    last30d: Schema.Array(StatsRankedMetric),
-    year2026: Schema.Array(StatsRankedMetric),
-  }),
-  topModels: Schema.Struct({
-    allTimeBySpend: Schema.Array(StatsRankedMetric),
-    allTimeByTokens: Schema.Array(StatsRankedMetric),
-    last30dBySpend: Schema.Array(StatsRankedMetric),
-    last30dByTokens: Schema.Array(StatsRankedMetric),
-    year2026BySpend: Schema.Array(StatsRankedMetric),
-    year2026ByTokens: Schema.Array(StatsRankedMetric),
+    spend: Schema.NullOr(StatsDailyPoint),
+    tokens: Schema.NullOr(StatsDailyPoint),
   }),
   topUsers: Schema.Struct({
-    bySpend: Schema.Array(StatsUserMetric),
-    byTokens: Schema.Array(StatsUserMetric),
+    bySpend: Schema.Array(UserUsageMetric),
+    byTokens: Schema.Array(UserUsageMetric),
   }),
-  year2026: StatsTotals,
-  year2026Since: Schema.String,
+  windows: Schema.Record(StatsWindowId, StatsWindow),
 });
+
+type StatsResponse = typeof StatsResponse.Type;
 
 const ProfileStats = Schema.Struct({
   activeDays: Schema.Number,
@@ -460,28 +572,27 @@ const ProfileStats = Schema.Struct({
   lastDate: Schema.NullOr(Schema.String),
   leaderboardRank: Schema.NullOr(Schema.Number),
   longestStreakDays: Schema.Number,
-  peakDay: Schema.NullOr(
-    Schema.Struct({
-      date: Schema.String,
-      spendUsd: Schema.Number,
-    }),
-  ),
+  peakDay: Schema.NullOr(StatsDailyPoint.mapFields(Struct.pick(["date", "spendUsd"]))),
   sessionCount: Schema.Number,
   sources: Schema.Array(Schema.String),
+  spendUsd: Schema.Number,
   topModel: Schema.NullOr(
     Schema.Struct({
       model: Schema.String,
       spendUsd: Schema.Number,
     }),
   ),
-  totalSpendUsd: Schema.Number,
   totalTokens: Schema.Number,
 });
 
+type ProfileStats = typeof ProfileStats.Type;
+
 const ProfileResponse = Schema.Struct({
   stats: ProfileStats,
-  user: AuthUser,
+  user: PublicUser,
 });
+
+type ProfileResponse = typeof ProfileResponse.Type;
 
 // Public endpoint: device names are hostnames, visible only to their owner
 // (via /me/devices), so they are deliberately not a public grouping.
@@ -494,39 +605,43 @@ type ProfileDailyGroupBy = typeof ProfileDailyGroupBy.Type;
  * Only the fields the profile charts read are carried on the wire — input/cache
  * token breakdowns are intentionally omitted to keep the profile payload small.
  */
-const ProfileDailyRow = Schema.Struct({
-  costUsd: Schema.Number,
-  date: Schema.String,
-  key: Schema.String,
-  outputTokens: Schema.Number,
-  totalTokens: Schema.Number,
-});
+const ProfileDailyRow = StatsDailyModelPoint.mapFields(Struct.omit(["rowCount"]));
+
+type ProfileDailyRow = typeof ProfileDailyRow.Type;
 
 const ProfileDailyRange = Schema.Struct({
-  first: Schema.String,
-  last: Schema.String,
+  firstDate: Schema.String,
+  lastDate: Schema.String,
 });
 
+type ProfileDailyRange = typeof ProfileDailyRange.Type;
+
 const ProfileDailyResponse = Schema.Struct({
-  range: ProfileDailyRange,
   days: Schema.Array(ProfileDailyRow),
+  range: ProfileDailyRange,
 });
+
+type ProfileDailyResponse = typeof ProfileDailyResponse.Type;
 
 const OkResponse = Schema.Struct({
   ok: Schema.Boolean,
 });
 
+type OkResponse = typeof OkResponse.Type;
+
 const ShadowBan = Schema.Struct({
   at: Schema.String,
-  byUserId: Schema.String,
+  byUserId: UserId,
 });
 
 type ShadowBan = typeof ShadowBan.Type;
 
 const ShadowBanUserResponse = Schema.Struct({
   shadowBan: Schema.NullOr(ShadowBan),
-  userId: Schema.String,
+  userId: UserId,
 });
+
+type ShadowBanUserResponse = typeof ShadowBanUserResponse.Type;
 
 const AdminDeviceStatus = Schema.Literals(["healthy", "repair-needed", "stale", "unknown"]);
 
@@ -541,39 +656,37 @@ const AdminDeviceUpdateStatus = Schema.Literals([
 
 type AdminDeviceUpdateStatus = typeof AdminDeviceUpdateStatus.Type;
 
-const AdminLatestDevice = Schema.Struct({
-  arch: Schema.NullOr(Schema.String),
-  createdAt: Schema.String,
-  id: Schema.String,
-  lastCheckInAt: Schema.NullOr(Schema.String),
-  lastSyncAt: Schema.NullOr(Schema.String),
-  name: Schema.String,
-  platform: Schema.String,
-  serviceAutoUpdateAttemptedAt: Schema.NullOr(Schema.String),
-  serviceAutoUpdateCompletedAt: Schema.NullOr(Schema.String),
-  serviceAutoUpdateCurrentVersion: Schema.NullOr(Schema.String),
-  serviceAutoUpdateEnabled: Schema.NullOr(Schema.Boolean),
-  serviceAutoUpdateError: Schema.NullOr(Schema.String),
-  serviceAutoUpdateInstalledVersion: Schema.NullOr(Schema.String),
-  serviceAutoUpdateLatestVersion: Schema.NullOr(Schema.String),
-  serviceAutoUpdateManager: Schema.NullOr(ServiceAutoUpdateManager),
-  serviceAutoUpdateReason: Schema.NullOr(ServiceAutoUpdateReason),
-  serviceAutoUpdateStatus: Schema.NullOr(ServiceAutoUpdateStatus),
-  serviceBackend: Schema.NullOr(Schema.String),
-  serviceError: Schema.NullOr(Schema.String),
-  serviceReloadRequired: Schema.NullOr(Schema.Boolean),
-  serviceRepairAttemptedAt: Schema.NullOr(Schema.String),
-  serviceRepairCompletedAt: Schema.NullOr(Schema.String),
-  serviceRepairError: Schema.NullOr(Schema.String),
-  serviceRepairReason: Schema.NullOr(ServiceRepairReason),
-  serviceRepairStatus: Schema.NullOr(ServiceRepairStatus),
-  serviceRunnerTarget: Schema.NullOr(Schema.String),
-  serviceRunnerVersion: Schema.NullOr(Schema.String),
-  serviceSchedulerActive: Schema.NullOr(Schema.Boolean),
-  serviceStatus: Schema.NullOr(ServiceCheckInStatus),
-  serviceTemplateVersion: Schema.NullOr(Schema.Number),
-  version: Schema.NullOr(Schema.String),
-});
+/** A device plus the latest service check-in columns, flattened as stored. */
+const AdminLatestDevice = DeviceSummary.mapFields(
+  Struct.assign({
+    lastCheckInAt: Schema.NullOr(Schema.String),
+    serviceAutoUpdateAttemptedAt: Schema.NullOr(Schema.String),
+    serviceAutoUpdateCompletedAt: Schema.NullOr(Schema.String),
+    serviceAutoUpdateCurrentVersion: Schema.NullOr(Schema.String),
+    serviceAutoUpdateEnabled: Schema.NullOr(Schema.Boolean),
+    serviceAutoUpdateError: Schema.NullOr(Schema.String),
+    serviceAutoUpdateInstalledVersion: Schema.NullOr(Schema.String),
+    serviceAutoUpdateLatestVersion: Schema.NullOr(Schema.String),
+    serviceAutoUpdateManager: Schema.NullOr(ServiceAutoUpdateManager),
+    serviceAutoUpdateReason: Schema.NullOr(ServiceAutoUpdateReason),
+    serviceAutoUpdateStatus: Schema.NullOr(ServiceAutoUpdateStatus),
+    serviceBackend: Schema.NullOr(Schema.String),
+    serviceError: Schema.NullOr(Schema.String),
+    serviceReloadRequired: Schema.NullOr(Schema.Boolean),
+    serviceRepairAttemptedAt: Schema.NullOr(Schema.String),
+    serviceRepairCompletedAt: Schema.NullOr(Schema.String),
+    serviceRepairError: Schema.NullOr(Schema.String),
+    serviceRepairReason: Schema.NullOr(ServiceRepairReason),
+    serviceRepairStatus: Schema.NullOr(ServiceRepairStatus),
+    serviceRunnerTarget: Schema.NullOr(Schema.String),
+    serviceRunnerVersion: Schema.NullOr(Schema.String),
+    serviceSchedulerActive: Schema.NullOr(Schema.Boolean),
+    serviceStatus: Schema.NullOr(ServiceCheckInStatus),
+    serviceTemplateVersion: Schema.NullOr(Schema.Number),
+  }),
+);
+
+type AdminLatestDevice = typeof AdminLatestDevice.Type;
 
 const AdminDeviceDebugRow = Schema.Struct({
   activeDays: Schema.Number,
@@ -585,14 +698,16 @@ const AdminDeviceDebugRow = Schema.Struct({
   latestCheckInAt: Schema.NullOr(Schema.String),
   revokedTokenCount: Schema.Number,
   sources: Schema.Array(Schema.String),
+  spendUsd: Schema.Number,
   status: AdminDeviceStatus,
   tokenCount: Schema.Number,
-  totalSpendUsd: Schema.Number,
   totalTokens: Schema.Number,
   updateBlockedReason: Schema.NullOr(Schema.String),
   updateStatus: AdminDeviceUpdateStatus,
   user: AuthUser,
 });
+
+type AdminDeviceDebugRow = typeof AdminDeviceDebugRow.Type;
 
 const AdminAccountDebugSummary = Schema.Struct({
   email: Schema.NullOr(Schema.String),
@@ -600,6 +715,8 @@ const AdminAccountDebugSummary = Schema.Struct({
   login: Schema.NullOr(Schema.String),
   provider: OAuthProviderId,
 });
+
+type AdminAccountDebugSummary = typeof AdminAccountDebugSummary.Type;
 
 const AdminUserDebugRow = Schema.Struct({
   accounts: Schema.Array(AdminAccountDebugSummary),
@@ -615,9 +732,9 @@ const AdminUserDebugRow = Schema.Struct({
   revokedTokenCount: Schema.Number,
   shadowBan: Schema.NullOr(ShadowBan),
   sources: Schema.Array(Schema.String),
+  spendUsd: Schema.Number,
   status: AdminDeviceStatus,
   tokenCount: Schema.Number,
-  totalSpendUsd: Schema.Number,
   totalTokens: Schema.Number,
   updatedAt: Schema.String,
   user: AuthUser,
@@ -632,6 +749,8 @@ const AdminLatestCliVersions = Schema.Struct({
   latest: Schema.NullOr(Schema.String),
   rc: Schema.NullOr(Schema.String),
 });
+
+type AdminLatestCliVersions = typeof AdminLatestCliVersions.Type;
 
 const AdminUsersResponse = Schema.Struct({
   devices: Schema.Array(AdminDeviceDebugRow),
@@ -656,30 +775,40 @@ const AdminUsersResponse = Schema.Struct({
 type AdminUsersResponse = typeof AdminUsersResponse.Type;
 
 export {
+  AdminAccountDebugSummary,
   AdminDeviceDebugRow,
   AdminDeviceStatus,
   AdminDeviceUpdateStatus,
+  AdminLatestCliVersions,
+  AdminLatestDevice,
   AdminUserDebugRow,
   AdminUsersResponse,
   AuthUser,
   CliIdentity,
   CliLoginApproveInput,
   CliLoginApproveResponse,
+  CliLoginDeviceCodePollInput,
+  CliLoginFlow,
+  CliLoginLegacyPollInput,
   CliLoginPollInput,
   CliLoginPollResponse,
   CliLoginRequestSummary,
   CliLoginStartInput,
   CliLoginStartResponse,
   CliTokenSummary,
+  DEFAULT_LEADERBOARD_METRIC,
+  DEFAULT_LEADERBOARD_WINDOW,
+  DeviceId,
   DeviceSummary,
   HealthResponse,
   IngestUsageInput,
-  DEFAULT_LEADERBOARD_METRIC,
-  DEFAULT_LEADERBOARD_WINDOW,
   LeaderboardEntry,
   LeaderboardMetric,
   LeaderboardResponse,
   LeaderboardWindow,
+  ListAccountsResponse,
+  ListDevicesResponse,
+  ListTokensResponse,
   MeResponse,
   OAuthProviderId,
   OkResponse,
@@ -690,43 +819,39 @@ export {
   ProfileIdentityResponse,
   ProfileResponse,
   ProfileStats,
+  PublicUser,
   RawUsageReportInput,
-  ShadowBan,
-  ShadowBanUserResponse,
   ServiceAutoUpdate,
   ServiceAutoUpdateManager,
   ServiceAutoUpdateReason,
   ServiceAutoUpdateStatus,
+  ServiceCheckInInput,
   ServiceCheckInStatus,
   ServiceRepairReason,
   ServiceRepairStatus,
+  ShadowBan,
+  ShadowBanUserResponse,
   SourceUsageStatsInput,
-  StatsDailyPoint,
   StatsDailyModelPoint,
-  StatsPeakDay,
+  StatsDailyPoint,
   StatsRankedMetric,
   StatsResponse,
   StatsTotals,
-  StatsUserMetric,
+  StatsWindow,
+  StatsWindowId,
   SyncUsageInput,
   SyncUsageResponse,
+  TokenCount,
+  TokenId,
+  USAGE_SOURCES,
   UsageCheckInInput,
   UsageCheckInResponse,
-  UserAccountSummary,
   UsageDayInput,
   UsageDeviceInput,
   UsageRawReportKind,
-  USAGE_SOURCES,
   UsageSource,
   UsdAmount,
-  TokenCount,
-};
-
-export type {
-  ServiceAutoUpdateManagerValue,
-  ServiceAutoUpdateReasonValue,
-  ServiceAutoUpdateStatusValue,
-  ServiceCheckInStatusValue,
-  ServiceRepairReasonValue,
-  ServiceRepairStatusValue,
+  UserAccountSummary,
+  UserId,
+  UserUsageMetric,
 };

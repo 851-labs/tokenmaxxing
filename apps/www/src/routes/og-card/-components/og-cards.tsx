@@ -37,7 +37,7 @@ function ProfileOgCard({ data }: { data: ProfileOgData }) {
   const { profile } = data;
   const { stats } = profile;
   const metrics = [
-    { label: "Total spend", value: formatUsd(stats.totalSpendUsd) },
+    { label: "Total spend", value: formatUsd(stats.spendUsd) },
     { label: "Total tokens", value: formatTokens(stats.totalTokens) },
     { label: "Active days", value: formatInteger(stats.activeDays) },
     { label: "Current streak", value: formatInteger(stats.currentStreakDays) },

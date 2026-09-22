@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Contract from "@tokenmaxxing/api-contract";
-import { Forbidden, Unauthorized, UserNotFound } from "@tokenmaxxing/api-contract";
+import {
+  DeviceId,
+  DeviceNotFound,
+  Forbidden,
+  LoginCodeExpired,
+  Unauthorized,
+  UserNotFound,
+} from "@tokenmaxxing/api-contract";
 
-import { isApiError, isRetryableApiError } from "./api";
+import { errorMessage, isApiError, isRetryableApiError } from "./api";
 
 describe("API error classification", () => {
   it("never retries deliberate contract failures", () => {
@@ -32,7 +39,35 @@ describe("API error classification", () => {
   });
 
   it("matches contract errors by tag", () => {
-    expect(isApiError(new UserNotFound({ login: "ghost" }), "UserNotFound")).toBe(true);
-    expect(isApiError(new UserNotFound({ login: "ghost" }), "Forbidden")).toBe(false);
+    const error: unknown = new UserNotFound({ login: "ghost" });
+
+    expect(isApiError(error, "UserNotFound")).toBe(true);
+    expect(isApiError(error, "Forbidden")).toBe(false);
+    if (isApiError(error, "UserNotFound")) {
+      expect(error.login).toBe("ghost");
+    }
+  });
+});
+
+describe("errorMessage", () => {
+  it("surfaces the default message every contract error carries", () => {
+    expect(errorMessage(new DeviceNotFound({ id: DeviceId.make("device_1") }), "fallback")).toBe(
+      "Device not found or already deleted.",
+    );
+    expect(errorMessage(new LoginCodeExpired({ code: "ABCD-1234" }), "fallback")).toBe(
+      "Login code expired; run `tokenmaxxing login` again.",
+    );
+  });
+
+  it("prefers a call-site message over the default", () => {
+    expect(errorMessage(new Unauthorized({ message: "Session expired." }), "fallback")).toBe(
+      "Session expired.",
+    );
+  });
+
+  it("falls back for anything that is not a contract error", () => {
+    expect(errorMessage(new Error("socket hang up"), "fallback")).toBe("fallback");
+    expect(errorMessage({ _tag: "UserNotFound", message: "spoofed" }, "fallback")).toBe("fallback");
+    expect(errorMessage(undefined, "fallback")).toBe("fallback");
   });
 });

@@ -9,8 +9,10 @@ import {
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { Effect, Layer, Option } from "effect";
 
-import { toAuthUser } from "../public-user";
+import { DeviceId, TokenId } from "@tokenmaxxing/api-contract";
+
 import { Drizzle, firstRow } from "../database";
+import { toAuthUser } from "../public-user";
 import { RawUsageObjectStore } from "../usage/raw-store";
 import { makeTokensService, TokensRepository, TokensService } from "./service";
 
@@ -47,8 +49,8 @@ const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () 
         }
 
         return Option.some({
-          deviceId: token.deviceId,
-          tokenId: token.id,
+          deviceId: token.deviceId === null ? null : DeviceId.make(token.deviceId),
+          tokenId: TokenId.make(token.id),
           user: toAuthUser(user),
         });
       }),
@@ -65,7 +67,7 @@ const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () 
         return rows.map((row) => ({
           arch: row.arch,
           createdAt: row.createdAt.toISOString(),
-          id: row.id,
+          id: DeviceId.make(row.id),
           lastSyncAt: row.lastSyncAt?.toISOString() ?? null,
           name: row.name,
           platform: row.platform,
@@ -84,8 +86,8 @@ const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () 
 
         return rows.map((row) => ({
           createdAt: row.createdAt.toISOString(),
-          deviceId: row.deviceId,
-          id: row.id,
+          deviceId: row.deviceId === null ? null : DeviceId.make(row.deviceId),
+          id: TokenId.make(row.id),
           lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
           name: row.name,
           revokedAt: row.revokedAt?.toISOString() ?? null,

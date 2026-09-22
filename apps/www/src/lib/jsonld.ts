@@ -111,7 +111,7 @@ function profilePageSchema(profile: Profile): Record<string, unknown> {
 
   if (stats.activeDays > 0) {
     const variableMeasured: Record<string, unknown>[] = [
-      { "@type": "PropertyValue", name: "totalSpendUsd", value: stats.totalSpendUsd },
+      { "@type": "PropertyValue", name: "totalSpendUsd", value: stats.spendUsd },
       { "@type": "PropertyValue", name: "totalTokens", value: stats.totalTokens },
       { "@type": "PropertyValue", name: "activeDays", value: stats.activeDays },
       { "@type": "PropertyValue", name: "sessionCount", value: stats.sessionCount },

@@ -2,7 +2,7 @@ import { arch, hostname } from "node:os";
 
 import { Data, Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
-import type { AuthUser } from "@tokenmaxxing/api-contract";
+import { DeviceId, type AuthUser } from "@tokenmaxxing/api-contract";
 
 import packageJson from "../../package.json";
 import {
@@ -191,7 +191,7 @@ function browserLoginEffect(options: BrowserLoginOptions) {
       .start({
         payload: {
           deviceArch: arch(),
-          deviceId,
+          deviceId: DeviceId.make(deviceId),
           deviceName: hostname(),
           devicePlatform: process.platform,
           deviceVersion: packageJson.version,

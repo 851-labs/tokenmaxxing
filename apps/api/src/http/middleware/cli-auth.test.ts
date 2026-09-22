@@ -1,11 +1,12 @@
 import { Effect, Option } from "effect";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { AuthUser } from "@tokenmaxxing/api-contract";
+import type { AuthUser, CliIdentity } from "@tokenmaxxing/api-contract";
 
 import { makeTestApp, type TestApp } from "../../testing/http";
+import { DeviceId, TokenId, UserId } from "@tokenmaxxing/api-contract";
 
-const user: AuthUser = { avatarUrl: null, id: "user", login: "user", name: null };
+const user: AuthUser = { avatarUrl: null, id: UserId.make("user"), login: "user", name: null };
 
 describe("CliAuth middleware", () => {
   let app: TestApp | undefined;
@@ -17,9 +18,9 @@ describe("CliAuth middleware", () => {
 
   async function logout(
     headers: Record<string, string>,
-    resolved: Effect.Effect<
-      Option.Option<{ deviceId: string | null; tokenId: string; user: AuthUser }>
-    > = Effect.succeed(Option.some({ deviceId: "device", tokenId: "token", user })),
+    resolved: Effect.Effect<Option.Option<CliIdentity>> = Effect.succeed(
+      Option.some({ deviceId: DeviceId.make("device"), tokenId: TokenId.make("token"), user }),
+    ),
   ) {
     const resolveCliToken = vi.fn(() => resolved);
     const revokeToken = vi.fn(() => Effect.void);

@@ -15,15 +15,26 @@ import {
   LEGACY_LOGIN_SUNSET,
   LOGIN_REQUEST_TTL_MS,
 } from "./service";
+import { DeviceId, TokenId, UserId } from "@tokenmaxxing/api-contract";
 
 type Service = typeof CliLoginService.Service;
 
-const alice: AuthUser = { avatarUrl: null, id: "user_alice", login: "alice", name: null };
-const mallory: AuthUser = { avatarUrl: null, id: "user_mallory", login: "mallory", name: null };
+const alice: AuthUser = {
+  avatarUrl: null,
+  id: UserId.make("user_alice"),
+  login: "alice",
+  name: null,
+};
+const mallory: AuthUser = {
+  avatarUrl: null,
+  id: UserId.make("user_mallory"),
+  login: "mallory",
+  name: null,
+};
 
 const device = {
   deviceArch: "arm64",
-  deviceId: "device_laptop",
+  deviceId: DeviceId.make("device_laptop"),
   deviceName: "alice-laptop",
   devicePlatform: "darwin",
   deviceVersion: "1.2.3",
@@ -299,7 +310,7 @@ describe("CliLoginService device ownership", () => {
         deviceVersion: null,
         now: NOW,
         tokenHash: "sha256:mallory",
-        tokenId: "token_mallory",
+        tokenId: TokenId.make("token_mallory"),
         userId: mallory.id,
       }),
     );

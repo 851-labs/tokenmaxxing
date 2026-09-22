@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle, TerminalWindow, WarningCircle } from "@phosphor-icons/react/ssr";
 import type { CliLoginRequestSummary } from "@tokenmaxxing/api-contract";
-import { z } from "zod";
+import * as Schema from "effect/Schema";
 
 import { LOGIN_OAUTH_PROVIDERS, OAuthProviderButtons } from "../components/oauth-providers";
 import { Button } from "../components/ui/button";
@@ -10,6 +10,7 @@ import { Card } from "../components/ui/card";
 import { Code } from "../components/ui/code";
 import { errorMessage, runApi } from "../lib/api";
 import { cliLoginRequestQueryOptions, meQueryOptions } from "../lib/queries";
+import { searchParam } from "../lib/search";
 
 /**
  * Approval screen for `tokenmaxxing login`. Approving hands the requesting
@@ -18,9 +19,11 @@ import { cliLoginRequestQueryOptions, meQueryOptions } from "../lib/queries";
  * someone else sent must never approve anything by merely being opened.
  */
 
-const cliLoginSearchSchema = z.object({
-  code: z.string().catch(""),
-});
+const cliLoginSearchSchema = Schema.toStandardSchemaV1(
+  Schema.Struct({
+    code: searchParam(Schema.String, ""),
+  }),
+);
 
 const Route = createFileRoute("/login_/cli")({
   validateSearch: cliLoginSearchSchema,

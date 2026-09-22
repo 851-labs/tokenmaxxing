@@ -2073,21 +2073,6 @@
                               }
                             ]
                           },
-                          "rank": {
-                            "anyOf": [
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "Infinity",
-                                  "-Infinity",
-                                  "NaN"
-                                ]
-                              }
-                            ]
-                          },
                           "spendUsd": {
                             "anyOf": [
                               {
@@ -2131,9 +2116,6 @@
                                   }
                                 ]
                               },
-                              "id": {
-                                "type": "string"
-                              },
                               "login": {
                                 "type": "string"
                               },
@@ -2150,20 +2132,34 @@
                             },
                             "required": [
                               "avatarUrl",
-                              "id",
                               "login",
                               "name"
                             ],
                             "additionalProperties": false
+                          },
+                          "rank": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "Infinity",
+                                  "-Infinity",
+                                  "NaN"
+                                ]
+                              }
+                            ]
                           }
                         },
                         "required": [
                           "activeDays",
                           "lastDate",
-                          "rank",
                           "spendUsd",
                           "totalTokens",
-                          "user"
+                          "user",
+                          "rank"
                         ],
                         "additionalProperties": false
                       }
@@ -2213,196 +2209,6 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "allTime": {
-                      "type": "object",
-                      "properties": {
-                        "activeDates": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "cacheCreationTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "cacheReadTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "deviceCount": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "firstDate": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "inputTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "lastDate": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "outputTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "rowCount": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "totalSpendUsd": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "totalTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "userCount": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      "required": [
-                        "activeDates",
-                        "cacheCreationTokens",
-                        "cacheReadTokens",
-                        "deviceCount",
-                        "firstDate",
-                        "inputTokens",
-                        "lastDate",
-                        "outputTokens",
-                        "rowCount",
-                        "totalSpendUsd",
-                        "totalTokens",
-                        "userCount"
-                      ],
-                      "additionalProperties": false
-                    },
                     "daily": {
                       "type": "array",
                       "items": {
@@ -2471,21 +2277,6 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "costUsd": {
-                            "anyOf": [
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "Infinity",
-                                  "-Infinity",
-                                  "NaN"
-                                ]
-                              }
-                            ]
-                          },
                           "date": {
                             "type": "string"
                           },
@@ -2522,6 +2313,21 @@
                               }
                             ]
                           },
+                          "spendUsd": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "Infinity",
+                                  "-Infinity",
+                                  "NaN"
+                                ]
+                              }
+                            ]
+                          },
                           "totalTokens": {
                             "anyOf": [
                               {
@@ -2539,210 +2345,17 @@
                           }
                         },
                         "required": [
-                          "costUsd",
                           "date",
                           "key",
                           "outputTokens",
                           "rowCount",
+                          "spendUsd",
                           "totalTokens"
                         ],
                         "additionalProperties": false
                       }
                     },
                     "generatedAt": {
-                      "type": "string"
-                    },
-                    "last30d": {
-                      "type": "object",
-                      "properties": {
-                        "activeDates": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "cacheCreationTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "cacheReadTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "deviceCount": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "firstDate": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "inputTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "lastDate": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "outputTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "rowCount": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "totalSpendUsd": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "totalTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "userCount": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      "required": [
-                        "activeDates",
-                        "cacheCreationTokens",
-                        "cacheReadTokens",
-                        "deviceCount",
-                        "firstDate",
-                        "inputTokens",
-                        "lastDate",
-                        "outputTokens",
-                        "rowCount",
-                        "totalSpendUsd",
-                        "totalTokens",
-                        "userCount"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "last30dSince": {
                       "type": "string"
                     },
                     "peaks": {
@@ -2889,742 +2502,6 @@
                       ],
                       "additionalProperties": false
                     },
-                    "sources": {
-                      "type": "object",
-                      "properties": {
-                        "allTime": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string"
-                              },
-                              "rowCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "spendUsd": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "totalTokens": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "userCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "rowCount",
-                              "spendUsd",
-                              "totalTokens",
-                              "userCount"
-                            ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "last30d": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string"
-                              },
-                              "rowCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "spendUsd": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "totalTokens": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "userCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "rowCount",
-                              "spendUsd",
-                              "totalTokens",
-                              "userCount"
-                            ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "year2026": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string"
-                              },
-                              "rowCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "spendUsd": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "totalTokens": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "userCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "rowCount",
-                              "spendUsd",
-                              "totalTokens",
-                              "userCount"
-                            ],
-                            "additionalProperties": false
-                          }
-                        }
-                      },
-                      "required": [
-                        "allTime",
-                        "last30d",
-                        "year2026"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "topModels": {
-                      "type": "object",
-                      "properties": {
-                        "allTimeBySpend": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string"
-                              },
-                              "rowCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "spendUsd": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "totalTokens": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "userCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "rowCount",
-                              "spendUsd",
-                              "totalTokens",
-                              "userCount"
-                            ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "allTimeByTokens": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string"
-                              },
-                              "rowCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "spendUsd": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "totalTokens": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "userCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "rowCount",
-                              "spendUsd",
-                              "totalTokens",
-                              "userCount"
-                            ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "last30dBySpend": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string"
-                              },
-                              "rowCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "spendUsd": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "totalTokens": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "userCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "rowCount",
-                              "spendUsd",
-                              "totalTokens",
-                              "userCount"
-                            ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "last30dByTokens": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string"
-                              },
-                              "rowCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "spendUsd": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "totalTokens": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "userCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "rowCount",
-                              "spendUsd",
-                              "totalTokens",
-                              "userCount"
-                            ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "year2026BySpend": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string"
-                              },
-                              "rowCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "spendUsd": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "totalTokens": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "userCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "rowCount",
-                              "spendUsd",
-                              "totalTokens",
-                              "userCount"
-                            ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "year2026ByTokens": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string"
-                              },
-                              "rowCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "spendUsd": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "totalTokens": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              },
-                              "userCount": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string",
-                                    "enum": [
-                                      "Infinity",
-                                      "-Infinity",
-                                      "NaN"
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "rowCount",
-                              "spendUsd",
-                              "totalTokens",
-                              "userCount"
-                            ],
-                            "additionalProperties": false
-                          }
-                        }
-                      },
-                      "required": [
-                        "allTimeBySpend",
-                        "allTimeByTokens",
-                        "last30dBySpend",
-                        "last30dByTokens",
-                        "year2026BySpend",
-                        "year2026ByTokens"
-                      ],
-                      "additionalProperties": false
-                    },
                     "topUsers": {
                       "type": "object",
                       "properties": {
@@ -3701,9 +2578,6 @@
                                       }
                                     ]
                                   },
-                                  "id": {
-                                    "type": "string"
-                                  },
                                   "login": {
                                     "type": "string"
                                   },
@@ -3720,7 +2594,6 @@
                                 },
                                 "required": [
                                   "avatarUrl",
-                                  "id",
                                   "login",
                                   "name"
                                 ],
@@ -3810,9 +2683,6 @@
                                       }
                                     ]
                                   },
-                                  "id": {
-                                    "type": "string"
-                                  },
                                   "login": {
                                     "type": "string"
                                   },
@@ -3829,7 +2699,6 @@
                                 },
                                 "required": [
                                   "avatarUrl",
-                                  "id",
                                   "login",
                                   "name"
                                 ],
@@ -3853,213 +2722,1375 @@
                       ],
                       "additionalProperties": false
                     },
-                    "year2026": {
+                    "windows": {
                       "type": "object",
                       "properties": {
-                        "activeDates": {
-                          "anyOf": [
-                            {
-                              "type": "number"
+                        "allTime": {
+                          "type": "object",
+                          "properties": {
+                            "modelsBySpend": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "rowCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "spendUsd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "totalTokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "userCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "rowCount",
+                                  "spendUsd",
+                                  "totalTokens",
+                                  "userCount"
+                                ],
+                                "additionalProperties": false
+                              }
                             },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
+                            "modelsByTokens": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "rowCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "spendUsd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "totalTokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "userCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "rowCount",
+                                  "spendUsd",
+                                  "totalTokens",
+                                  "userCount"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "since": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
                               ]
-                            }
-                          ]
-                        },
-                        "cacheCreationTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
                             },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "rowCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "spendUsd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "totalTokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "userCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "rowCount",
+                                  "spendUsd",
+                                  "totalTokens",
+                                  "userCount"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "totals": {
+                              "type": "object",
+                              "properties": {
+                                "activeDays": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "cacheCreationTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "cacheReadTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "deviceCount": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "firstDate": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "inputTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "lastDate": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "outputTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "rowCount": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "spendUsd": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "totalTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "userCount": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "activeDays",
+                                "cacheCreationTokens",
+                                "cacheReadTokens",
+                                "deviceCount",
+                                "firstDate",
+                                "inputTokens",
+                                "lastDate",
+                                "outputTokens",
+                                "rowCount",
+                                "spendUsd",
+                                "totalTokens",
+                                "userCount"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "modelsBySpend",
+                            "modelsByTokens",
+                            "since",
+                            "sources",
+                            "totals"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "last30d": {
+                          "type": "object",
+                          "properties": {
+                            "modelsBySpend": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "rowCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "spendUsd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "totalTokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "userCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "rowCount",
+                                  "spendUsd",
+                                  "totalTokens",
+                                  "userCount"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "modelsByTokens": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "rowCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "spendUsd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "totalTokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "userCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "rowCount",
+                                  "spendUsd",
+                                  "totalTokens",
+                                  "userCount"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "since": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
                               ]
-                            }
-                          ]
-                        },
-                        "cacheReadTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
                             },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "rowCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "spendUsd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "totalTokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "userCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "rowCount",
+                                  "spendUsd",
+                                  "totalTokens",
+                                  "userCount"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "totals": {
+                              "type": "object",
+                              "properties": {
+                                "activeDays": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "cacheCreationTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "cacheReadTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "deviceCount": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "firstDate": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "inputTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "lastDate": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "outputTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "rowCount": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "spendUsd": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "totalTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "userCount": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "activeDays",
+                                "cacheCreationTokens",
+                                "cacheReadTokens",
+                                "deviceCount",
+                                "firstDate",
+                                "inputTokens",
+                                "lastDate",
+                                "outputTokens",
+                                "rowCount",
+                                "spendUsd",
+                                "totalTokens",
+                                "userCount"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "modelsBySpend",
+                            "modelsByTokens",
+                            "since",
+                            "sources",
+                            "totals"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "ytd": {
+                          "type": "object",
+                          "properties": {
+                            "modelsBySpend": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "rowCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "spendUsd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "totalTokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "userCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "rowCount",
+                                  "spendUsd",
+                                  "totalTokens",
+                                  "userCount"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "modelsByTokens": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "rowCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "spendUsd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "totalTokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "userCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "rowCount",
+                                  "spendUsd",
+                                  "totalTokens",
+                                  "userCount"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "since": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
                               ]
-                            }
-                          ]
-                        },
-                        "deviceCount": {
-                          "anyOf": [
-                            {
-                              "type": "number"
                             },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "firstDate": {
-                          "anyOf": [
-                            {
-                              "type": "string"
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "rowCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "spendUsd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "totalTokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  "userCount": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "rowCount",
+                                  "spendUsd",
+                                  "totalTokens",
+                                  "userCount"
+                                ],
+                                "additionalProperties": false
+                              }
                             },
-                            {
-                              "type": "null"
+                            "totals": {
+                              "type": "object",
+                              "properties": {
+                                "activeDays": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "cacheCreationTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "cacheReadTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "deviceCount": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "firstDate": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "inputTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "lastDate": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "outputTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "rowCount": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "spendUsd": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "totalTokens": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                },
+                                "userCount": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "Infinity",
+                                        "-Infinity",
+                                        "NaN"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "activeDays",
+                                "cacheCreationTokens",
+                                "cacheReadTokens",
+                                "deviceCount",
+                                "firstDate",
+                                "inputTokens",
+                                "lastDate",
+                                "outputTokens",
+                                "rowCount",
+                                "spendUsd",
+                                "totalTokens",
+                                "userCount"
+                              ],
+                              "additionalProperties": false
                             }
-                          ]
-                        },
-                        "inputTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "lastDate": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "outputTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "rowCount": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "totalSpendUsd": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "totalTokens": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
-                        "userCount": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
+                          },
+                          "required": [
+                            "modelsBySpend",
+                            "modelsByTokens",
+                            "since",
+                            "sources",
+                            "totals"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
-                        "activeDates",
-                        "cacheCreationTokens",
-                        "cacheReadTokens",
-                        "deviceCount",
-                        "firstDate",
-                        "inputTokens",
-                        "lastDate",
-                        "outputTokens",
-                        "rowCount",
-                        "totalSpendUsd",
-                        "totalTokens",
-                        "userCount"
+                        "allTime",
+                        "last30d",
+                        "ytd"
                       ],
                       "additionalProperties": false
-                    },
-                    "year2026Since": {
-                      "type": "string"
                     }
                   },
                   "required": [
-                    "allTime",
                     "daily",
                     "dailyByModel",
                     "generatedAt",
-                    "last30d",
-                    "last30dSince",
                     "peaks",
-                    "sources",
-                    "topModels",
                     "topUsers",
-                    "year2026",
-                    "year2026Since"
+                    "windows"
                   ],
                   "additionalProperties": false
                 }
@@ -4331,6 +4362,21 @@
                             "type": "string"
                           }
                         },
+                        "spendUsd": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "Infinity",
+                                "-Infinity",
+                                "NaN"
+                              ]
+                            }
+                          ]
+                        },
                         "topModel": {
                           "anyOf": [
                             {
@@ -4366,21 +4412,6 @@
                             }
                           ]
                         },
-                        "totalSpendUsd": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string",
-                              "enum": [
-                                "Infinity",
-                                "-Infinity",
-                                "NaN"
-                              ]
-                            }
-                          ]
-                        },
                         "totalTokens": {
                           "anyOf": [
                             {
@@ -4409,8 +4440,8 @@
                         "peakDay",
                         "sessionCount",
                         "sources",
+                        "spendUsd",
                         "topModel",
-                        "totalSpendUsd",
                         "totalTokens"
                       ],
                       "additionalProperties": false
@@ -4428,9 +4459,6 @@
                             }
                           ]
                         },
-                        "id": {
-                          "type": "string"
-                        },
                         "login": {
                           "type": "string"
                         },
@@ -4447,7 +4475,6 @@
                       },
                       "required": [
                         "avatarUrl",
-                        "id",
                         "login",
                         "name"
                       ],
@@ -4552,28 +4579,18 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "range": {
-                      "type": "object",
-                      "properties": {
-                        "first": {
-                          "type": "string"
-                        },
-                        "last": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "first",
-                        "last"
-                      ],
-                      "additionalProperties": false
-                    },
                     "days": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "costUsd": {
+                          "date": {
+                            "type": "string"
+                          },
+                          "key": {
+                            "type": "string"
+                          },
+                          "outputTokens": {
                             "anyOf": [
                               {
                                 "type": "number"
@@ -4588,13 +4605,7 @@
                               }
                             ]
                           },
-                          "date": {
-                            "type": "string"
-                          },
-                          "key": {
-                            "type": "string"
-                          },
-                          "outputTokens": {
+                          "spendUsd": {
                             "anyOf": [
                               {
                                 "type": "number"
@@ -4626,19 +4637,35 @@
                           }
                         },
                         "required": [
-                          "costUsd",
                           "date",
                           "key",
                           "outputTokens",
+                          "spendUsd",
                           "totalTokens"
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "range": {
+                      "type": "object",
+                      "properties": {
+                        "firstDate": {
+                          "type": "string"
+                        },
+                        "lastDate": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "firstDate",
+                        "lastDate"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
-                    "range",
-                    "days"
+                    "days",
+                    "range"
                   ],
                   "additionalProperties": false
                 }
@@ -4728,16 +4755,6 @@
                               "id": {
                                 "type": "string"
                               },
-                              "lastCheckInAt": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ]
-                              },
                               "lastSyncAt": {
                                 "anyOf": [
                                   {
@@ -4753,6 +4770,26 @@
                               },
                               "platform": {
                                 "type": "string"
+                              },
+                              "version": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "lastCheckInAt": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
                               },
                               "serviceAutoUpdateAttemptedAt": {
                                 "anyOf": [
@@ -5037,26 +5074,17 @@
                                     "type": "null"
                                   }
                                 ]
-                              },
-                              "version": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ]
                               }
                             },
                             "required": [
                               "arch",
                               "createdAt",
                               "id",
-                              "lastCheckInAt",
                               "lastSyncAt",
                               "name",
                               "platform",
+                              "version",
+                              "lastCheckInAt",
                               "serviceAutoUpdateAttemptedAt",
                               "serviceAutoUpdateCompletedAt",
                               "serviceAutoUpdateCurrentVersion",
@@ -5079,8 +5107,7 @@
                               "serviceRunnerVersion",
                               "serviceSchedulerActive",
                               "serviceStatus",
-                              "serviceTemplateVersion",
-                              "version"
+                              "serviceTemplateVersion"
                             ],
                             "additionalProperties": false
                           },
@@ -5138,16 +5165,7 @@
                               "type": "string"
                             }
                           },
-                          "status": {
-                            "type": "string",
-                            "enum": [
-                              "healthy",
-                              "repair-needed",
-                              "stale",
-                              "unknown"
-                            ]
-                          },
-                          "tokenCount": {
+                          "spendUsd": {
                             "anyOf": [
                               {
                                 "type": "number"
@@ -5162,7 +5180,16 @@
                               }
                             ]
                           },
-                          "totalSpendUsd": {
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "healthy",
+                              "repair-needed",
+                              "stale",
+                              "unknown"
+                            ]
+                          },
+                          "tokenCount": {
                             "anyOf": [
                               {
                                 "type": "number"
@@ -5260,9 +5287,9 @@
                           "latestCheckInAt",
                           "revokedTokenCount",
                           "sources",
+                          "spendUsd",
                           "status",
                           "tokenCount",
-                          "totalSpendUsd",
                           "totalTokens",
                           "updateBlockedReason",
                           "updateStatus",
@@ -5646,16 +5673,6 @@
                                   "id": {
                                     "type": "string"
                                   },
-                                  "lastCheckInAt": {
-                                    "anyOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
-                                  },
                                   "lastSyncAt": {
                                     "anyOf": [
                                       {
@@ -5671,6 +5688,26 @@
                                   },
                                   "platform": {
                                     "type": "string"
+                                  },
+                                  "version": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "lastCheckInAt": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
                                   },
                                   "serviceAutoUpdateAttemptedAt": {
                                     "anyOf": [
@@ -5955,26 +5992,17 @@
                                         "type": "null"
                                       }
                                     ]
-                                  },
-                                  "version": {
-                                    "anyOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
                                   }
                                 },
                                 "required": [
                                   "arch",
                                   "createdAt",
                                   "id",
-                                  "lastCheckInAt",
                                   "lastSyncAt",
                                   "name",
                                   "platform",
+                                  "version",
+                                  "lastCheckInAt",
                                   "serviceAutoUpdateAttemptedAt",
                                   "serviceAutoUpdateCompletedAt",
                                   "serviceAutoUpdateCurrentVersion",
@@ -5997,8 +6025,7 @@
                                   "serviceRunnerVersion",
                                   "serviceSchedulerActive",
                                   "serviceStatus",
-                                  "serviceTemplateVersion",
-                                  "version"
+                                  "serviceTemplateVersion"
                                 ],
                                 "additionalProperties": false
                               },
@@ -6061,16 +6088,7 @@
                               "type": "string"
                             }
                           },
-                          "status": {
-                            "type": "string",
-                            "enum": [
-                              "healthy",
-                              "repair-needed",
-                              "stale",
-                              "unknown"
-                            ]
-                          },
-                          "tokenCount": {
+                          "spendUsd": {
                             "anyOf": [
                               {
                                 "type": "number"
@@ -6085,7 +6103,16 @@
                               }
                             ]
                           },
-                          "totalSpendUsd": {
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "healthy",
+                              "repair-needed",
+                              "stale",
+                              "unknown"
+                            ]
+                          },
+                          "tokenCount": {
                             "anyOf": [
                               {
                                 "type": "number"
@@ -6177,9 +6204,9 @@
                           "revokedTokenCount",
                           "shadowBan",
                           "sources",
+                          "spendUsd",
                           "status",
                           "tokenCount",
-                          "totalSpendUsd",
                           "totalTokens",
                           "updatedAt",
                           "user",
@@ -6448,11 +6475,15 @@
           },
           "code": {
             "type": "string"
+          },
+          "message": {
+            "type": "string"
           }
         },
         "required": [
           "_tag",
-          "code"
+          "code",
+          "message"
         ],
         "additionalProperties": false
       },
@@ -6467,11 +6498,15 @@
           },
           "code": {
             "type": "string"
+          },
+          "message": {
+            "type": "string"
           }
         },
         "required": [
           "_tag",
-          "code"
+          "code",
+          "message"
         ],
         "additionalProperties": false
       },
@@ -6486,11 +6521,15 @@
           },
           "id": {
             "type": "string"
+          },
+          "message": {
+            "type": "string"
           }
         },
         "required": [
           "_tag",
-          "id"
+          "id",
+          "message"
         ],
         "additionalProperties": false
       },
@@ -6505,11 +6544,15 @@
           },
           "id": {
             "type": "string"
+          },
+          "message": {
+            "type": "string"
           }
         },
         "required": [
           "_tag",
-          "id"
+          "id",
+          "message"
         ],
         "additionalProperties": false
       },
@@ -6562,11 +6605,15 @@
           },
           "login": {
             "type": "string"
+          },
+          "message": {
+            "type": "string"
           }
         },
         "required": [
           "_tag",
-          "login"
+          "login",
+          "message"
         ],
         "additionalProperties": false
       },
@@ -6600,11 +6647,15 @@
           },
           "id": {
             "type": "string"
+          },
+          "message": {
+            "type": "string"
           }
         },
         "required": [
           "_tag",
-          "id"
+          "id",
+          "message"
         ],
         "additionalProperties": false
       }

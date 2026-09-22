@@ -1,4 +1,11 @@
-import type { StatsResponse } from "@tokenmaxxing/api-contract";
+import type {
+  StatsDailyModelPoint,
+  StatsResponse,
+  StatsWindow,
+  StatsWindowId,
+} from "@tokenmaxxing/api-contract";
+import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   buildStackedSeriesChart,
@@ -9,24 +16,34 @@ import { addDays, enumerateDays } from "../../../lib/dates";
 
 /** Pure view-model for the /stats page: window selection and chart series. */
 
-type Stats = typeof StatsResponse.Type;
-type StatsTotals = Stats["last30d"];
-type StatsDailyModelPoint = Stats["dailyByModel"][number];
-type StatsRankedMetric = Stats["sources"]["last30d"][number];
+/** The page's tabs, each backed by one of the API's stats windows. */
+const STATS_TAB_WINDOWS = {
+  "30d": "last30d",
+  ytd: "ytd",
+} as const satisfies Record<string, StatsWindowId>;
 
-const STATS_WINDOWS = ["30d", "2026"] as const;
+type StatsTab = keyof typeof STATS_TAB_WINDOWS;
 
-type StatsWindow = (typeof STATS_WINDOWS)[number];
+/** `?window=` values; `2026` links predate year-to-date and now open `ytd`. */
+const StatsTabParam = Schema.Union([
+  Schema.Literals(["30d", "ytd"]),
+  Schema.Literal("2026").pipe(
+    Schema.decodeTo(
+      Schema.Literal("ytd"),
+      SchemaTransformation.transform({
+        decode: () => "ytd" as const,
+        encode: () => "2026" as const,
+      }),
+    ),
+  ),
+]);
 
 interface StatsWindowView {
   /** Inclusive chart bounds, or null before any usage exists. */
   chartRange: { first: string; last: string } | null;
   dailyByModel: StatsDailyModelPoint[];
   label: string;
-  modelsBySpend: readonly StatsRankedMetric[];
-  modelsByTokens: readonly StatsRankedMetric[];
-  sources: readonly StatsRankedMetric[];
-  totals: StatsTotals;
+  window: StatsWindow;
 }
 
 interface AggregateCharts {
@@ -46,11 +63,11 @@ function latestPlausibleDate(generatedAt: string): string {
   return addDays(generatedAt.slice(0, 10), 1);
 }
 
-/** The slice of the stats payload for one window, clamped to plausible dates. */
-function selectStatsWindow(data: Stats, window: StatsWindow): StatsWindowView {
-  const is2026 = window === "2026";
-  const since = is2026 ? data.year2026Since : data.last30dSince;
-  const totals = is2026 ? data.year2026 : data.last30d;
+/** One window of the stats payload, with chart rows clamped to plausible dates. */
+function selectStatsWindow(data: StatsResponse, tab: StatsTab): StatsWindowView {
+  const window = data.windows[STATS_TAB_WINDOWS[tab]];
+  const { totals } = window;
+  const since = window.since ?? "";
   const latest = latestPlausibleDate(data.generatedAt);
   const chartLast =
     totals.lastDate === null ? null : totals.lastDate > latest ? latest : totals.lastDate;
@@ -63,12 +80,14 @@ function selectStatsWindow(data: Stats, window: StatsWindow): StatsWindowView {
         ? null
         : { first: chartFirst, last: chartLast },
     dailyByModel: data.dailyByModel.filter((row) => row.date >= since && row.date <= latest),
-    label: is2026 ? "2026" : "30d",
-    modelsBySpend: is2026 ? data.topModels.year2026BySpend : data.topModels.last30dBySpend,
-    modelsByTokens: is2026 ? data.topModels.year2026ByTokens : data.topModels.last30dByTokens,
-    sources: is2026 ? data.sources.year2026 : data.sources.last30d,
-    totals,
+    label: tab === "ytd" ? ytdLabel(data) : "30d",
+    window,
   };
+}
+
+/** The server's current year, e.g. "2026" — `ytd.since` is always Jan 1 of it. */
+function ytdLabel(data: StatsResponse): string {
+  return (data.windows.ytd.since ?? data.generatedAt).slice(0, 4);
 }
 
 /** Spend, token, and session stacks over every day of the window's usage range. */
@@ -80,7 +99,7 @@ function deriveAggregateCharts(view: StatsWindowView): AggregateCharts {
 
   return {
     sessions: buildStackedSeriesChart(rows, days, colors, (row) => row.rowCount),
-    spend: buildStackedSeriesChart(rows, days, colors, (row) => row.costUsd),
+    spend: buildStackedSeriesChart(rows, days, colors, (row) => row.spendUsd),
     tokens: buildStackedSeriesChart(rows, days, colors, (row) => row.totalTokens),
   };
 }
@@ -94,7 +113,8 @@ export {
   formatUsageRange,
   latestPlausibleDate,
   selectStatsWindow,
-  STATS_WINDOWS,
+  StatsTabParam,
+  ytdLabel,
 };
 
-export type { AggregateCharts, StatsRankedMetric, StatsTotals, StatsWindow, StatsWindowView };
+export type { AggregateCharts, StatsTab, StatsWindowView };

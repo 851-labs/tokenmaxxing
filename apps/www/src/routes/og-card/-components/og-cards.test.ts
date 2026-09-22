@@ -42,9 +42,9 @@ function profile(): Profile {
       sessionCount: 14,
       sources: ["claude", "codex"],
       topModel: { model: "claude-opus", spendUsd: 42 },
-      totalSpendUsd: 123.45,
+      spendUsd: 123.45,
       totalTokens: 987_654,
     },
-    user: { avatarUrl: null, id: "user_123", login: "pondorasti", name: null },
+    user: { avatarUrl: null, login: "pondorasti", name: null },
   };
 }

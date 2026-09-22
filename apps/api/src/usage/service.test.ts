@@ -1,8 +1,11 @@
 import {
-  DeviceMissing,
+  DeviceId,
+  TokenDeviceUnbound,
   type RawUsageReportInput,
   type SourceUsageStatsInput,
+  TokenId,
   type UsageDayInput,
+  UserId,
 } from "@tokenmaxxing/api-contract";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -17,7 +20,7 @@ import { RawUsageStorageError } from "./raw-store";
 
 const user = {
   avatarUrl: null,
-  id: "user_123",
+  id: UserId.make("user_123"),
   login: "alex",
   name: null,
 };
@@ -123,25 +126,29 @@ describe("UsageService.checkIn", () => {
     const service = await makeService(repository);
 
     const result = await Effect.runPromise(
-      service.checkIn({ deviceId: "device_123", tokenId: "token_123", user }, device, {
-        autoUpdate: {
-          attemptedAt: "2026-06-21T18:00:00.000Z",
-          completedAt: "2026-06-21T18:00:01.000Z",
-          currentVersion: "0.4.13",
-          enabled: true,
-          error: "npm failed",
-          installedVersion: "0.4.13",
-          latestVersion: "0.4.14",
-          manager: "npm",
-          reason: "package-manager-failed",
-          status: "failure",
+      service.checkIn(
+        { deviceId: DeviceId.make("device_123"), tokenId: TokenId.make("token_123"), user },
+        device,
+        {
+          autoUpdate: {
+            attemptedAt: "2026-06-21T18:00:00.000Z",
+            completedAt: "2026-06-21T18:00:01.000Z",
+            currentVersion: "0.4.13",
+            enabled: true,
+            error: "npm failed",
+            installedVersion: "0.4.13",
+            latestVersion: "0.4.14",
+            manager: "npm",
+            reason: "package-manager-failed",
+            status: "failure",
+          },
+          repairAttemptedAt: "2026-06-21T18:00:00.000Z",
+          repairReason: "scheduler-inactive",
+          repairStatus: "scheduled",
+          schedulerActive: true,
+          status: "success",
         },
-        repairAttemptedAt: "2026-06-21T18:00:00.000Z",
-        repairReason: "scheduler-inactive",
-        repairStatus: "scheduled",
-        schedulerActive: true,
-        status: "success",
-      }),
+      ),
     );
 
     expect(result.checkedInAt).toEqual(expect.any(String));
@@ -181,11 +188,11 @@ describe("UsageService.checkIn", () => {
 
     await expect(
       Effect.runPromise(
-        service.checkIn({ deviceId: null, tokenId: "token_123", user }, device, {
+        service.checkIn({ deviceId: null, tokenId: TokenId.make("token_123"), user }, device, {
           status: "started",
         }),
       ),
-    ).rejects.toBeInstanceOf(DeviceMissing);
+    ).rejects.toBeInstanceOf(TokenDeviceUnbound);
 
     expect(checkInDevice).not.toHaveBeenCalled();
   });
@@ -199,7 +206,7 @@ describe("UsageService.syncBatch", () => {
 
     const result = await Effect.runPromise(
       service.syncBatch(
-        { deviceId: "device_123", tokenId: "token_123", user },
+        { deviceId: DeviceId.make("device_123"), tokenId: TokenId.make("token_123"), user },
         device,
         [usageDay],
         sourceStats,
@@ -243,10 +250,11 @@ describe("UsageService.syncBatch", () => {
     };
 
     const result = await Effect.runPromise(
-      service.syncBatch({ deviceId: "device_123", tokenId: "token_123", user }, device, [
-        prefixed,
-        usageDay,
-      ]),
+      service.syncBatch(
+        { deviceId: DeviceId.make("device_123"), tokenId: TokenId.make("token_123"), user },
+        device,
+        [prefixed, usageDay],
+      ),
     );
 
     expect(result).toMatchObject({ received: 2, upserted: 1 });
@@ -273,9 +281,9 @@ describe("UsageService.syncBatch", () => {
 
     await expect(
       Effect.runPromise(
-        service.syncBatch({ deviceId: null, tokenId: "token_123", user }, device, []),
+        service.syncBatch({ deviceId: null, tokenId: TokenId.make("token_123"), user }, device, []),
       ),
-    ).rejects.toBeInstanceOf(DeviceMissing);
+    ).rejects.toBeInstanceOf(TokenDeviceUnbound);
 
     expect(upsertChunk).not.toHaveBeenCalled();
     expect(pruneChunk).not.toHaveBeenCalled();
@@ -297,7 +305,11 @@ describe("UsageService.ingestRaw", () => {
     const service = await makeService(repository);
 
     const result = await Effect.runPromise(
-      service.ingestRaw({ deviceId: "device_123", tokenId: "token_123", user }, device, rawReports),
+      service.ingestRaw(
+        { deviceId: DeviceId.make("device_123"), tokenId: TokenId.make("token_123"), user },
+        device,
+        rawReports,
+      ),
     );
 
     expect(result.received).toBe(2);
@@ -356,7 +368,7 @@ describe("UsageService.ingestRaw", () => {
 
     await Effect.runPromise(
       service.ingestRaw(
-        { deviceId: "device_123", tokenId: "token_123", user },
+        { deviceId: DeviceId.make("device_123"), tokenId: TokenId.make("token_123"), user },
         device,
         rawReports,
         [
@@ -393,7 +405,7 @@ describe("UsageService.ingestRaw", () => {
     await expect(
       Effect.runPromise(
         service.ingestRaw(
-          { deviceId: "device_123", tokenId: "token_123", user },
+          { deviceId: DeviceId.make("device_123"), tokenId: TokenId.make("token_123"), user },
           device,
           rawReports,
         ),
@@ -411,7 +423,11 @@ describe("UsageService.ingestRaw", () => {
 describe("UsageService future-dated usage", () => {
   // 23:30 UTC on 06-15: a UTC+14 device is already on 06-16, never 06-17.
   const now = () => new Date("2026-06-15T23:30:00.000Z");
-  const identity = { deviceId: "device_123", tokenId: "token_123", user };
+  const identity = {
+    deviceId: DeviceId.make("device_123"),
+    tokenId: TokenId.make("token_123"),
+    user,
+  };
 
   it("drops legacy structured rows dated after UTC today + 1", async () => {
     const { repository, upsertChunk } = makeRepository();

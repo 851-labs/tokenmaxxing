@@ -1,8 +1,9 @@
 import { Context, Effect } from "effect";
 
-import { DeviceMissing } from "@tokenmaxxing/api-contract";
+import { TokenDeviceUnbound } from "@tokenmaxxing/api-contract";
 import type {
   CliIdentity,
+  DeviceId,
   RawUsageReportInput,
   SourceUsageStatsInput,
   SyncUsageResponse,
@@ -53,22 +54,22 @@ interface StoredRawUsageReport {
 
 interface UsageServiceShape {
   checkIn(
-    identity: typeof CliIdentity.Type,
+    identity: CliIdentity,
     device: UsageDevice,
     service: UsageServiceCheckIn,
-  ): Effect.Effect<{ checkedInAt: string }, DeviceMissing>;
+  ): Effect.Effect<{ checkedInAt: string }, TokenDeviceUnbound>;
   ingestRaw(
-    identity: typeof CliIdentity.Type,
+    identity: CliIdentity,
     device: UsageDevice,
     reports: readonly RawUsageReportInput[],
     sourceStats?: readonly SourceUsageStatsInput[],
-  ): Effect.Effect<SyncResult, DeviceMissing>;
+  ): Effect.Effect<SyncResult, TokenDeviceUnbound>;
   syncBatch(
-    identity: typeof CliIdentity.Type,
+    identity: CliIdentity,
     device: UsageDevice,
     days: readonly UsageDayInput[],
     sourceStats?: readonly SourceUsageStatsInput[],
-  ): Effect.Effect<SyncResult, DeviceMissing>;
+  ): Effect.Effect<SyncResult, TokenDeviceUnbound>;
 }
 
 interface UsageReplacementScope {
@@ -210,17 +211,13 @@ const makeUsageService = Effect.fn("makeUsageService")(function* (
   });
 });
 
-function requireDeviceId(identity: typeof CliIdentity.Type): Effect.Effect<string, DeviceMissing> {
+function requireDeviceId(identity: CliIdentity): Effect.Effect<DeviceId, TokenDeviceUnbound> {
   const deviceId = identity.deviceId;
   if (deviceId !== null) {
     return Effect.succeed(deviceId);
   }
 
-  return Effect.fail(
-    new DeviceMissing({
-      message: "This token has no device; run `tokenmaxxing login` to mint a new one.",
-    }),
-  );
+  return Effect.fail(new TokenDeviceUnbound());
 }
 
 function prepareRawReports(

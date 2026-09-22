@@ -72,16 +72,20 @@ describe("public usage visibility", () => {
       profiles.leaderboardRank({ since: "2026-06-10", until, userId: "banned" }),
     );
     const hidden = await Effect.runPromise(
-      stats.snapshot({ last30dSince: "2026-06-10", limit: 10, until }),
+      stats.snapshot({
+        limit: 10,
+        until,
+        windows: { allTime: null, last30d: "2026-06-10", ytd: "2026-01-01" },
+      }),
     );
 
     expect(entries.map((entry) => [entry.rank, entry.user.login])).toEqual([[1, "visible"]]);
     expect(visibleRank).toBe(1);
     expect(bannedRank).toBeNull();
-    expect(hidden.allTime).toMatchObject({
+    expect(hidden.windows.allTime.totals).toMatchObject({
       deviceCount: 1,
       rowCount: 1,
-      totalSpendUsd: 1,
+      spendUsd: 1,
       totalTokens: 100,
       userCount: 1,
     });
@@ -89,8 +93,10 @@ describe("public usage visibility", () => {
       { date: "2026-07-09", spendUsd: 1, totalTokens: 100, userCount: 1 },
     ]);
     expect(hidden.dailyByModel.map((row) => row.key)).toEqual(["visible-model"]);
-    expect(hidden.sources.allTime.map((row) => row.key)).toEqual(["codex"]);
-    expect(hidden.topModels.allTimeByTokens.map((row) => row.key)).toEqual(["visible-model"]);
+    for (const window of Object.values(hidden.windows)) {
+      expect(window.sources.map((row) => row.key)).toEqual(["codex"]);
+      expect(window.modelsByTokens.map((row) => row.key)).toEqual(["visible-model"]);
+    }
     expect(hidden.topUsers.byTokens.map((row) => row.user.login)).toEqual(["visible"]);
     expect(hidden.peaks.tokens).toMatchObject({ totalTokens: 100, userCount: 1 });
 
@@ -103,14 +109,18 @@ describe("public usage visibility", () => {
       profiles.leaderboardRank({ since: "2026-06-10", until, userId: "visible" }),
     );
     const restored = await Effect.runPromise(
-      stats.snapshot({ last30dSince: "2026-06-10", limit: 10, until }),
+      stats.snapshot({
+        limit: 10,
+        until,
+        windows: { allTime: null, last30d: "2026-06-10", ytd: "2026-01-01" },
+      }),
     );
     expect(restoredBannedRank).toBe(1);
     expect(restoredVisibleRank).toBe(2);
-    expect(restored.allTime).toMatchObject({
+    expect(restored.windows.allTime.totals).toMatchObject({
       deviceCount: 2,
       rowCount: 2,
-      totalSpendUsd: 101,
+      spendUsd: 101,
       totalTokens: 10_100,
       userCount: 2,
     });
@@ -178,11 +188,15 @@ describe("public usage visibility", () => {
       leaderboard.list({ limit: 10, metric: "tokens", since: "2026-06-10", until }),
     );
     const snapshot = await Effect.runPromise(
-      stats.snapshot({ last30dSince: "2026-06-10", limit: 10, until }),
+      stats.snapshot({
+        limit: 10,
+        until,
+        windows: { allTime: null, last30d: "2026-06-10", ytd: "2026-01-01" },
+      }),
     );
+    // Public rows carry no internal user id.
     const user = {
       avatarUrl: "https://avatar.example/tied",
-      id: "tied",
       login: "tied",
       name: "Tied",
     };
@@ -257,10 +271,18 @@ describe("future-dated usage rows", () => {
     }
 
     const snapshot = await Effect.runPromise(
-      stats.snapshot({ last30dSince: "2026-08-25", limit: 10, until }),
+      stats.snapshot({
+        limit: 10,
+        until,
+        windows: { allTime: null, last30d: "2026-08-25", ytd: "2026-01-01" },
+      }),
     );
-    for (const totals of [snapshot.allTime, snapshot.last30d, snapshot.year2026]) {
-      expect(totals).toMatchObject({ lastDate: "2026-09-20", totalSpendUsd: 11, totalTokens: 101 });
+    for (const window of Object.values(snapshot.windows)) {
+      expect(window.totals).toMatchObject({
+        lastDate: "2026-09-20",
+        spendUsd: 11,
+        totalTokens: 101,
+      });
     }
     expect(snapshot.daily.map((row) => row.date)).toEqual(["2026-09-20"]);
     expect(snapshot.dailyByModel.map((row) => row.date)).toEqual(["2026-09-20"]);
@@ -279,7 +301,7 @@ describe("future-dated usage rows", () => {
       lastDate: "2026-09-20",
       longestStreakDays: 1,
       peakDay: { date: "2026-09-20", spendUsd: 1 },
-      totalSpendUsd: 1,
+      spendUsd: 1,
       totalTokens: 1,
     });
     const daily = await Effect.runPromise(

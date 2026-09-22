@@ -2,10 +2,11 @@ import type {
   AdminDeviceDebugRow,
   AdminDeviceStatus,
   AdminDeviceUpdateStatus,
+  AdminLatestDevice,
   AdminUserDebugRow,
   AdminUsersResponse,
   OAuthProviderId,
-  ServiceRepairReasonValue,
+  ServiceRepairReason,
   ShadowBan,
 } from "@tokenmaxxing/api-contract";
 
@@ -26,7 +27,7 @@ interface AdminAccountSnapshot {
   provider: OAuthProviderId;
 }
 
-type AdminDeviceSnapshot = (typeof AdminDeviceDebugRow.Type)["device"];
+type AdminDeviceSnapshot = AdminLatestDevice;
 
 interface AdminTokenSnapshot {
   deviceId: string | null;
@@ -79,7 +80,7 @@ function adminUsersReport(
   };
 }
 
-function adminUserDebugRow(snapshot: AdminUserSnapshot, now: Date): typeof AdminUserDebugRow.Type {
+function adminUserDebugRow(snapshot: AdminUserSnapshot, now: Date): AdminUserDebugRow {
   const latestDevice = latestDeviceFor(snapshot.devices);
   const activeTokenCount = snapshot.tokens.filter((token) => token.revokedAt === null).length;
   const verifiedEmails = [
@@ -107,7 +108,7 @@ function adminUserDebugRow(snapshot: AdminUserSnapshot, now: Date): typeof Admin
     sources: snapshot.sources,
     status: adminDeviceStatus(latestDevice, now),
     tokenCount: snapshot.tokens.length,
-    totalSpendUsd: snapshot.usage.totalSpendUsd,
+    spendUsd: snapshot.usage.totalSpendUsd,
     totalTokens: snapshot.usage.totalTokens,
     updatedAt: snapshot.user.updatedAt,
     user: toAuthUser(snapshot.user),
@@ -119,7 +120,7 @@ function adminDeviceDebugRows(
   snapshots: readonly AdminUserSnapshot[],
   latestCliRelease: LatestCliRelease,
   now: Date,
-): (typeof AdminDeviceDebugRow.Type)[] {
+): AdminDeviceDebugRow[] {
   return snapshots
     .flatMap((snapshot) => {
       // Index once per user instead of scanning tokens/usage per device.
@@ -160,7 +161,7 @@ function adminDeviceDebugRow(
   usage: AdminDeviceUsageSnapshot | undefined,
   latestCliRelease: LatestCliRelease,
   now: Date,
-): typeof AdminDeviceDebugRow.Type {
+): AdminDeviceDebugRow {
   const activeTokenCount = tokens.filter((token) => token.revokedAt === null).length;
   const updateStatus = adminDeviceUpdateStatus(device, latestCliRelease);
 
@@ -176,7 +177,7 @@ function adminDeviceDebugRow(
     sources: usage?.sources ?? [],
     status: adminDeviceStatus(device, now),
     tokenCount: tokens.length,
-    totalSpendUsd: usage?.totalSpendUsd ?? 0,
+    spendUsd: usage?.totalSpendUsd ?? 0,
     totalTokens: usage?.totalTokens ?? 0,
     updateBlockedReason:
       updateStatus === "update-blocked" ? adminDeviceUpdateBlockedReason(device) : null,
@@ -215,9 +216,7 @@ function adminDeviceStatus(device: AdminDeviceSnapshot | null, now: Date): Admin
   return "healthy";
 }
 
-function adminDeviceRepairReason(
-  device: AdminDeviceSnapshot | null,
-): ServiceRepairReasonValue | null {
+function adminDeviceRepairReason(device: AdminDeviceSnapshot | null): ServiceRepairReason | null {
   if (device === null) {
     return null;
   }
@@ -236,9 +235,9 @@ function adminDeviceRepairReason(
 }
 
 function adminSummary(
-  devices: readonly (typeof AdminDeviceDebugRow.Type)[],
+  devices: readonly AdminDeviceDebugRow[],
   totalUsers: number,
-): (typeof AdminUsersResponse.Type)["summary"] {
+): AdminUsersResponse["summary"] {
   const summary = {
     healthy: 0,
     outdated: 0,
@@ -277,10 +276,7 @@ function adminSummary(
   return summary;
 }
 
-function compareDeviceDebugRows(
-  left: typeof AdminDeviceDebugRow.Type,
-  right: typeof AdminDeviceDebugRow.Type,
-): number {
+function compareDeviceDebugRows(left: AdminDeviceDebugRow, right: AdminDeviceDebugRow): number {
   const leftSeen = isoTime(left.latestCheckInAt);
   const rightSeen = isoTime(right.latestCheckInAt);
   if (leftSeen !== rightSeen) {

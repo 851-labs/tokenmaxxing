@@ -71,7 +71,7 @@ function ShadowBanPanel({ users }: { users: AdminUsersData["users"] }) {
                 <td className="p-3 align-top">
                   <div>{formatInteger(row.totalTokens)} tokens</div>
                   <div className="mt-1 font-mono text-xs text-muted-foreground">
-                    {formatUsd(row.totalSpendUsd)} · {formatInteger(row.activeDays)} days
+                    {formatUsd(row.spendUsd)} · {formatInteger(row.activeDays)} days
                   </div>
                 </td>
                 <td className="p-3 align-top font-mono text-xs text-muted-foreground">

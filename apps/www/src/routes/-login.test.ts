@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { loginErrorMessage, loginSearchSchema, sanitizeLoginRedirectPath } from "./login";
@@ -30,14 +31,16 @@ describe("sanitizeLoginRedirectPath", () => {
 
 describe("login search", () => {
   it("parses the OAuth callback error and drops unknown values", () => {
+    const parse = Schema.decodeUnknownSync(loginSearchSchema);
+
     expect(
-      loginSearchSchema.parse({
+      parse({
         error: "oauth_account_conflict",
         provider: "google",
         redirect: "/.//evil.com",
       }),
     ).toEqual({ error: "oauth_account_conflict", provider: "google", redirect: undefined });
-    expect(loginSearchSchema.parse({ error: "<script>", provider: "evil" })).toEqual({
+    expect(parse({ error: "<script>", provider: "evil" })).toEqual({
       error: undefined,
       provider: undefined,
       redirect: undefined,

@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import { AdminUserNotFound, Forbidden } from "@tokenmaxxing/api-contract";
+import { AdminUserNotFound, Forbidden, UserId } from "@tokenmaxxing/api-contract";
 
 import { AppConfig } from "../config";
 import { adminDeviceRepairReason, type AdminUserSnapshot } from "./fleet";
@@ -54,15 +54,15 @@ describe("AdminService.listUsers", () => {
   it("rejects signed-in users without the admin verified email", async () => {
     const service = await makeService(makeRepository({}));
 
-    await expect(Effect.runPromise(service.listUsers("user_123"))).rejects.toBeInstanceOf(
-      Forbidden,
-    );
+    await expect(
+      Effect.runPromise(service.listUsers(UserId.make("user_123"))),
+    ).rejects.toBeInstanceOf(Forbidden);
   });
 
   it("returns debug rows and summary counts for the admin user", async () => {
     const service = await makeService(makeRepository({ allowedEmails: ["alexandru@851.sh"] }));
 
-    const response = await Effect.runPromise(service.listUsers("user_123"));
+    const response = await Effect.runPromise(service.listUsers(UserId.make("user_123")));
 
     expect(response.summary).toEqual({
       healthy: 1,
@@ -95,9 +95,9 @@ describe("AdminService.listUsers", () => {
       latestCheckInAt: "2026-06-19T19:30:00.000Z",
       revokedTokenCount: 1,
       sources: ["codex"],
+      spendUsd: 34.56,
       status: "healthy",
       tokenCount: 2,
-      totalSpendUsd: 34.56,
       totalTokens: 123_456,
       updateBlockedReason: null,
       updateStatus: "current",
@@ -125,7 +125,7 @@ describe("AdminService.listUsers", () => {
             user: {
               avatarUrl: null,
               createdAt: "2026-06-18T00:00:00.000Z",
-              id: "user_1",
+              id: UserId.make("user_1"),
               login: "active-old",
               name: null,
               updatedAt: "2026-06-19T00:00:00.000Z",
@@ -136,7 +136,7 @@ describe("AdminService.listUsers", () => {
             user: {
               avatarUrl: null,
               createdAt: "2026-06-18T00:00:00.000Z",
-              id: "user_2",
+              id: UserId.make("user_2"),
               login: "stale-old",
               name: null,
               updatedAt: "2026-06-19T00:00:00.000Z",
@@ -146,7 +146,7 @@ describe("AdminService.listUsers", () => {
       }),
     );
 
-    const response = await Effect.runPromise(service.listUsers("user_123"));
+    const response = await Effect.runPromise(service.listUsers(UserId.make("user_123")));
 
     expect(response.summary).toMatchObject({
       healthy: 1,
@@ -171,7 +171,7 @@ describe("AdminService.listUsers", () => {
       }),
     );
 
-    const response = await Effect.runPromise(service.listUsers("user_123"));
+    const response = await Effect.runPromise(service.listUsers(UserId.make("user_123")));
 
     expect(response.summary).toMatchObject({
       outdated: 0,
@@ -192,7 +192,7 @@ describe("AdminService.listUsers", () => {
       }),
     );
 
-    const response = await Effect.runPromise(service.listUsers("user_123"));
+    const response = await Effect.runPromise(service.listUsers(UserId.make("user_123")));
 
     expect(response.summary).toMatchObject({
       outdated: 1,
@@ -218,7 +218,7 @@ describe("AdminService.listUsers", () => {
       },
     );
 
-    const response = await Effect.runPromise(service.listUsers("user_123"));
+    const response = await Effect.runPromise(service.listUsers(UserId.make("user_123")));
 
     expect(response.summary).toMatchObject({
       outdated: 0,
@@ -256,7 +256,7 @@ describe("AdminService.listUsers", () => {
       }),
     );
 
-    const response = await Effect.runPromise(service.listUsers("user_123"));
+    const response = await Effect.runPromise(service.listUsers(UserId.make("user_123")));
     const currentAlpha = response.devices.find((row) => row.device.id === "current-alpha");
     const oldAlpha = response.devices.find((row) => row.device.id === "old-alpha");
 
@@ -343,7 +343,7 @@ describe("AdminService.listUsers", () => {
             user: {
               avatarUrl: null,
               createdAt: "2026-06-18T00:00:00.000Z",
-              id: "user_joel",
+              id: UserId.make("user_joel"),
               login: "joelbqz",
               name: null,
               updatedAt: "2026-06-19T00:00:00.000Z",
@@ -353,7 +353,7 @@ describe("AdminService.listUsers", () => {
       }),
     );
 
-    const response = await Effect.runPromise(service.listUsers("user_123"));
+    const response = await Effect.runPromise(service.listUsers(UserId.make("user_123")));
     const vps = response.devices.find((row) => row.device.id === "vps-6b1bc496");
     const mac = response.devices.find((row) => row.device.id === "mac-joel");
 
@@ -405,7 +405,7 @@ describe("AdminService.listUsers", () => {
       }),
     );
 
-    const response = await Effect.runPromise(service.listUsers("user_123"));
+    const response = await Effect.runPromise(service.listUsers(UserId.make("user_123")));
 
     expect(response.summary).toMatchObject({
       healthy: 1,
@@ -427,7 +427,7 @@ describe("AdminService.listUsers", () => {
       }),
     );
 
-    const response = await Effect.runPromise(service.listUsers("user_123"));
+    const response = await Effect.runPromise(service.listUsers(UserId.make("user_123")));
 
     expect(response.summary).toMatchObject({
       outdated: 1,
@@ -443,7 +443,9 @@ describe("AdminService.listUsers", () => {
   it("allows the pondorasti Gmail address as an internal admin email", async () => {
     const service = await makeService(makeRepository({ allowedEmails: ["pondorasti@gmail.com"] }));
 
-    await expect(Effect.runPromise(service.listUsers("user_123"))).resolves.toMatchObject({
+    await expect(
+      Effect.runPromise(service.listUsers(UserId.make("user_123"))),
+    ).resolves.toMatchObject({
       summary: { totalUsers: 1 },
     });
   });
@@ -466,7 +468,9 @@ describe("AdminService shadow bans", () => {
       }),
     );
 
-    const response = await Effect.runPromise(service.shadowBanUser("admin_123", "user_456"));
+    const response = await Effect.runPromise(
+      service.shadowBanUser(UserId.make("admin_123"), UserId.make("user_456")),
+    );
 
     expect(response).toEqual({
       shadowBan: {
@@ -497,7 +501,7 @@ describe("AdminService shadow bans", () => {
     );
 
     await expect(
-      Effect.runPromise(service.shadowUnbanUser("admin_123", "user_456")),
+      Effect.runPromise(service.shadowUnbanUser(UserId.make("admin_123"), UserId.make("user_456"))),
     ).resolves.toEqual({ shadowBan: null, userId: "user_456" });
     expect(updates).toEqual([{ at: null, byUserId: null, userId: "user_456" }]);
   });
@@ -505,7 +509,7 @@ describe("AdminService shadow bans", () => {
   it("rejects non-admins and reports missing target users", async () => {
     const nonAdmin = await makeService(makeRepository({}));
     await expect(
-      Effect.runPromise(nonAdmin.shadowBanUser("user_123", "user_456")),
+      Effect.runPromise(nonAdmin.shadowBanUser(UserId.make("user_123"), UserId.make("user_456"))),
     ).rejects.toBeInstanceOf(Forbidden);
 
     const admin = await makeService(
@@ -515,7 +519,7 @@ describe("AdminService shadow bans", () => {
       }),
     );
     await expect(
-      Effect.runPromise(admin.shadowUnbanUser("admin_123", "missing")),
+      Effect.runPromise(admin.shadowUnbanUser(UserId.make("admin_123"), UserId.make("missing"))),
     ).rejects.toBeInstanceOf(AdminUserNotFound);
   });
 });

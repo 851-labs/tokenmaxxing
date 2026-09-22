@@ -2,6 +2,8 @@ import { cliTokens, devices, usageDays, userAccounts, users, type Device } from 
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { Effect, Layer } from "effect";
 
+import { DeviceId, UserId } from "@tokenmaxxing/api-contract";
+
 import { Drizzle } from "../database";
 import { usageAggregates } from "../usage/aggregates";
 import type { AdminDeviceSnapshot, AdminUserSnapshot } from "./fleet";
@@ -135,7 +137,7 @@ const makeD1AdminRepository = Effect.fn("makeD1AdminRepository")(function* () {
                 ? null
                 : {
                     at: user.shadowBannedAt.toISOString(),
-                    byUserId: user.shadowBannedByUserId,
+                    byUserId: UserId.make(user.shadowBannedByUserId),
                   },
             tokens: (tokensByUser.get(user.id) ?? []).map((token) => ({
               deviceId: token.deviceId,
@@ -197,6 +199,7 @@ function usageSummaryColumns() {
 /** Every device column except the owner, with timestamps as ISO strings. */
 function toAdminDeviceSnapshot({
   createdAt,
+  id,
   lastCheckInAt,
   lastSyncAt,
   serviceAutoUpdateAttemptedAt,
@@ -209,6 +212,7 @@ function toAdminDeviceSnapshot({
   return {
     ...device,
     createdAt: createdAt.toISOString(),
+    id: DeviceId.make(id),
     lastCheckInAt: isoOrNull(lastCheckInAt),
     lastSyncAt: isoOrNull(lastSyncAt),
     serviceAutoUpdateAttemptedAt: isoOrNull(serviceAutoUpdateAttemptedAt),
