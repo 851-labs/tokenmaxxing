@@ -45,6 +45,9 @@ const LEGACY_MIGRATION_NAMES: ReadonlyArray<readonly [legacy: string, current: s
   ["0013_eager_whirlwind.sql", "20260922185239_eager_whirlwind"],
 ];
 
+/** Merged after prod's last recorded migration, so the conversion deploy applies it. */
+const FIRST_PENDING_IN_PROD = "20260922190224_rehome_usage_raw_batches";
+
 const PROBE_MIGRATION = "29991231235959_probe";
 
 interface ExecutedSql {
@@ -94,11 +97,32 @@ describe("D1 migrations config", () => {
 
   it("adopts prod's renamed history without re-running any migration", async () => {
     seedProdDatabase(LEGACY_MIGRATION_NAMES.map(([, current]) => current));
+    // A raw batch whose device moved owners, so the pending re-home
+    // migration has observable work to do.
+    database.exec(`
+      insert into users (id, login, created_at, updated_at) values
+        ('old-owner', 'old-owner', 0, 0),
+        ('new-owner', 'new-owner', 0, 0);
+      insert into devices (id, user_id, name, platform, created_at) values
+        ('moved-device', 'new-owner', 'laptop', 'darwin', 0);
+      insert into usage_raw_batches (
+        id, user_id, device_id, source, report_kind, ccusage_command, payload_hash,
+        object_key, payload_bytes, captured_at, processed_at, parser_version
+      ) values (
+        'moved', 'old-owner', 'moved-device', 'codex', 'daily', 'ccusage codex daily',
+        'hash-moved', 'objects/moved', 2, 0, 0, 'v1'
+      );
+    `);
 
     await expect(runMigrations(migrationsDir)).resolves.toBeUndefined();
 
     const recorded = new Set(LEGACY_MIGRATION_NAMES.map(([, current]) => current));
     const pending = readMigrations().filter((migration) => !recorded.has(migration.tag));
+    // Prod's first deploy of the v1 layout applies #78's re-home first.
+    expect(pending[0]?.tag).toBe(FIRST_PENDING_IN_PROD);
+    expect(
+      database.prepare("select user_id as userId from usage_raw_batches where id = 'moved'").get(),
+    ).toEqual({ userId: "new-owner" });
     for (const migration of readMigrations()) {
       expect(executedStatementsOf(migration), migration.tag).toBe(
         recorded.has(migration.tag) ? 0 : 1,
