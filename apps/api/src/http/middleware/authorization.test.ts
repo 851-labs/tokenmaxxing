@@ -26,6 +26,7 @@ const USER: AuthUser = { avatarUrl: null, id: "user_1", login: "alex", name: nul
 describe("Authorization middleware", () => {
   it("accepts a session token on every session-guarded endpoint", async () => {
     await expect(authorize("me", "approveCliLogin", SESSION_TOKEN)).resolves.toBe("alex");
+    await expect(authorize("me", "describeCliLogin", SESSION_TOKEN)).resolves.toBe("alex");
     await expect(authorize("me", "deleteDevice", SESSION_TOKEN)).resolves.toBe("alex");
     await expect(authorize("admin", "listUsers", SESSION_TOKEN)).resolves.toBe("alex");
   });
@@ -37,6 +38,7 @@ describe("Authorization middleware", () => {
   it("rejects CLI tokens on endpoints that did not opt in", async () => {
     for (const [group, endpoint] of [
       ["me", "approveCliLogin"],
+      ["me", "describeCliLogin"],
       ["me", "deleteDevice"],
       ["me", "listTokens"],
       ["me", "revokeToken"],
