@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
-import { TokenmaxxingApi } from "@tokenmaxxing/api-contract";
+import { CliUpgradeRequired, LoginCodeNotFound, TokenmaxxingApi } from "@tokenmaxxing/api-contract";
 
 import { AdminService } from "../admin/service";
 import { AuthService } from "../auth/service";
@@ -91,18 +91,23 @@ beforeAll(async () => {
   const cliLogin = CliLoginService.of({
     approve: () => Effect.succeed({ deviceName: "fixture-host" }),
     describe: () => Effect.die("not called by the CLI"),
-    poll: () => Effect.succeed({ status: "complete", token: "tmx_fixture", user }),
+    poll: (input) =>
+      "deviceCode" in input && input.deviceCode === "unknown-device-code"
+        ? Effect.fail(new LoginCodeNotFound({ code: "" }))
+        : Effect.succeed({ status: "complete", token: "tmx_fixture", user }),
     // Stubbed, so the legacy-login sunset is not exercised here: these tests
     // pin routing and payload decoding for every recorded request shape.
     start: (input) =>
-      Effect.succeed({
-        code: "ABCD-1234",
-        ...(input.flow === "device_code" ? { deviceCode: "device-code-secret" } : {}),
-        expiresAt: "2026-06-21T18:10:00.000Z",
-        intervalSeconds: 2,
-        userCode: "ABCD-1234",
-        verificationUri: "https://tokenmaxxing.sh/login/cli?code=ABCD-1234",
-      }),
+      input.deviceName === "upgrade-required-host"
+        ? Effect.fail(new CliUpgradeRequired({ message: "Upgrade the CLI." }))
+        : Effect.succeed({
+            code: "ABCD-1234",
+            ...(input.flow === "device_code" ? { deviceCode: "device-code-secret" } : {}),
+            expiresAt: "2026-06-21T18:10:00.000Z",
+            intervalSeconds: 2,
+            userCode: "ABCD-1234",
+            verificationUri: "https://tokenmaxxing.sh/login/cli?code=ABCD-1234",
+          }),
   });
   const usage = await Effect.runPromise(
     makeUsageService({ now: () => new Date("2026-06-21T18:00:00.000Z") }).pipe(
@@ -245,6 +250,59 @@ describe("recorded CLI requests", () => {
       expect(response.status).toBe(400);
     },
   );
+});
+
+// Regression: strict payload options once leaked into error *encoding*, and
+// every typed CLI error (401 re-login prompt, expired code, upgrade) became
+// an opaque 500. The CLI branches on these statuses and tags.
+describe("CLI error responses", () => {
+  const byFile = (file: string) => fixtures.find((entry) => entry.file === file)!.fixture;
+
+  it.each([
+    ["/cli/logout", undefined],
+    ["/usage/check-in", byFile("current/usage.checkIn.json").body],
+  ] as const)("POST %s without a token is 401 Unauthorized", async (path, body) => {
+    const response = await handle(
+      new Request(`https://api.tokenmaxxing.sh${path}`, {
+        body: body === undefined ? null : JSON.stringify(body),
+        headers: body === undefined ? {} : { "content-type": "application/json" },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ _tag: "Unauthorized" });
+  });
+
+  it("a revoked or unknown CLI token is 401 Unauthorized", async () => {
+    const response = await handle(
+      new Request("https://api.tokenmaxxing.sh/cli/logout", {
+        headers: { authorization: "Bearer tmx_revoked" },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it("an unknown device code is 404 LoginCodeNotFound", async () => {
+    const poll = byFile("current/cliLogin.poll.json");
+    const response = await send(poll, { deviceCode: "unknown-device-code" });
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ _tag: "LoginCodeNotFound" });
+  });
+
+  it("an upgrade-required start is 426 CliUpgradeRequired", async () => {
+    const start = byFile("current/cliLogin.start.json");
+    const response = await send(start, {
+      ...(start.body as Record<string, unknown>),
+      deviceName: "upgrade-required-host",
+    });
+
+    expect(response.status).toBe(426);
+    expect(await response.json()).toMatchObject({ _tag: "CliUpgradeRequired" });
+  });
 });
 
 describe("ingest boundary", () => {

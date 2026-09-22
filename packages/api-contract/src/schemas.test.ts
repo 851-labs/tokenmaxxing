@@ -406,7 +406,7 @@ const device = { name: "Mac.localdomain", platform: "darwin" };
 
 // The struct-level `parseOptions` annotations are not enforced by Effect v4 on
 // their own; the API applies these options to CLI payloads explicitly (see
-// StrictCliApi in apps/api/src/http/layer.ts), so decode the same way here.
+// rejectUndeclaredProperties in apps/api/src/http/layer.ts), so decode the same way here.
 const serverParseOptions = { onExcessProperty: "error" } as const;
 
 const decodes = (schema: Schema.Top, input: unknown) =>
