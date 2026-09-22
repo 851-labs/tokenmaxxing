@@ -4,7 +4,6 @@ import { Context } from "effect";
 import { Effect } from "effect";
 import { Layer } from "effect";
 import { Schema } from "effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 
 import { StatsResponse } from "@tokenmaxxing/api-contract";
 
@@ -21,8 +20,6 @@ import { CliLoginRepositoryLive } from "./clilogin/d1";
 import { CliLoginService, makeCliLoginService } from "./clilogin/service";
 import { AppConfig } from "./config";
 import { Drizzle } from "./database";
-import { GitHubClient, makeGitHubClient } from "./github/client";
-import { GoogleClient, makeGoogleClient } from "./google/client";
 import { LeaderboardRepositoryLive } from "./leaderboard/d1";
 import { LeaderboardService, makeLeaderboardService } from "./leaderboard/service";
 import { makeProfilesService, ProfilesService } from "./profiles/service";
@@ -32,6 +29,7 @@ import { makeStatsService, STATS_CACHE_TTL_SECONDS, StatsService } from "./stats
 import { AuthorizationLive } from "./http/middleware/authorization";
 import { CliAuthLive } from "./http/middleware/cli-auth";
 import { makeApiFetch } from "./http/layer";
+import { OAuthProviders, OAuthProvidersLive } from "./oauth/registry";
 import { makeTokensService, TokensService } from "./tokens/service";
 import { TokensRepositoryLive } from "./tokens/d1";
 import { RawUsageObjectStore } from "./usage/raw-store";
@@ -95,14 +93,9 @@ const ApiWorker = Cloudflare.Worker(
         ),
       ),
     );
-    const github = yield* makeGitHubClient().pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(AppConfig, config),
-    );
-    const google = yield* makeGoogleClient().pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(AppConfig, config),
-    );
+    const oauthProviders = yield* Effect.gen(function* () {
+      return yield* OAuthProviders;
+    }).pipe(Effect.provide(OAuthProvidersLive.pipe(Layer.provide(appConfigLayer))));
     const usage = yield* makeUsageService().pipe(Effect.provide(usageRepositoryLayer));
     const admin = yield* makeAdminService().pipe(
       Effect.provide(AdminRepositoryLive.pipe(Layer.provide(drizzleLayer))),
@@ -139,9 +132,8 @@ const ApiWorker = Cloudflare.Worker(
       Context.add(AppConfig, config),
       Context.add(AuthService, auth),
       Context.add(CliLoginService, cliLogin),
-      Context.add(GitHubClient, github),
-      Context.add(GoogleClient, google),
       Context.add(LeaderboardService, leaderboard),
+      Context.add(OAuthProviders, oauthProviders),
       Context.add(ProfilesService, profiles),
       Context.add(StatsService, stats),
       Context.add(TokensService, tokens),

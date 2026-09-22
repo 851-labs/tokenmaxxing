@@ -1,18 +1,19 @@
-import { Context } from "effect";
-import { Effect } from "effect";
-import { Option } from "effect";
+import { Context, Effect, Option } from "effect";
 import { HttpRouter } from "effect/unstable/http";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import { describe, expect, it } from "vite-plus/test";
 
 import { AccountLinkConflict, AuthService, type OAuthProfile } from "../../auth/service";
 import { AppConfig } from "../../config";
-import { GitHubApiError, GitHubClient } from "../../github/client";
-import { GoogleClient } from "../../google/client";
+import { makeGitHubProvider } from "../../oauth/github";
+import { OAuthStatusError } from "../../oauth/provider";
+import { OAuthProviders } from "../../oauth/registry";
+import { TokensService, type TokensServiceShape } from "../../tokens/service";
 import {
   defaultOAuthRedirectPath,
   encodeOAuthState,
   oauthErrorLocation,
-  oauthRoutesLayer,
+  OAuthRoutesLive,
   redirectPathFromOAuthState,
   sanitizeOAuthRedirectPath,
 } from "./oauth";
@@ -208,14 +209,21 @@ function oauthHandler(options: { exchange?: "fail"; signIn?: "conflict" } = {}) 
     provider: "github",
     providerAccountId: "1",
   };
+  // The real GitHub provider builds the authorize URL; only the network
+  // half (code exchange, profile read) is faked.
+  const github = Effect.runSync(
+    makeGitHubProvider().pipe(
+      Effect.provideService(AppConfig, {
+        apiWorkerName: "tokenmaxxing-api",
+        corsOrigins: [],
+        github: { clientId: "github-client", clientSecret: "github-secret" },
+        google: { clientId: "google-client", clientSecret: "google-secret" },
+        productName: "Tokenmaxxing",
+      }),
+      Effect.provide(FetchHttpClient.layer),
+    ),
+  );
   const services = Context.empty().pipe(
-    Context.add(AppConfig, {
-      apiWorkerName: "tokenmaxxing-api",
-      corsOrigins: [],
-      github: { clientId: "github-client", clientSecret: "github-secret" },
-      google: { clientId: "google-client", clientSecret: "google-secret" },
-      productName: "Tokenmaxxing",
-    }),
     Context.add(
       AuthService,
       AuthService.of({
@@ -229,28 +237,35 @@ function oauthHandler(options: { exchange?: "fail"; signIn?: "conflict" } = {}) 
         signOut: (token) => Effect.sync(() => void calls.signOuts.push(token)),
       }),
     ),
-    Context.add(
-      GitHubClient,
-      GitHubClient.of({
+    Context.add(OAuthProviders, {
+      github: {
+        ...github,
         exchangeCode: (code, _redirectUri, codeVerifier) =>
           options.exchange === "fail"
-            ? Effect.fail(new GitHubApiError({ cause: "boom" }))
+            ? Effect.fail(
+                new OAuthStatusError({
+                  provider: "github",
+                  status: 500,
+                  url: "https://github.com/login/oauth/access_token",
+                }),
+              )
             : Effect.sync(() => {
                 calls.exchanges.push({ code, codeVerifier });
                 return "access-token";
               }),
-        fetchUser: () => Effect.succeed(profile),
-      }),
-    ),
-    Context.add(
-      GoogleClient,
-      GoogleClient.of({
+        fetchProfile: () => Effect.succeed(profile),
+      },
+      google: {
+        id: "google",
+        authorizeUrl: () => "https://accounts.google.com/o/oauth2/v2/auth",
         exchangeCode: () => Effect.die("unused"),
-        fetchUser: () => Effect.die("unused"),
-      }),
-    ),
+        fetchProfile: () => Effect.die("unused"),
+      },
+    }),
+    // The callback resolves the prior viewer from the session cookie only.
+    Context.add(TokensService, {} as TokensServiceShape),
   );
-  const { handler } = HttpRouter.toWebHandler(oauthRoutesLayer, { disableLogger: true });
+  const { handler } = HttpRouter.toWebHandler(OAuthRoutesLive, { disableLogger: true });
 
   return { calls, handler: (request: Request) => handler(request, services) };
 }

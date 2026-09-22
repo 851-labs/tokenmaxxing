@@ -1,9 +1,7 @@
-import { Effect } from "effect";
-import { Layer } from "effect";
-import { Option } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import type { AuthUser, OAuthProviderId } from "@tokenmaxxing/api-contract";
+import { OAuthProviderId } from "@tokenmaxxing/api-contract";
 
 import {
   cookieOptions,
@@ -14,15 +12,10 @@ import {
   STATE_COOKIE,
 } from "../../auth/cookies";
 import { generateToken, pkceChallenge, toBase64Url } from "../../auth/crypto";
-import {
-  AuthService,
-  type AuthServiceShape,
-  type OAuthProfile,
-  SESSION_TTL_MS,
-} from "../../auth/service";
-import { AppConfig, type AppConfigShape, type Deployment, deploymentForHost } from "../../config";
-import { buildAuthorizeUrl, GitHubClient } from "../../github/client";
-import { buildGoogleAuthorizeUrl, GoogleClient } from "../../google/client";
+import { AuthService, SESSION_TTL_MS } from "../../auth/service";
+import { type Deployment, deploymentForHost } from "../../config";
+import { OAuthProviders } from "../../oauth/registry";
+import { resolveViewer } from "../viewer";
 
 /**
  * Routes that cannot live in the HttpApi contract: the OAuth browser flow
@@ -40,18 +33,13 @@ type OAuthCallbackError = "oauth_account_conflict" | "oauth_failed" | "oauth_sta
 
 const OAUTH_ROUNDTRIP_MAX_AGE_SECONDS = 600;
 
-const githubOAuthStartRoute = oauthStartRoute("github");
-const googleOAuthStartRoute = oauthStartRoute("google");
-const githubOAuthCallbackRoute = oauthCallbackRoute("github");
-const googleOAuthCallbackRoute = oauthCallbackRoute("google");
-
-function oauthStartRoute(provider: OAuthProviderId) {
+function oauthStartRoute(providerId: OAuthProviderId) {
   return HttpRouter.add(
     "GET",
-    `/auth/${provider}/start`,
+    `/auth/${providerId}/start`,
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const config = yield* AppConfig;
+      const provider = (yield* OAuthProviders)[providerId];
       const deployment = deploymentForHost(request.headers["host"] ?? "");
       const url = new URL(request.url, "http://localhost");
       const redirectPath = sanitizeOAuthRedirectPath(url.searchParams.get("redirect"));
@@ -63,13 +51,7 @@ function oauthStartRoute(provider: OAuthProviderId) {
       return HttpServerResponse.empty({ status: 302 }).pipe(
         HttpServerResponse.setHeader(
           "location",
-          buildProviderAuthorizeUrl(
-            provider,
-            config,
-            `${deployment.apiOrigin}/auth/${provider}/callback`,
-            state,
-            codeChallenge,
-          ),
+          provider.authorizeUrl(callbackUrl(deployment, providerId), state, codeChallenge),
         ),
         HttpServerResponse.setCookiesUnsafe([
           [STATE_COOKIE, state, roundtrip],
@@ -80,12 +62,13 @@ function oauthStartRoute(provider: OAuthProviderId) {
   );
 }
 
-function oauthCallbackRoute(provider: OAuthProviderId) {
+function oauthCallbackRoute(providerId: OAuthProviderId) {
   return HttpRouter.add(
     "GET",
-    `/auth/${provider}/callback`,
+    `/auth/${providerId}/callback`,
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
+      const provider = (yield* OAuthProviders)[providerId];
       const deployment = deploymentForHost(request.headers["host"] ?? "");
       const url = new URL(request.url, "http://localhost");
       const code = url.searchParams.get("code");
@@ -102,31 +85,30 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
         codeVerifier === null ||
         state !== expectedState
       ) {
-        return oauthErrorRedirect(deployment, "oauth_state_mismatch", provider, redirectPath);
+        return oauthErrorRedirect(deployment, "oauth_state_mismatch", providerId, redirectPath);
       }
 
       const auth = yield* AuthService;
       // Browser round trip: only the cookie session counts (never a bearer).
       const priorSessionToken = readCookie(request, SESSION_COOKIE);
       const result = yield* Effect.gen(function* () {
-        const currentUser = yield* currentUserFromSessionToken(priorSessionToken, auth);
-        const profile = yield* fetchProviderProfile(
-          provider,
+        const currentUser = Option.getOrUndefined(
+          yield* resolveViewer(priorSessionToken, { allowCliToken: false }),
+        );
+        const accessToken = yield* provider.exchangeCode(
           code,
-          `${deployment.apiOrigin}/auth/${provider}/callback`,
+          callbackUrl(deployment, providerId),
           codeVerifier,
-        ).pipe(Effect.orDie);
-        // Provider access tokens are dropped here on purpose — identity is all
-        // this product needs after sign-in/linking.
-        const options = currentUser === null ? undefined : { currentUser };
-        const signedIn = yield* auth.signInWithProvider(profile, options);
+        );
+        // The provider access token is dropped after this read on purpose —
+        // identity is all this product needs after sign-in/linking.
+        const profile = yield* provider.fetchProfile(accessToken);
+        const signedIn = yield* auth.signInWithProvider(profile, { currentUser });
         return { _tag: "success" as const, ...signedIn };
       }).pipe(
-        Effect.catchTag("AccountLinkConflict", () =>
-          Effect.succeed({ _tag: "conflict" as const, provider }),
-        ),
+        Effect.catchTag("AccountLinkConflict", () => Effect.succeed({ _tag: "conflict" as const })),
         Effect.catchCause((cause) =>
-          Effect.logError(`${provider} oauth callback failed`, cause).pipe(
+          Effect.logError(`${providerId} oauth callback failed`, cause).pipe(
             Effect.as({ _tag: "failed" as const }),
           ),
         ),
@@ -134,9 +116,9 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
 
       switch (result._tag) {
         case "conflict":
-          return oauthErrorRedirect(deployment, "oauth_account_conflict", provider, redirectPath);
+          return oauthErrorRedirect(deployment, "oauth_account_conflict", providerId, redirectPath);
         case "failed":
-          return oauthErrorRedirect(deployment, "oauth_failed", provider, redirectPath);
+          return oauthErrorRedirect(deployment, "oauth_failed", providerId, redirectPath);
         case "success": {
           // Signing in again replaces the browser's session: drop the old row
           // so it cannot outlive the cookie it was issued for.
@@ -221,63 +203,16 @@ const signoutRoute = HttpRouter.add(
   }),
 );
 
-const oauthRoutesLayer = Layer.mergeAll(
-  githubOAuthStartRoute,
-  githubOAuthCallbackRoute,
-  googleOAuthStartRoute,
-  googleOAuthCallbackRoute,
+const OAuthRoutesLive = Layer.mergeAll(
   signoutRoute,
+  ...OAuthProviderId.literals.flatMap((providerId) => [
+    oauthStartRoute(providerId),
+    oauthCallbackRoute(providerId),
+  ]),
 );
 
-function buildProviderAuthorizeUrl(
-  provider: OAuthProviderId,
-  config: AppConfigShape,
-  redirectUri: string,
-  state: string,
-  codeChallenge: string,
-): string {
-  switch (provider) {
-    case "github":
-      return buildAuthorizeUrl(config.github, redirectUri, state, codeChallenge);
-    case "google":
-      return buildGoogleAuthorizeUrl(config.google, redirectUri, state, codeChallenge);
-  }
-}
-
-function fetchProviderProfile(
-  provider: OAuthProviderId,
-  code: string,
-  redirectUri: string,
-  codeVerifier: string,
-): Effect.Effect<OAuthProfile, unknown, GitHubClient | GoogleClient> {
-  switch (provider) {
-    case "github":
-      return Effect.gen(function* () {
-        const github = yield* GitHubClient;
-        const accessToken = yield* github.exchangeCode(code, redirectUri, codeVerifier);
-        return yield* github.fetchUser(accessToken);
-      });
-    case "google":
-      return Effect.gen(function* () {
-        const google = yield* GoogleClient;
-        const accessToken = yield* google.exchangeCode(code, redirectUri, codeVerifier);
-        return yield* google.fetchUser(accessToken);
-      });
-  }
-}
-
-function currentUserFromSessionToken(
-  token: string | null,
-  auth: AuthServiceShape,
-): Effect.Effect<AuthUser | null> {
-  if (token === null) {
-    return Effect.succeed(null);
-  }
-
-  return auth.resolveSession(token).pipe(
-    Effect.map((user) => (Option.isSome(user) ? user.value : null)),
-    Effect.catchCause(() => Effect.succeed(null)),
-  );
+function callbackUrl(deployment: Deployment, providerId: OAuthProviderId): string {
+  return `${deployment.apiOrigin}/auth/${providerId}/callback`;
 }
 
 function sanitizeOAuthRedirectPath(value: string | null): string | null {
@@ -354,7 +289,7 @@ export {
   encodeOAuthState,
   defaultOAuthRedirectPath,
   oauthErrorLocation,
-  oauthRoutesLayer,
+  OAuthRoutesLive,
   redirectPathFromOAuthState,
   sanitizeOAuthRedirectPath,
 };

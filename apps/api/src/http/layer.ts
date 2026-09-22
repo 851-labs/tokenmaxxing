@@ -28,8 +28,8 @@ import {
 } from "@tokenmaxxing/api-contract";
 import type { Authorization, CliAuth } from "@tokenmaxxing/api-contract";
 
-import { AppConfig, deploymentForHost } from "../config";
 import { sessionTokenFrom } from "../auth/cookies";
+import { AppConfig, deploymentForHost } from "../config";
 import { AdminService } from "../admin/service";
 import { AuthService } from "../auth/service";
 import { CliLoginService } from "../clilogin/service";
@@ -39,7 +39,8 @@ import { ProfilesService } from "../profiles/service";
 import { STATS_CACHE_TTL_SECONDS, StatsService } from "../stats/service";
 import { TokensService } from "../tokens/service";
 import { UsageService } from "../usage/service";
-import { oauthRoutesLayer } from "./routes/oauth";
+import { OAuthRoutesLive } from "./routes/oauth";
+import { resolveViewer } from "./viewer";
 
 /**
  * Handler layers, one per contract group — pure pass-throughs over the
@@ -243,6 +244,14 @@ const leaderboardHandlers = HttpApiBuilder.group(TokenmaxxingApi, "leaderboard",
   ),
 );
 
+/** The signed-in viewer's id, if any — owners still see their own
+ * shadow-banned profile. */
+const viewerUserId = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const viewer = yield* resolveViewer(sessionTokenFrom(request), { allowCliToken: false });
+  return Option.getOrNull(Option.map(viewer, (user) => user.id));
+});
+
 const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (handlers) =>
   handlers
     .handle("identity", ({ params }) =>
@@ -256,7 +265,7 @@ const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (hand
     .handle("get", ({ params }) =>
       Effect.gen(function* () {
         const profiles = yield* ProfilesService;
-        const profile = yield* profiles.getProfile(params.login, yield* optionalCurrentUserId());
+        const profile = yield* profiles.getProfile(params.login, yield* viewerUserId);
         yield* cacheControl(yield* viewerCacheControl());
         return profile;
       }),
@@ -271,29 +280,13 @@ const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (hand
             since: query.since,
             until: query.until,
           },
-          yield* optionalCurrentUserId(),
+          yield* viewerUserId,
         );
         yield* cacheControl(yield* viewerCacheControl());
         return daily;
       }),
     ),
 );
-
-function optionalCurrentUserId() {
-  return Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const token = sessionTokenFrom(request);
-    if (token === null) {
-      return null;
-    }
-
-    const auth = yield* AuthService;
-    const user = yield* auth
-      .resolveSession(token)
-      .pipe(Effect.catchCause(() => Effect.succeedNone));
-    return Option.isSome(user) ? user.value.id : null;
-  });
-}
 
 /**
  * Cache policy for public reads. `s-maxage` only addresses shared caches
@@ -390,7 +383,7 @@ interface ApiLayerOptions {
 function makeApiLayer(options: ApiLayerOptions) {
   const apiLayer = Layer.mergeAll(
     HttpApiBuilder.layer(TokenmaxxingApi, { openapiPath: "/openapi.json" }),
-    oauthRoutesLayer,
+    OAuthRoutesLive,
   );
 
   return apiLayer.pipe(
