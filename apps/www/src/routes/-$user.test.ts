@@ -7,46 +7,6 @@ type DailyRange = (typeof ProfileDailyResponse.Type)["range"];
 type DailyRow = typeof ProfileDailyRow.Type;
 
 describe("deriveCharts", () => {
-  it("preserves every day's spend, tokens, and model totals at different bucket widths", () => {
-    const range = { first: "2026-01-01", last: "2026-03-02" };
-    const rows = [
-      { ...dailyRow({ costUsd: 10, totalTokens: 100, key: "model-a" }), date: "2026-01-01" },
-      { ...dailyRow({ costUsd: 20, totalTokens: 200, key: "model-a" }), date: "2026-01-04" },
-      { ...dailyRow({ costUsd: 30, totalTokens: 300, key: "model-b" }), date: "2026-01-05" },
-      { ...dailyRow({ costUsd: 40, totalTokens: 400, key: "model-b" }), date: "2026-03-02" },
-      { ...dailyRow({ costUsd: 999, totalTokens: 999, key: "outside" }), date: "2026-03-03" },
-      { ...dailyRow({ costUsd: 999, totalTokens: 999, key: "outside" }), date: "2025-12-31" },
-    ];
-    for (const size of [1, 2, 3, 5, 6]) {
-      const derived = deriveCharts(rows, range, size);
-      expect(derived.spendDays.reduce((sum, day) => sum + day.total, 0)).toBe(100);
-      expect(derived.tokenDays.reduce((sum, day) => sum + day.total, 0)).toBe(1000);
-      expect(derived.spendLegend).toEqual([
-        { color: expect.any(String), percent: 70, series: "model-b" },
-        { color: expect.any(String), percent: 30, series: "model-a" },
-      ]);
-      expect(derived.spendByWeekday.reduce((sum, value) => sum + value, 0)).toBe(100);
-      expect(derived.spendByDate.has("2026-03-03")).toBe(false);
-    }
-    const grouped = deriveCharts(rows, range, 3);
-    expect(grouped.spendDays[0]).toMatchObject({
-      date: "2026-01-01",
-      endDate: "2026-01-01",
-      total: 10,
-    });
-    expect(grouped.spendDays[1]).toMatchObject({
-      date: "2026-01-02",
-      endDate: "2026-01-04",
-      total: 20,
-    });
-    expect(grouped.spendDays.find((bucket) => bucket.date === "2026-02-01")?.total).toBe(0);
-    expect(grouped.spendDays.at(-1)).toMatchObject({
-      date: "2026-02-28",
-      endDate: "2026-03-02",
-      total: 40,
-    });
-  });
-
   it("fills sparse usage rows across the server-provided chart range", () => {
     const range: DailyRange = {
       first: "2026-06-19",

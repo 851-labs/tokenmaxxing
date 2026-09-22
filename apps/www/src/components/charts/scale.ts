@@ -1,5 +1,3 @@
-import { calendarDays } from "../../lib/chart-range";
-
 /**
  * Shared chart math, model-series selection, and number
  * formatting. Charts are pure SVG; everything here is deterministic and
@@ -28,14 +26,6 @@ function barLayout(count: number, fill: number, cap: number, floor = 0) {
   const barWidth = Math.max(Math.min(slot * fill, cap), floor);
 
   return { barWidth, slot };
-}
-
-/** Fill the available slot with a 2px gutter at the actual rendered size. */
-function stackedBarLayout(count: number, renderedWidth = CHART_WIDTH) {
-  const { slot } = barLayout(count, 1, Infinity);
-  const unitsPerPixel = CHART_WIDTH / Math.max(renderedWidth, 1);
-  const pixelWidth = Math.max(Math.floor(slot / unitsPerPixel - 2), 1);
-  return { slot, barWidth: Math.min(slot, pixelWidth * unitsPerPixel) };
 }
 
 /** "Nice" axis max so gridlines land on round numbers. */
@@ -189,7 +179,15 @@ function formatMonthLong(month: string): string {
 
 /** Every YYYY-MM-DD between two inclusive bounds (pure string walking). */
 function enumerateDays(first: string, last: string): string[] {
-  return calendarDays(first, last);
+  const out: string[] = [];
+  const cursor = new Date(`${first}T00:00:00Z`);
+  const end = new Date(`${last}T00:00:00Z`);
+  while (cursor.getTime() <= end.getTime()) {
+    out.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return out;
 }
 
 export {
@@ -207,5 +205,4 @@ export {
   niceMax,
   selectModelSeries,
   seriesColors,
-  stackedBarLayout,
 };
