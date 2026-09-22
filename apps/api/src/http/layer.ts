@@ -2,6 +2,7 @@ import { Context } from "effect";
 import { Effect } from "effect";
 import { Layer } from "effect";
 import { Option } from "effect";
+import { Schema } from "effect";
 import { Scope } from "effect";
 import * as Path from "effect/Path";
 import {
@@ -14,18 +15,16 @@ import {
 } from "effect/unstable/http";
 import * as Etag from "effect/unstable/http/Etag";
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import type * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
 
 import {
-  CliLoginGroup,
   CurrentCliIdentity,
   CurrentUser,
   DEFAULT_LEADERBOARD_METRIC,
   DEFAULT_LEADERBOARD_WINDOW,
   TokenmaxxingApi,
-  UsageGroup,
 } from "@tokenmaxxing/api-contract";
 import type { Authorization, CliAuth } from "@tokenmaxxing/api-contract";
 
@@ -49,18 +48,46 @@ import { oauthRoutesLayer } from "./routes/oauth";
  */
 
 /**
- * Server-only view of the CLI-facing groups whose payloads decode with
- * `onExcessProperty: "error"`. The contract's per-struct `parseOptions`
- * annotations are not enforced by Effect v4 on their own, and the option is
- * applied here rather than on the shared contract because HttpApiClient reads
- * the same annotation to decode responses: a strict CLI would reject every
- * response field the server adds later. Routes are still collected by group
- * key under TokenmaxxingApi, so only these handlers are built from it.
+ * CLI payloads reject undeclared properties (`onExcessProperty: "error"`).
+ * Effect v4 ignores the contract's per-struct `parseOptions`, and the
+ * `HttpApi.ParseOptions` annotation can't be used either: the builder applies
+ * it to response and error *encoding* too, and error instances carry runtime
+ * own keys (`stack`, `line`, …), so every CLI error became an opaque 500.
+ * Instead, the cliLogin and usage handlers re-decode the (cached) raw body
+ * strictly — decode-only, responses and errors encode normally. It also stays
+ * off the shared contract: HttpApiClient would apply it to responses, and a
+ * strict CLI would reject every response field the server adds later.
  */
-const StrictCliApi = HttpApi.make(TokenmaxxingApi.identifier)
-  .add(CliLoginGroup, UsageGroup)
-  .annotateMerge(TokenmaxxingApi.annotations)
-  .annotate(HttpApi.ParseOptions, { onExcessProperty: "error" });
+const STRICT_PAYLOAD_OPTIONS = { onExcessProperty: "error" } as const;
+
+const strictPayloadDecoders = new WeakMap<
+  HttpApiEndpoint.PayloadMap,
+  (input: unknown) => Effect.Effect<unknown, Schema.SchemaError>
+>();
+
+function rejectUndeclaredProperties(endpoint: { readonly payload: HttpApiEndpoint.PayloadMap }) {
+  return Effect.gen(function* () {
+    let decode = strictPayloadDecoders.get(endpoint.payload);
+    if (decode === undefined) {
+      const json = endpoint.payload.get("application/json");
+      if (json === undefined) {
+        return;
+      }
+      decode = Schema.decodeUnknownEffect(
+        Schema.Union(json.schemas) as unknown as Schema.Codec<unknown, unknown>,
+        STRICT_PAYLOAD_OPTIONS,
+      );
+      strictPayloadDecoders.set(endpoint.payload, decode);
+    }
+
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const body = yield* request.json.pipe(Effect.orDie);
+    yield* decode(body).pipe(
+      Effect.mapError((cause) => new HttpApiError.HttpApiSchemaError({ cause, kind: "Payload" })),
+      Effect.orDie,
+    );
+  });
+}
 
 const healthHandlers = HttpApiBuilder.group(TokenmaxxingApi, "health", (handlers) =>
   handlers.handle("status", () =>
@@ -136,35 +163,39 @@ const meHandlers = HttpApiBuilder.group(TokenmaxxingApi, "me", (handlers) =>
     ),
 );
 
-const cliLoginHandlers = HttpApiBuilder.group(StrictCliApi, "cliLogin", (handlers) =>
+const cliLoginHandlers = HttpApiBuilder.group(TokenmaxxingApi, "cliLogin", (handlers) =>
   handlers
-    .handle("start", ({ payload }) =>
+    .handle("start", ({ endpoint, payload }) =>
       Effect.gen(function* () {
+        yield* rejectUndeclaredProperties(endpoint);
         const request = yield* HttpServerRequest.HttpServerRequest;
         const scope = cookieScopeFor(request.headers["host"] ?? "");
         const cliLogin = yield* CliLoginService;
         return yield* cliLogin.start(payload, scope.wwwOrigin);
       }),
     )
-    .handle("poll", ({ payload }) =>
+    .handle("poll", ({ endpoint, payload }) =>
       Effect.gen(function* () {
+        yield* rejectUndeclaredProperties(endpoint);
         const cliLogin = yield* CliLoginService;
         return yield* cliLogin.poll(payload);
       }),
     ),
 );
 
-const usageHandlers = HttpApiBuilder.group(StrictCliApi, "usage", (handlers) =>
+const usageHandlers = HttpApiBuilder.group(TokenmaxxingApi, "usage", (handlers) =>
   handlers
-    .handle("checkIn", ({ payload }) =>
+    .handle("checkIn", ({ endpoint, payload }) =>
       Effect.gen(function* () {
+        yield* rejectUndeclaredProperties(endpoint);
         const identity = yield* CurrentCliIdentity;
         const usage = yield* UsageService;
         return yield* usage.checkIn(identity, payload.device, payload.service);
       }),
     )
-    .handle("ingest", ({ payload }) =>
+    .handle("ingest", ({ endpoint, payload }) =>
       Effect.gen(function* () {
+        yield* rejectUndeclaredProperties(endpoint);
         const identity = yield* CurrentCliIdentity;
         const usage = yield* UsageService;
         return yield* usage.ingestRaw(
@@ -175,8 +206,9 @@ const usageHandlers = HttpApiBuilder.group(StrictCliApi, "usage", (handlers) =>
         );
       }),
     )
-    .handle("sync", ({ payload }) =>
+    .handle("sync", ({ endpoint, payload }) =>
       Effect.gen(function* () {
+        yield* rejectUndeclaredProperties(endpoint);
         const identity = yield* CurrentCliIdentity;
         const usage = yield* UsageService;
         return yield* usage.syncBatch(identity, payload.device, payload.days, payload.sourceStats);
@@ -470,4 +502,4 @@ const HttpPlatformStub = Layer.succeed(HttpPlatform.HttpPlatform, {
   fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
 });
 
-export { makeApiFetch, makeApiHttpEffect, StrictCliApi };
+export { makeApiFetch, makeApiHttpEffect };
