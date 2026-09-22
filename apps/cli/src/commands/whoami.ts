@@ -1,6 +1,7 @@
 import { Data, Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 
+import { booleanFlag } from "../flags";
 import { ApiClientService, ConfigService } from "../services";
 import { humanFrame, humanSpinner, writeJson } from "../output";
 import { isUnauthorizedError } from "../auth-validation";
@@ -19,7 +20,7 @@ class WhoamiError extends Data.TaggedError("WhoamiError")<{
 const whoamiCommand = Command.make(
   "whoami",
   {
-    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: booleanFlag("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => whoamiEffect({ json }),
 ).pipe(Command.withDescription("Show the signed-in user"));

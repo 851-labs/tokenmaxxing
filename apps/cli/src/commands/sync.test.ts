@@ -1,5 +1,5 @@
 import { Cause, Effect, Layer, Option } from "effect";
-import { UserId, type AuthUser } from "@tokenmaxxing/api-contract";
+import { Unauthorized, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
 import { CcusageRunError } from "../ccusage/runner";
@@ -15,9 +15,11 @@ import {
   type TokenmaxxingApiClient,
 } from "../services";
 import { formatUrl } from "../output";
-import { browserLoginEffect } from "./login";
+import { makeStubApiClient, type StubResponse } from "../testing/stub-api-client";
+import { browserLoginEffect, NonInteractiveLoginError } from "./login";
 import {
   formatSyncUsd,
+  InvalidSinceError,
   openProfileIfAvailable,
   renderSyncSourceResult,
   renderSyncSuccess,
@@ -37,6 +39,8 @@ import {
 interface TestLayerOptions {
   browserOpenError?: BrowserOpenError;
   canOpenExternalBrowser?: boolean;
+  /** A real client (see makeStubApiClient) instead of the canned fake. */
+  client?: Effect.Effect<TokenmaxxingApiClient>;
   envTokenActive?: boolean;
   initialConfig: CliConfig;
   interactive?: boolean;
@@ -92,6 +96,9 @@ function makeTestLayer(options: TestLayerOptions) {
     Layer.succeed(ApiClientService)({
       make: (clientOptions) => {
         state.madeClients.push(clientOptions);
+        if (options.client !== undefined) {
+          return options.client;
+        }
 
         return Effect.succeed({
           cliLogin: {
@@ -185,7 +192,7 @@ function makeTestLayer(options: TestLayerOptions) {
 }
 
 function unauthorizedError() {
-  return Object.assign(new Error("unauthorized"), { _tag: "Unauthorized" as const });
+  return new Unauthorized({});
 }
 
 function makeConsoleLayer() {
@@ -605,6 +612,34 @@ describe("sync source outcomes", () => {
     expect(uploadPayload?.reports).toHaveLength(1);
     expect(uploadPayload).not.toHaveProperty("sourceStats");
   });
+
+  it.each(["2026-13-01", "2025-02-29", "yesterday", "2026-1-1", "20260101"])(
+    "rejects --since %s before running ccusage",
+    async (since) => {
+      const { layer } = makeTestLayer({
+        initialConfig: {
+          apiUrl: "https://api.tokenmaxxing.example",
+          wwwUrl: "https://tokenmaxxing.example",
+        },
+        interactive: false,
+      });
+      const exit = await Effect.runPromiseExit(
+        syncProgram(
+          { dryRun: true, json: true, since },
+          {
+            runDailyReport: () => Effect.die("ccusage should not run"),
+            runSessionReport: () => Effect.die("ccusage should not run"),
+          },
+        ).pipe(Effect.provide(layer)),
+      );
+
+      const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
+      expect(Option.getOrUndefined(error)).toBeInstanceOf(InvalidSinceError);
+      expect(Option.getOrUndefined(error)?.message).toBe(
+        `error: invalid --since date: ${since}\nhint: use a calendar date in YYYY-MM-DD format, e.g. --since 2026-01-31`,
+      );
+    },
+  );
 
   it("treats a valid empty daily report as no data", async () => {
     const { layer } = makeTestLayer({
@@ -1067,6 +1102,76 @@ describe("resolveSyncAuth", () => {
         process.env.NO_COLOR = originalNoColor;
       }
     }
+  });
+});
+
+describe("resolveSyncAuth token clearing", () => {
+  const unauthorizedBody = { _tag: "Unauthorized", message: "Sign in required." };
+  const storedConfig: CliConfig = {
+    apiUrl: "https://api.tokenmaxxing.example",
+    token: "tmx_old",
+    wwwUrl: "https://tokenmaxxing.example",
+  };
+
+  it("clears the stored token on a 401 tagged Unauthorized", async () => {
+    const { layer, state } = makeTestLayer({
+      client: makeStubApiClient({
+        "GET /me": { body: unauthorizedBody, status: 401 },
+      }),
+      initialConfig: storedConfig,
+      interactive: false,
+    });
+
+    const exit = await Effect.runPromiseExit(
+      resolveSyncAuth({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    // Cleared, then relogin stops here because the test terminal is not interactive.
+    expect(state.clearedTokens).toBe(1);
+    const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
+    expect(Option.getOrUndefined(error)).toBeInstanceOf(NonInteractiveLoginError);
+  });
+
+  // The server can answer 401 for reasons other than a revoked token (a
+  // proxy, or a failed token lookup), so only a decoded Unauthorized counts.
+  it.each<[string, StubResponse]>([
+    ["an untagged 401", { body: { error: "unauthorized" }, status: 401 }],
+    [
+      "an Unauthorized-tagged 401 without a message",
+      { body: { _tag: "Unauthorized" }, status: 401 },
+    ],
+    ["an empty 401", { status: 401 }],
+    ["a plain-text 401", { body: "Unauthorized", status: 401 }],
+    ["a 500 with an Unauthorized body", { body: unauthorizedBody, status: 500 }],
+    ["a 503", { status: 503 }],
+  ])("keeps the stored token on %s", async (_label, response) => {
+    const { layer, state } = makeTestLayer({
+      client: makeStubApiClient({ "GET /me": response }),
+      initialConfig: storedConfig,
+    });
+
+    const exit = await Effect.runPromiseExit(
+      resolveSyncAuth({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    expect(state.clearedTokens).toBe(0);
+    expect(state.browserUrls).toEqual([]);
+    const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
+    expect(Option.getOrUndefined(error)).toBeInstanceOf(SyncAuthValidationError);
+  });
+
+  it("keeps the stored token for an error that only looks like Unauthorized", async () => {
+    const { layer, state } = makeTestLayer({
+      initialConfig: storedConfig,
+      meError: { _tag: "Unauthorized" },
+    });
+
+    const exit = await Effect.runPromiseExit(
+      resolveSyncAuth({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(state.clearedTokens).toBe(0);
   });
 });
 

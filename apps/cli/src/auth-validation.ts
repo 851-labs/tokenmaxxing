@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import type { AuthUser } from "@tokenmaxxing/api-contract";
+import { type ApiError, ApiErrors, type AuthUser, Unauthorized } from "@tokenmaxxing/api-contract";
 
 import {
   formatHighlight,
@@ -65,12 +65,21 @@ function validateCurrentLogin(
   });
 }
 
-function isUnauthorizedError(cause: unknown): boolean {
-  return (
-    typeof cause === "object" &&
-    cause !== null &&
-    (cause as { _tag?: string })._tag === "Unauthorized"
-  );
+/**
+ * True only for a decoded `Unauthorized` wire error, which the client decodes
+ * solely from a 401 whose body is tagged `Unauthorized`. Anything else (other
+ * statuses, untagged 401s from a proxy, network or decode failures) is not
+ * proof the token is bad, so callers must never clear the token on it.
+ */
+function isUnauthorizedError(cause: unknown): cause is Unauthorized {
+  return cause instanceof Unauthorized;
+}
+
+/** The server's human-readable message when `cause` is a typed wire error. */
+function apiErrorMessage(cause: unknown): string | undefined {
+  return ApiErrors.some((ErrorClass) => cause instanceof ErrorClass)
+    ? (cause as ApiError).message
+    : undefined;
 }
 
 function loggedInAsMessage(
@@ -87,7 +96,13 @@ function alreadyLoggedInAsMessage(
   return `Already logged in as ${formatHighlight(user.login, options)}`;
 }
 
-export { alreadyLoggedInAsMessage, isUnauthorizedError, loggedInAsMessage, validateCurrentLogin };
+export {
+  alreadyLoggedInAsMessage,
+  apiErrorMessage,
+  isUnauthorizedError,
+  loggedInAsMessage,
+  validateCurrentLogin,
+};
 export type {
   CurrentLoginValidation,
   ValidateCurrentLoginSuccessDisposition,

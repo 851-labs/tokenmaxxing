@@ -1,6 +1,7 @@
 import { Cause, Effect, Option } from "effect";
 import { CliError, Flag, GlobalFlag } from "effect/unstable/cli";
 
+import { booleanFlag } from "./flags";
 import { formatHighlight, humanFailure, type HumanFailureContent, shouldUseClack } from "./output";
 import { ConsoleService } from "./services";
 
@@ -17,6 +18,7 @@ const userFacingErrorTags = new Set([
   "ConfigReadError",
   "ConfigWriteError",
   "InvalidBootstrapServiceOptionError",
+  "InvalidSinceError",
   "LoginSleepError",
   "LoginTimeoutError",
   "LoginTokenInvalidError",
@@ -36,6 +38,7 @@ const userFacingErrorTags = new Set([
   "SyncAuthValidationError",
   "StartCliLoginError",
   "SyncPushError",
+  "SyncSourcesFailedError",
   "UnknownSourceError",
   "UpgradeCommandNotFoundError",
   "UpgradeEphemeralCommandError",
@@ -46,7 +49,7 @@ const userFacingErrorTags = new Set([
 ]);
 
 const verboseGlobalFlag = GlobalFlag.Setting("verbose")({
-  flag: Flag.Boolean("verbose").pipe(
+  flag: booleanFlag("verbose").pipe(
     Flag.withDescription("Print internal stack traces on failures"),
   ),
 });

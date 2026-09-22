@@ -2,6 +2,7 @@ import { Data, Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 
 import packageJson from "../../package.json";
+import { booleanFlag } from "../flags";
 import { humanFrame, humanSpinner, writeJson } from "../output";
 import {
   autoUpdateCommandDescription,
@@ -79,7 +80,7 @@ const npmLatestUrl = "https://registry.npmjs.org/@851-labs%2Ftokenmaxxing/latest
 const upgradeCommand = Command.make(
   "upgrade",
   {
-    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: booleanFlag("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => upgradeEffect({ json }),
 ).pipe(Command.withDescription("Upgrade the globally installed CLI"));
