@@ -1,38 +1,38 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, stripSearchParams, useNavigate } from "@tanstack/react-router";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { z } from "zod";
+import type { StatsRankedMetric } from "@tokenmaxxing/api-contract";
+import * as Schema from "effect/Schema";
 
 import { StackedChartPanel, type StackedBarsMode } from "../../components/charts/stacked-bars";
 import { StatCard } from "../../components/stat-card";
 import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
 import { formatInteger, formatPercent, formatTokens, formatUsd, percentOf } from "../../lib/format";
 import { statsQueryOptions } from "../../lib/queries";
+import { searchParam } from "../../lib/search";
 import { pageHead } from "../../lib/seo";
 import {
   deriveAggregateCharts,
   formatUsageRange,
   selectStatsWindow,
-  STATS_WINDOWS,
-  type StatsRankedMetric,
-  type StatsWindow,
+  StatsTabParam,
+  ytdLabel,
+  type StatsTab,
   type StatsWindowView,
 } from "./-lib/stats-view";
 
-const statsSearchSchema = z.object({
-  window: z.enum(STATS_WINDOWS).default("30d").catch("30d"),
-});
+const statsSearchSchema = Schema.toStandardSchemaV1(
+  Schema.Struct({
+    window: searchParam(StatsTabParam, "30d"),
+  }),
+);
 
-type StatsSearch = z.infer<typeof statsSearchSchema>;
+type StatsSearch = typeof statsSearchSchema.Type;
 
 const DEFAULT_STATS_SEARCH = {
   window: "30d",
 } as const satisfies StatsSearch;
 
-const WINDOW_OPTIONS = [
-  { label: "30 days", value: "30d" },
-  { label: "2026", value: "2026" },
-] as const satisfies readonly SegmentedOption<StatsWindow>[];
 const CHART_MODE_OPTIONS = [
   { label: "Usage", value: "absolute" },
   { label: "Share", value: "share" },
@@ -61,6 +61,10 @@ function StatsPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const { data } = useSuspenseQuery(statsQueryOptions);
   const view = useMemo(() => selectStatsWindow(data, window), [data, window]);
+  const windowOptions: readonly SegmentedOption<StatsTab>[] = [
+    { label: "30 days", value: "30d" },
+    { label: ytdLabel(data), value: "ytd" },
+  ];
 
   return (
     <>
@@ -84,7 +88,7 @@ function StatsPage() {
                 search: { window: value },
               })
             }
-            options={WINDOW_OPTIONS}
+            options={windowOptions}
             value={window}
           />
         </div>
@@ -101,11 +105,12 @@ function StatsPage() {
 }
 
 function StatsSummary({ view }: { view: StatsWindowView }) {
-  const { label, totals } = view;
+  const { label } = view;
+  const { totals } = view.window;
 
   return (
     <section className="grid grid-cols-2 gap-px bg-border lg:grid-cols-4">
-      <StatCard label={`${label} spend`} value={formatUsd(totals.totalSpendUsd)} />
+      <StatCard label={`${label} spend`} value={formatUsd(totals.spendUsd)} />
       <StatCard label={`${label} tokens`} value={formatTokens(totals.totalTokens)} />
       <StatCard label="Users" value={formatInteger(totals.userCount)} />
       <StatCard label="Devices" value={formatInteger(totals.deviceCount)} />
@@ -168,12 +173,12 @@ function ModelSection({ view }: { view: StatsWindowView }) {
   return (
     <section className="grid grid-cols-1 gap-px bg-border xl:grid-cols-2">
       <RankPanel
-        entries={view.modelsByTokens}
+        entries={view.window.modelsByTokens}
         metric="tokens"
         title={`Popular models ${view.label}`}
       />
       <RankPanel
-        entries={view.modelsBySpend}
+        entries={view.window.modelsBySpend}
         metric="spend"
         title={`Top spend models ${view.label}`}
       />
@@ -184,7 +189,7 @@ function ModelSection({ view }: { view: StatsWindowView }) {
 function SourceSection({ view }: { view: StatsWindowView }) {
   return (
     <section className="grid grid-cols-1 gap-px bg-border">
-      <RankPanel entries={view.sources} metric="tokens" title={`Sources ${view.label}`} />
+      <RankPanel entries={view.window.sources} metric="tokens" title={`Sources ${view.label}`} />
     </section>
   );
 }

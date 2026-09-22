@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { AuthUser, OAuthProviderId } from "@tokenmaxxing/api-contract";
 
 import { AccountLinkConflict, AuthRepository, makeAuthService, type OAuthProfile } from "./service";
+import { UserId } from "@tokenmaxxing/api-contract";
 
 describe("AuthService provider linking", () => {
   it("creates Google-only users from the verified email slug", async () => {
@@ -42,7 +43,7 @@ describe("AuthService provider linking", () => {
 
   it("auto-links a verified email when it belongs to exactly one existing user", async () => {
     const { service, store } = await makeTestAuth();
-    const user = currentUser({ id: "user_github", login: "alex" });
+    const user = currentUser({ id: UserId.make("user_github"), login: "alex" });
     store.users.set(user.id, user);
     store.accounts.set(accountKey("github", "123"), {
       profile: githubProfile({ email: "alex@example.com", providerAccountId: "123" }),
@@ -305,7 +306,7 @@ function currentUser(input: {
 }): AuthUser {
   return {
     avatarUrl: input.avatarUrl ?? null,
-    id: input.id,
+    id: UserId.make(input.id),
     login: input.login,
     name: input.name ?? null,
   };

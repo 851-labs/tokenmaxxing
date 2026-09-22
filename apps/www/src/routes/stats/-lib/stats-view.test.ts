@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { StatsResponse } from "@tokenmaxxing/api-contract";
+import type { StatsResponse, StatsTotals, StatsWindow } from "@tokenmaxxing/api-contract";
 
 import {
   deriveAggregateCharts,
   formatUsageRange,
   latestPlausibleDate,
   selectStatsWindow,
+  ytdLabel,
 } from "./stats-view";
-
-type Stats = typeof StatsResponse.Type;
 
 describe("selectStatsWindow", () => {
   it("bounds dates by the server clock, not the viewer's", () => {
@@ -54,7 +53,7 @@ describe("selectStatsWindow", () => {
       rows: [row("2025-12-31", 1), row("2026-01-01", 2), row("2026-06-01", 3)],
     });
 
-    expect(selectStatsWindow(data, "2026").dailyByModel.map((entry) => entry.date)).toEqual([
+    expect(selectStatsWindow(data, "ytd").dailyByModel.map((entry) => entry.date)).toEqual([
       "2026-01-01",
       "2026-06-01",
     ]);
@@ -79,6 +78,18 @@ describe("selectStatsWindow", () => {
     expect(charts.sessions.days.map((day) => day.total)).toEqual([1, 0, 1]);
   });
 
+  it("labels year-to-date with the server's year, not a hard-coded one", () => {
+    const data = stats({ rows: [] });
+
+    expect(selectStatsWindow(data, "ytd").label).toBe("2026");
+    expect(
+      ytdLabel({
+        ...data,
+        windows: { ...data.windows, ytd: { ...data.windows.ytd, since: "2027-01-01" } },
+      }),
+    ).toBe("2027");
+  });
+
   it("charts nothing before any usage exists", () => {
     const charts = deriveAggregateCharts(selectStatsWindow(stats({ rows: [] }), "30d"));
 
@@ -90,52 +101,49 @@ describe("selectStatsWindow", () => {
   });
 });
 
-function row(date: string, costUsd: number): Stats["dailyByModel"][number] {
-  return { costUsd, date, key: "claude-opus", outputTokens: 0, rowCount: 1, totalTokens: 10 };
+function row(date: string, spendUsd: number): StatsResponse["dailyByModel"][number] {
+  return { date, key: "claude-opus", outputTokens: 0, rowCount: 1, spendUsd, totalTokens: 10 };
 }
 
 function stats({
   rows,
   totals = {},
 }: {
-  rows: Stats["dailyByModel"];
-  totals?: Partial<Stats["last30d"]>;
-}): Stats {
-  const window: Stats["last30d"] = {
-    activeDates: 0,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
-    deviceCount: 0,
-    firstDate: null,
-    inputTokens: 0,
-    lastDate: null,
-    outputTokens: 0,
-    rowCount: 0,
-    totalSpendUsd: 0,
-    totalTokens: 0,
-    userCount: 0,
-    ...totals,
-  };
+  rows: StatsResponse["dailyByModel"];
+  totals?: Partial<StatsTotals>;
+}): StatsResponse {
+  const window = (since: string | null): StatsWindow => ({
+    modelsBySpend: [],
+    modelsByTokens: [],
+    since,
+    sources: [],
+    totals: {
+      activeDays: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      deviceCount: 0,
+      firstDate: null,
+      inputTokens: 0,
+      lastDate: null,
+      outputTokens: 0,
+      rowCount: 0,
+      spendUsd: 0,
+      totalTokens: 0,
+      userCount: 0,
+      ...totals,
+    },
+  });
 
   return {
-    allTime: window,
     daily: [],
     dailyByModel: rows,
     generatedAt: "2026-06-22T00:00:00.000Z",
-    last30d: window,
-    last30dSince: "2026-05-24",
     peaks: { spend: null, tokens: null },
-    sources: { allTime: [], last30d: [], year2026: [] },
-    topModels: {
-      allTimeBySpend: [],
-      allTimeByTokens: [],
-      last30dBySpend: [],
-      last30dByTokens: [],
-      year2026BySpend: [],
-      year2026ByTokens: [],
-    },
     topUsers: { bySpend: [], byTokens: [] },
-    year2026: window,
-    year2026Since: "2026-01-01",
+    windows: {
+      allTime: window(null),
+      last30d: window("2026-05-24"),
+      ytd: window("2026-01-01"),
+    },
   };
 }

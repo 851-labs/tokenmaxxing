@@ -16,7 +16,7 @@ describe("profile OG helpers", () => {
     const base = profile({
       activeDays: 7,
       lastDate: "2026-06-21",
-      totalSpendUsd: 123.45,
+      spendUsd: 123.45,
       totalTokens: 987_654,
     });
 
@@ -26,7 +26,7 @@ describe("profile OG helpers", () => {
         profile({
           activeDays: 8,
           lastDate: "2026-06-21",
-          totalSpendUsd: 123.45,
+          spendUsd: 123.45,
           totalTokens: 987_654,
         }),
       ),
@@ -37,14 +37,14 @@ describe("profile OG helpers", () => {
     expect(profileOgDescription(profile())).toBe(
       "pondorasti has spent $123 across 7 active days and 987.7K tokens.",
     );
-    expect(profileOgDescription(profile({ totalSpendUsd: 42.5 }))).toContain("$42.50");
+    expect(profileOgDescription(profile({ spendUsd: 42.5 }))).toContain("$42.50");
   });
 
   it("builds sane metadata for an empty profile", () => {
     const empty = profile({
       activeDays: 0,
       lastDate: null,
-      totalSpendUsd: 0,
+      spendUsd: 0,
       totalTokens: 0,
     });
 
@@ -66,19 +66,19 @@ function profile({
   activeDays = 7,
   lastDate = "2026-06-21",
   login = "pondorasti",
-  totalSpendUsd = 123.45,
+  spendUsd = 123.45,
   totalTokens = 987_654,
 }: {
   activeDays?: number;
   lastDate?: string | null;
   login?: string;
-  totalSpendUsd?: number;
+  spendUsd?: number;
   totalTokens?: number;
 } = {}): Profile {
   return {
     stats: {
       activeDays,
-      avgSpendPerActiveDay: activeDays === 0 ? 0 : totalSpendUsd / activeDays,
+      avgSpendPerActiveDay: activeDays === 0 ? 0 : spendUsd / activeDays,
       currentStreakDays: activeDays === 0 ? 0 : 3,
       deviceCount: activeDays === 0 ? 0 : 2,
       firstDate: activeDays === 0 ? null : "2026-01-01",
@@ -89,12 +89,11 @@ function profile({
       sessionCount: activeDays === 0 ? 0 : 14,
       sources: activeDays === 0 ? [] : ["claude", "codex"],
       topModel: activeDays === 0 ? null : { model: "claude-opus", spendUsd: 42 },
-      totalSpendUsd,
+      spendUsd,
       totalTokens,
     },
     user: {
       avatarUrl: "https://github.com/pondorasti.png",
-      id: "user_123",
       login,
       name: null,
     },

@@ -145,31 +145,31 @@ describe("profile daily responses", () => {
       Schema.decodeUnknownPromise(ProfileDailyResponse)({
         days: [
           {
-            costUsd: 12.34,
             date: "2026-06-19",
             key: "claude-opus-4",
             outputTokens: 200,
+            spendUsd: 12.34,
             totalTokens: 300,
           },
         ],
         range: {
-          first: "2026-01-01",
-          last: "2026-06-21",
+          firstDate: "2026-01-01",
+          lastDate: "2026-06-21",
         },
       }),
     ).resolves.toEqual({
       days: [
         {
-          costUsd: 12.34,
           date: "2026-06-19",
           key: "claude-opus-4",
           outputTokens: 200,
+          spendUsd: 12.34,
           totalTokens: 300,
         },
       ],
       range: {
-        first: "2026-01-01",
-        last: "2026-06-21",
+        firstDate: "2026-01-01",
+        lastDate: "2026-06-21",
       },
     });
   });
@@ -190,93 +190,111 @@ describe("profile identity responses", () => {
 });
 
 describe("stats responses", () => {
-  it("carries aggregate totals, rankings, and peaks", async () => {
-    const totals = {
-      activeDates: 12,
-      cacheCreationTokens: 30,
-      cacheReadTokens: 400,
-      deviceCount: 3,
-      firstDate: "2026-01-01",
-      inputTokens: 100,
-      lastDate: "2026-06-21",
-      outputTokens: 20,
-      rowCount: 42,
-      totalSpendUsd: 123.45,
-      totalTokens: 550,
-      userCount: 2,
-    };
-    const ranked = {
-      key: "gpt-5.5",
-      rowCount: 10,
-      spendUsd: 100,
-      totalTokens: 500,
-      userCount: 2,
-    };
-    const userMetric = {
-      activeDays: 7,
-      lastDate: "2026-06-21",
-      spendUsd: 100,
-      totalTokens: 500,
-      user: {
-        avatarUrl: null,
-        id: "user_123",
-        login: "pondorasti",
-        name: "Alexandru",
+  const totals = {
+    activeDays: 12,
+    cacheCreationTokens: 30,
+    cacheReadTokens: 400,
+    deviceCount: 3,
+    firstDate: "2026-01-01",
+    inputTokens: 100,
+    lastDate: "2026-06-21",
+    outputTokens: 20,
+    rowCount: 42,
+    spendUsd: 123.45,
+    totalTokens: 550,
+    userCount: 2,
+  };
+  const ranked = {
+    key: "gpt-5.5",
+    rowCount: 10,
+    spendUsd: 100,
+    totalTokens: 500,
+    userCount: 2,
+  };
+  const userMetric = {
+    activeDays: 7,
+    lastDate: "2026-06-21",
+    spendUsd: 100,
+    totalTokens: 500,
+    user: {
+      avatarUrl: null,
+      login: "pondorasti",
+      name: "Alexandru",
+    },
+  };
+  const peak = {
+    date: "2026-06-21",
+    spendUsd: 100,
+    totalTokens: 500,
+    userCount: 2,
+  };
+  const window = (since: string | null) => ({
+    modelsBySpend: [ranked],
+    modelsByTokens: [ranked],
+    since,
+    sources: [ranked],
+    totals,
+  });
+  const response = {
+    daily: [peak],
+    dailyByModel: [
+      {
+        date: "2026-06-21",
+        key: "gpt-5.5",
+        outputTokens: 20,
+        rowCount: 3,
+        spendUsd: 100,
+        totalTokens: 500,
       },
-    };
-    const peak = {
-      date: "2026-06-21",
-      spendUsd: 100,
-      totalTokens: 500,
-      userCount: 2,
-    };
+    ],
+    generatedAt: "2026-06-21T20:00:00.000Z",
+    peaks: {
+      spend: peak,
+      tokens: peak,
+    },
+    topUsers: {
+      bySpend: [userMetric],
+      byTokens: [userMetric],
+    },
+    windows: {
+      allTime: window(null),
+      last30d: window("2026-05-23"),
+      ytd: window("2026-01-01"),
+    },
+  };
+
+  it("carries every window with the same shape", async () => {
+    await expect(Schema.decodeUnknownPromise(StatsResponse)(response)).resolves.toMatchObject({
+      topUsers: { bySpend: [{ user: { login: "pondorasti" } }] },
+      windows: {
+        allTime: {
+          modelsByTokens: [{ key: "gpt-5.5" }],
+          since: null,
+          totals: { spendUsd: 123.45 },
+        },
+        ytd: { since: "2026-01-01", sources: [{ key: "gpt-5.5" }] },
+      },
+    });
+  });
+
+  it("requires all three windows", async () => {
+    const { ytd: _ytd, ...windows } = response.windows;
 
     await expect(
-      Schema.decodeUnknownPromise(StatsResponse)({
-        allTime: totals,
-        daily: [{ date: "2026-06-21", spendUsd: 100, totalTokens: 500, userCount: 2 }],
-        dailyByModel: [
-          {
-            costUsd: 100,
-            date: "2026-06-21",
-            key: "gpt-5.5",
-            outputTokens: 20,
-            rowCount: 3,
-            totalTokens: 500,
-          },
-        ],
-        generatedAt: "2026-06-21T20:00:00.000Z",
-        last30d: totals,
-        last30dSince: "2026-05-23",
-        peaks: {
-          spend: peak,
-          tokens: peak,
-        },
-        sources: {
-          allTime: [ranked],
-          last30d: [ranked],
-          year2026: [ranked],
-        },
-        topModels: {
-          allTimeBySpend: [ranked],
-          allTimeByTokens: [ranked],
-          last30dBySpend: [ranked],
-          last30dByTokens: [ranked],
-          year2026BySpend: [ranked],
-          year2026ByTokens: [ranked],
-        },
-        topUsers: {
-          bySpend: [userMetric],
-          byTokens: [userMetric],
-        },
-        year2026: totals,
-        year2026Since: "2026-01-01",
-      }),
-    ).resolves.toMatchObject({
-      allTime: { totalSpendUsd: 123.45, totalTokens: 550 },
-      topModels: { allTimeByTokens: [{ key: "gpt-5.5" }] },
-      topUsers: { bySpend: [{ user: { login: "pondorasti" } }] },
+      Schema.decodeUnknownPromise(StatsResponse)({ ...response, windows }),
+    ).rejects.toThrow();
+  });
+
+  it("strips internal user ids from public users when the server encodes", async () => {
+    const encoded = await Schema.encodeUnknownPromise(StatsResponse)({
+      ...response,
+      topUsers: {
+        bySpend: [{ ...userMetric, user: { ...userMetric.user, id: "user_123" } }],
+        byTokens: [],
+      },
     });
+
+    expect(encoded.topUsers.bySpend[0]?.user).toEqual(userMetric.user);
   });
 });
 
@@ -326,9 +344,9 @@ describe("admin fleet responses", () => {
           latestCheckInAt: "2026-06-19T19:31:00.000Z",
           revokedTokenCount: 0,
           sources: ["codex"],
+          spendUsd: 12.34,
           status: "healthy",
           tokenCount: 1,
-          totalSpendUsd: 12.34,
           totalTokens: 123_456,
           updateBlockedReason: null,
           updateStatus: "current",
@@ -547,11 +565,11 @@ describe("response sources", () => {
           peakDay: null,
           sessionCount: 0,
           sources: ["some-future-agent"],
+          spendUsd: 1,
           topModel: null,
-          totalSpendUsd: 1,
           totalTokens: 1,
         },
-        user: { avatarUrl: null, id: "user_1", login: "alex", name: null },
+        user: { avatarUrl: null, login: "alex", name: null },
       }),
     ).resolves.toMatchObject({ stats: { sources: ["some-future-agent"] } });
   });

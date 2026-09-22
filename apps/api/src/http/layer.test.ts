@@ -302,7 +302,7 @@ function makeHarness() {
   );
   const profiles = ProfilesService.of({
     getDaily: () =>
-      Effect.succeed({ days: [], range: { first: "2026-01-01", last: "2026-09-22" } }),
+      Effect.succeed({ days: [], range: { firstDate: "2026-01-01", lastDate: "2026-09-22" } }),
     getIdentity: (login) =>
       login === "visible"
         ? Effect.succeed({ avatarUrl: null, login })

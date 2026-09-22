@@ -39,15 +39,15 @@ interface ProfileCharts {
 
 function deriveProfileCharts(rows: readonly DailyRow[], range: DailyRange): ProfileCharts {
   const colors = seriesColors(rows);
-  const days = enumerateDays(range.first, range.last);
-  const spend = buildStackedSeriesChart(rows, days, colors, (row) => row.costUsd);
+  const days = enumerateDays(range.firstDate, range.lastDate);
+  const spend = buildStackedSeriesChart(rows, days, colors, (row) => row.spendUsd);
   const tokens = buildStackedSeriesChart(rows, days, colors, (row) => row.totalTokens);
   const spendOrder = spend.selection.order;
 
   const spendByWeekday = [0, 0, 0, 0, 0, 0, 0];
   for (const row of rows) {
     const weekday = weekdayMondayFirst(row.date);
-    spendByWeekday[weekday] = (spendByWeekday[weekday] ?? 0) + row.costUsd;
+    spendByWeekday[weekday] = (spendByWeekday[weekday] ?? 0) + row.spendUsd;
   }
 
   const segmentsByDate = new Map(
@@ -60,17 +60,17 @@ function deriveProfileCharts(rows: readonly DailyRow[], range: DailyRange): Prof
   const byMonth = bucketSeries(
     rows,
     spend.selection,
-    (row) => row.costUsd,
+    (row) => row.spendUsd,
     (row) => row.date.slice(0, 7),
   );
-  const months = enumerateMonths(range.first, range.last).map((month) => ({
+  const months = enumerateMonths(range.firstDate, range.lastDate).map((month) => ({
     month,
     segments: buildSegments(spendOrder, colors, byMonth.values.get(month)),
     value: byMonth.totals.get(month) ?? 0,
   }));
 
   return {
-    heatmap: { first: calendarYearStart(range.last), last: calendarYearEnd(range.last) },
+    heatmap: { first: calendarYearStart(range.lastDate), last: calendarYearEnd(range.lastDate) },
     months,
     segmentsByDate,
     spend,

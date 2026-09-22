@@ -5,12 +5,12 @@ import { deriveProfileCharts, type DailyRange, type DailyRow } from "./profile-c
 describe("deriveProfileCharts", () => {
   it("fills sparse usage rows across the server-provided chart range", () => {
     const range: DailyRange = {
-      first: "2026-06-19",
-      last: "2026-06-21",
+      firstDate: "2026-06-19",
+      lastDate: "2026-06-21",
     };
     const rows: DailyRow[] = [
       {
-        costUsd: 12,
+        spendUsd: 12,
         date: "2026-06-19",
         key: "claude-opus-4",
         outputTokens: 200,
@@ -39,8 +39,8 @@ describe("deriveProfileCharts", () => {
 
   it("renders the heatmap across the full calendar year", () => {
     const range: DailyRange = {
-      first: "2026-01-01",
-      last: "2026-06-21",
+      firstDate: "2026-01-01",
+      lastDate: "2026-06-21",
     };
 
     const derived = deriveProfileCharts([], range);
@@ -55,8 +55,8 @@ describe("deriveProfileCharts", () => {
 
   it("renders every month from range start through range end", () => {
     const range: DailyRange = {
-      first: "2026-01-01",
-      last: "2026-06-21",
+      firstDate: "2026-01-01",
+      lastDate: "2026-06-21",
     };
 
     const derived = deriveProfileCharts([], range);
@@ -73,12 +73,12 @@ describe("deriveProfileCharts", () => {
 
   it("uses raw model names as separate series", () => {
     const range: DailyRange = {
-      first: "2026-06-21",
-      last: "2026-06-21",
+      firstDate: "2026-06-21",
+      lastDate: "2026-06-21",
     };
     const rows: DailyRow[] = [
-      dailyRow({ costUsd: 20, key: "claude-opus-4-8", totalTokens: 200 }),
-      dailyRow({ costUsd: 10, key: "claude-opus-4-7", totalTokens: 100 }),
+      dailyRow({ spendUsd: 20, key: "claude-opus-4-8", totalTokens: 200 }),
+      dailyRow({ spendUsd: 10, key: "claude-opus-4-7", totalTokens: 100 }),
     ];
 
     const derived = deriveProfileCharts(rows, range);
@@ -99,12 +99,12 @@ describe("deriveProfileCharts", () => {
 
   it("collapses only models below the chart limit into Other", () => {
     const range: DailyRange = {
-      first: "2026-06-21",
-      last: "2026-06-21",
+      firstDate: "2026-06-21",
+      lastDate: "2026-06-21",
     };
     const rows = Array.from({ length: 11 }, (_, index) =>
       dailyRow({
-        costUsd: 11 - index,
+        spendUsd: 11 - index,
         key: `model-${String(index + 1).padStart(2, "0")}`,
         totalTokens: 110 - index * 10,
       }),
@@ -130,18 +130,18 @@ describe("deriveProfileCharts", () => {
   });
 
   it("buckets spend by Monday-first weekday from the opaque date key", () => {
-    const range: DailyRange = { first: "2026-06-15", last: "2026-06-21" };
+    const range: DailyRange = { firstDate: "2026-06-15", lastDate: "2026-06-21" };
     const rows: DailyRow[] = [
-      { ...dailyRow({ costUsd: 5, key: "a", totalTokens: 1 }), date: "2026-06-15" }, // Monday
-      { ...dailyRow({ costUsd: 7, key: "a", totalTokens: 1 }), date: "2026-06-21" }, // Sunday
+      { ...dailyRow({ spendUsd: 5, key: "a", totalTokens: 1 }), date: "2026-06-15" }, // Monday
+      { ...dailyRow({ spendUsd: 7, key: "a", totalTokens: 1 }), date: "2026-06-21" }, // Sunday
     ];
 
     expect(deriveProfileCharts(rows, range).spendByWeekday).toEqual([5, 0, 0, 0, 0, 0, 7]);
   });
 
   it("builds heatmap tooltip segments only for days with usage", () => {
-    const range: DailyRange = { first: "2026-06-20", last: "2026-06-21" };
-    const rows = [dailyRow({ costUsd: 4, key: "claude-opus-4-8", totalTokens: 10 })];
+    const range: DailyRange = { firstDate: "2026-06-20", lastDate: "2026-06-21" };
+    const rows = [dailyRow({ spendUsd: 4, key: "claude-opus-4-8", totalTokens: 10 })];
 
     const derived = deriveProfileCharts(rows, range);
 
@@ -154,16 +154,16 @@ describe("deriveProfileCharts", () => {
 });
 
 function dailyRow({
-  costUsd,
+  spendUsd,
   key,
   totalTokens,
 }: {
-  costUsd: number;
+  spendUsd: number;
   key: string;
   totalTokens: number;
 }): DailyRow {
   return {
-    costUsd,
+    spendUsd,
     date: "2026-06-21",
     key,
     outputTokens: 0,

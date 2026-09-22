@@ -19,8 +19,7 @@
     "effect": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "tailwind-merge": "^3.7.0",
-    "zod": "catalog:"
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "catalog:",

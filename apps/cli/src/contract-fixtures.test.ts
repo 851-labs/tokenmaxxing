@@ -2,7 +2,7 @@ import { Effect, Layer } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
-import { TokenmaxxingApi, type AuthUser } from "@tokenmaxxing/api-contract";
+import { TokenmaxxingApi, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { CcusageSource } from "./ccusage/sources";
@@ -32,7 +32,7 @@ const FIXTURE_DIR = "../../../packages/api-contract/fixtures/cli-requests/curren
 
 const user: AuthUser = {
   avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
-  id: "user_123",
+  id: UserId.make("user_123"),
   login: "alex",
   name: "Alex",
 };

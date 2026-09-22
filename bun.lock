@@ -66,7 +66,6 @@
         "react": "catalog:",
         "react-dom": "catalog:",
         "tailwind-merge": "^3.7.0",
-        "zod": "catalog:",
       },
       "devDependencies": {
         "@tailwindcss/vite": "catalog:",
@@ -141,7 +140,6 @@
     "vite": "npm:@voidzero-dev/vite-plus-core@0.3.3",
     "vite-plus": "0.3.3",
     "vitest": "5.0.1",
-    "zod": "4.6.5",
   },
   "packages": {
     "@851-labs/tokenmaxxing": ["@851-labs/tokenmaxxing@workspace:apps/cli"],

@@ -25,7 +25,7 @@ function profileOgDescription(profile: Profile): string {
     return `${profile.user.login} has not synced usage yet.`;
   }
 
-  return `${profile.user.login} has spent ${formatUsd(stats.totalSpendUsd)} across ${formatInteger(
+  return `${profile.user.login} has spent ${formatUsd(stats.spendUsd)} across ${formatInteger(
     stats.activeDays,
   )} active days and ${formatTokens(stats.totalTokens)} tokens.`;
 }
@@ -33,7 +33,7 @@ function profileOgDescription(profile: Profile): string {
 function profileOgVersion(profile: Profile): string {
   return [
     profile.stats.lastDate ?? "none",
-    Math.round(profile.stats.totalSpendUsd * 100),
+    Math.round(profile.stats.spendUsd * 100),
     Math.round(profile.stats.totalTokens),
     profile.stats.activeDays,
     `s${OG_IMAGE_STYLE_VERSION}`,

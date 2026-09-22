@@ -4,7 +4,8 @@ import {
   AdminUserNotFound,
   Forbidden,
   type AdminUsersResponse,
-  type ShadowBan,
+  type ShadowBanUserResponse,
+  type UserId,
 } from "@tokenmaxxing/api-contract";
 
 import { AppConfig } from "../config";
@@ -13,15 +14,15 @@ import { adminUsersReport, type AdminUserSnapshot } from "./fleet";
 import { NpmRegistry } from "./npm-registry";
 
 interface AdminServiceShape {
-  listUsers(userId: string): Effect.Effect<typeof AdminUsersResponse.Type, Forbidden>;
+  listUsers(userId: UserId): Effect.Effect<AdminUsersResponse, Forbidden>;
   shadowBanUser(
-    adminUserId: string,
-    targetUserId: string,
-  ): Effect.Effect<{ shadowBan: ShadowBan; userId: string }, AdminUserNotFound | Forbidden>;
+    adminUserId: UserId,
+    targetUserId: UserId,
+  ): Effect.Effect<ShadowBanUserResponse, AdminUserNotFound | Forbidden>;
   shadowUnbanUser(
-    adminUserId: string,
-    targetUserId: string,
-  ): Effect.Effect<{ shadowBan: null; userId: string }, AdminUserNotFound | Forbidden>;
+    adminUserId: UserId,
+    targetUserId: UserId,
+  ): Effect.Effect<ShadowBanUserResponse, AdminUserNotFound | Forbidden>;
 }
 
 interface AdminRepositoryShape {
@@ -54,7 +55,7 @@ const makeAdminService = Effect.fn("makeAdminService")(function* (
   const now = options.now ?? (() => new Date());
 
   const requireInternalAdmin = Effect.fn("AdminService.requireInternalAdmin")(function* (
-    userId: string,
+    userId: UserId,
   ) {
     const allowed = yield* repository.hasAnyVerifiedEmail(userId, adminEmails).pipe(Effect.orDie);
     if (!allowed) {
@@ -64,8 +65,8 @@ const makeAdminService = Effect.fn("makeAdminService")(function* (
 
   const setShadowBan = Effect.fn("AdminService.setShadowBan")(function* (input: {
     at: Date | null;
-    byUserId: string | null;
-    userId: string;
+    byUserId: UserId | null;
+    userId: UserId;
   }) {
     const updated = yield* repository.setShadowBan(input).pipe(Effect.orDie);
     if (!updated) {

@@ -65,8 +65,8 @@ describe("D1 profiles repository", () => {
         peakDay: null,
         sessionCount: 0,
         sources: [],
+        spendUsd: 0,
         topModel: null,
-        totalSpendUsd: 0,
         totalTokens: 0,
       });
     });
@@ -93,8 +93,8 @@ describe("D1 profiles repository", () => {
         longestStreakDays: 3,
         peakDay: { date: "2026-07-02", spendUsd: 5 },
         sources: ["claude", "codex"],
+        spendUsd: 12,
         topModel: { model: "gpt-5", spendUsd: 8 },
-        totalSpendUsd: 12,
         totalTokens: 600,
       });
     });
@@ -144,7 +144,7 @@ describe("D1 profiles repository", () => {
 
       const rows = await Effect.runPromise(repository.daily("user", { groupBy: "model", until }));
 
-      expect(rows.map((row) => [row.date, row.key, row.costUsd])).toEqual([
+      expect(rows.map((row) => [row.date, row.key, row.spendUsd])).toEqual([
         ["2026-07-01", "gpt-5", 1],
         ["2026-07-01", "o3", 2],
         ["2026-07-02", "gpt-5", 8],
@@ -152,10 +152,10 @@ describe("D1 profiles repository", () => {
         ["2026-07-03", "gpt-5", 16],
       ]);
       expect(rows[0]).toEqual({
-        costUsd: 1,
         date: "2026-07-01",
         key: "gpt-5",
         outputTokens: 1,
+        spendUsd: 1,
         totalTokens: 10,
       });
     });
@@ -165,7 +165,7 @@ describe("D1 profiles repository", () => {
 
       const rows = await Effect.runPromise(repository.daily("user", { groupBy: "source", until }));
 
-      expect(rows.map((row) => [row.date, row.key, row.costUsd, row.totalTokens])).toEqual([
+      expect(rows.map((row) => [row.date, row.key, row.spendUsd, row.totalTokens])).toEqual([
         ["2026-07-01", "codex", 3, 20],
         ["2026-07-02", "claude", 4, 10],
         ["2026-07-02", "codex", 8, 10],

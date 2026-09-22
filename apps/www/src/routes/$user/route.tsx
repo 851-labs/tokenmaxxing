@@ -151,7 +151,7 @@ function ProfileDashboard({
   return (
     <div className="grid grid-cols-1 gap-px border-y border-border bg-border">
       <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-4">
-        <StatCard label="Total spend" value={formatUsd(stats.totalSpendUsd)} />
+        <StatCard label="Total spend" value={formatUsd(stats.spendUsd)} />
         <StatCard label="Total tokens" value={formatTokens(stats.totalTokens)} />
         <StatCard label="Sessions" value={formatInteger(stats.sessionCount)} />
         <StatCard

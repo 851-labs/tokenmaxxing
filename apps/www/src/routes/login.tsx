@@ -1,18 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { z } from "zod";
+import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { LOGIN_OAUTH_PROVIDERS, OAuthProviderButtons } from "../components/oauth-providers";
 import { Card } from "../components/ui/card";
 import { SITE_ORIGIN } from "../lib/og";
+import { optionalSearchParam } from "../lib/search";
 
 const LOGIN_TITLE = "Sign in — tokenmaxxing.sh";
 const LOGIN_DESCRIPTION =
   "Sign in to tokenmaxxing.sh to sync your LLM agent usage and track your spot on the leaderboard.";
 const LOGIN_URL = new URL("/login", SITE_ORIGIN).toString();
 
-const loginRedirectSchema = z.preprocess(
-  (value) => (typeof value === "string" ? sanitizeLoginRedirectPath(value) : undefined),
-  z.string().optional(),
+/** Any value decodes; only same-origin paths survive as a redirect target. */
+const loginRedirectSchema = Schema.Unknown.pipe(
+  Schema.decodeTo(
+    Schema.UndefinedOr(Schema.String),
+    SchemaTransformation.transform({
+      decode: (value) => (typeof value === "string" ? sanitizeLoginRedirectPath(value) : undefined),
+      encode: (value) => value,
+    }),
+  ),
 );
 
 /** Codes the API's OAuth callback redirects back with (apps/api/src/http/routes/oauth.ts). */
@@ -28,14 +36,13 @@ const LOGIN_PROVIDER_LABELS = { github: "GitHub", google: "Google" } as const;
 
 type LoginProvider = keyof typeof LOGIN_PROVIDER_LABELS;
 
-const loginSearchSchema = z.object({
-  error: z.enum(LOGIN_ERROR_CODES).optional().catch(undefined),
-  provider: z
-    .enum(["github", "google"] satisfies LoginProvider[])
-    .optional()
-    .catch(undefined),
-  redirect: loginRedirectSchema,
-});
+const loginSearchSchema = Schema.toStandardSchemaV1(
+  Schema.Struct({
+    error: optionalSearchParam(Schema.Literals(LOGIN_ERROR_CODES)),
+    provider: optionalSearchParam(Schema.Literals(["github", "google"] satisfies LoginProvider[])),
+    redirect: Schema.optionalKey(loginRedirectSchema),
+  }),
+);
 
 const Route = createFileRoute("/login")({
   validateSearch: loginSearchSchema,

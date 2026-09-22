@@ -8,7 +8,7 @@ import {
   LeaderboardWindow,
   type LeaderboardResponse,
 } from "@tokenmaxxing/api-contract";
-import { z } from "zod";
+import * as Schema from "effect/Schema";
 
 import { AGENT_ICONS } from "./-components/agent-icons";
 import { BootstrapCommand } from "./-components/bootstrap-command";
@@ -19,20 +19,17 @@ import { SUPPORTED_AGENTS } from "../../lib/agents";
 import { formatTokens, formatUsd } from "../../lib/format";
 import { faqPageSchema, softwareApplicationSchema } from "../../lib/jsonld";
 import { leaderboardQueryOptions } from "../../lib/queries";
+import { searchParam } from "../../lib/search";
 import { pageHead } from "../../lib/seo";
 
-const leaderboardSearchSchema = z.object({
-  metric: z
-    .enum(LeaderboardMetric.literals)
-    .default(DEFAULT_LEADERBOARD_METRIC)
-    .catch(DEFAULT_LEADERBOARD_METRIC),
-  window: z
-    .enum(LeaderboardWindow.literals)
-    .default(DEFAULT_LEADERBOARD_WINDOW)
-    .catch(DEFAULT_LEADERBOARD_WINDOW),
-});
+const leaderboardSearchSchema = Schema.toStandardSchemaV1(
+  Schema.Struct({
+    metric: searchParam(LeaderboardMetric, DEFAULT_LEADERBOARD_METRIC),
+    window: searchParam(LeaderboardWindow, DEFAULT_LEADERBOARD_WINDOW),
+  }),
+);
 
-type LeaderboardSearch = z.infer<typeof leaderboardSearchSchema>;
+type LeaderboardSearch = typeof leaderboardSearchSchema.Type;
 
 const DEFAULT_LEADERBOARD_SEARCH = {
   metric: DEFAULT_LEADERBOARD_METRIC,
@@ -176,7 +173,7 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
             {entries.map((entry) => (
               <tr
                 className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/40"
-                key={entry.user.id}
+                key={entry.user.login}
               >
                 <td className="p-3 font-mono text-muted-foreground">{entry.rank}</td>
                 <td className="p-3">

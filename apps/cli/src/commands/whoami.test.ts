@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect";
-import type { AuthUser } from "@tokenmaxxing/api-contract";
+import { UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -46,7 +46,7 @@ const originalTerm = process.env.TERM;
 
 const user: AuthUser = {
   avatarUrl: null,
-  id: "user_123",
+  id: UserId.make("user_123"),
   login: "alex",
   name: "Alex",
 };

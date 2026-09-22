@@ -5,8 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   Authorization,
   CurrentUser,
+  DeviceId,
+  TokenId,
   TokenmaxxingApi,
   type Unauthorized,
+  UserId,
 } from "@tokenmaxxing/api-contract";
 import type { AuthUser } from "@tokenmaxxing/api-contract";
 
@@ -17,7 +20,7 @@ import { AuthorizationLive } from "./authorization";
 
 const CLI_TOKEN = "tmx_cli-token";
 const SESSION_TOKEN = "browser-session-token";
-const USER: AuthUser = { avatarUrl: null, id: "user_1", login: "alex", name: null };
+const USER: AuthUser = { avatarUrl: null, id: UserId.make("user_1"), login: "alex", name: null };
 
 describe("Authorization middleware", () => {
   it("accepts a session token on every session-guarded endpoint", async () => {
@@ -51,7 +54,12 @@ describe("Authorization middleware", () => {
 });
 
 describe("Authorization middleware through the HTTP stack", () => {
-  const cliUser: AuthUser = { avatarUrl: null, id: "cli-user", login: "cli", name: null };
+  const cliUser: AuthUser = {
+    avatarUrl: null,
+    id: UserId.make("cli-user"),
+    login: "cli",
+    name: null,
+  };
   let app: TestApp | undefined;
 
   afterEach(async () => {
@@ -75,7 +83,11 @@ describe("Authorization middleware through the HTTP stack", () => {
     const resolveCliToken = vi.fn((token: string) =>
       Effect.succeed(
         token === CLI_TOKEN
-          ? Option.some({ deviceId: "device", tokenId: "token", user: cliUser })
+          ? Option.some({
+              deviceId: DeviceId.make("device"),
+              tokenId: TokenId.make("token"),
+              user: cliUser,
+            })
           : Option.none(),
       ),
     );
@@ -221,7 +233,7 @@ const fakeServices = Layer.mergeAll(
       resolveCliToken: (rawToken) =>
         Effect.succeed(
           rawToken === CLI_TOKEN
-            ? Option.some({ deviceId: null, tokenId: "token_1", user: USER })
+            ? Option.some({ deviceId: null, tokenId: TokenId.make("token_1"), user: USER })
             : Option.none(),
         ),
     } as Partial<TokensServiceShape> as TokensServiceShape),

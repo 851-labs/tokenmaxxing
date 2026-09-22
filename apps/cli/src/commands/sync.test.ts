@@ -1,5 +1,5 @@
 import { Cause, Effect, Layer, Option } from "effect";
-import type { AuthUser } from "@tokenmaxxing/api-contract";
+import { UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
 import { CcusageRunError } from "../ccusage/runner";
@@ -56,7 +56,7 @@ interface TestState {
 
 const user: AuthUser = {
   avatarUrl: null,
-  id: "user_123",
+  id: UserId.make("user_123"),
   login: "alex",
   name: null,
 };

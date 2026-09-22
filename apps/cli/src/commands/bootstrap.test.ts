@@ -1,5 +1,5 @@
 import { Cause, Effect, Layer } from "effect";
-import type { AuthUser } from "@tokenmaxxing/api-contract";
+import { UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ConsoleService, TerminalService, type TokenmaxxingApiClient } from "../services";
@@ -13,7 +13,7 @@ import type { SyncAuth, SyncResult } from "./sync";
 
 const user: AuthUser = {
   avatarUrl: null,
-  id: "user_123",
+  id: UserId.make("user_123"),
   login: "alex",
   name: null,
 };

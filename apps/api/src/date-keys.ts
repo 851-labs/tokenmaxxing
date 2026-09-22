@@ -9,13 +9,16 @@ import { shiftDayKey, utcDayKey } from "@tokenmaxxing/api-contract";
  * usage yet.
  */
 
-const YEAR_2026_START = "2026-01-01";
-
 const MAX_USAGE_DAYS_AHEAD_OF_UTC = 1;
 
 /** Inclusive lower bound covering the trailing `days` calendar days, today (UTC) included. */
 function trailingWindowStart(days: number, now: Date): string {
   return shiftDayKey(utcDayKey(now), -(days - 1));
+}
+
+/** Jan 1 of `now`'s UTC year: the inclusive lower bound of year-to-date windows. */
+function yearStartDayKey(now: Date): string {
+  return `${utcDayKey(now).slice(0, 4)}-01-01`;
 }
 
 /** Inclusive upper bound for usage day keys accepted at ingest and read back. */
@@ -29,5 +32,5 @@ export {
   shiftDayKey,
   trailingWindowStart,
   utcDayKey,
-  YEAR_2026_START,
+  yearStartDayKey,
 };

@@ -8,10 +8,10 @@ import {
   AdminUserNotFound,
   CliUpgradeRequired,
   DeviceNotFound,
-  DeviceMissing,
   Forbidden,
   LoginCodeExpired,
   LoginCodeNotFound,
+  TokenDeviceUnbound,
   TokenNotFound,
   UserNotFound,
 } from "./errors";
@@ -25,13 +25,15 @@ import {
   CliLoginRequestSummary,
   CliLoginStartInput,
   CliLoginStartResponse,
-  CliTokenSummary,
-  DeviceSummary,
+  DeviceId,
   HealthResponse,
   IngestUsageInput,
   LeaderboardMetric,
   LeaderboardResponse,
   LeaderboardWindow,
+  ListAccountsResponse,
+  ListDevicesResponse,
+  ListTokensResponse,
   MeResponse,
   OkResponse,
   ProfileDailyGroupBy,
@@ -44,7 +46,8 @@ import {
   UsageCheckInResponse,
   SyncUsageInput,
   SyncUsageResponse,
-  UserAccountSummary,
+  TokenId,
+  UserId,
 } from "./schemas";
 
 /**
@@ -69,7 +72,7 @@ class MeGroup extends HttpApiGroup.make("me")
   )
   .add(
     HttpApiEndpoint.get("listAccounts", "/me/accounts", {
-      success: Schema.Struct({ accounts: Schema.Array(UserAccountSummary) }),
+      success: ListAccountsResponse,
     }),
   )
   .add(
@@ -90,13 +93,13 @@ class MeGroup extends HttpApiGroup.make("me")
   )
   .add(
     HttpApiEndpoint.get("listDevices", "/me/devices", {
-      success: Schema.Struct({ devices: Schema.Array(DeviceSummary) }),
+      success: ListDevicesResponse,
     }),
   )
   .add(
     HttpApiEndpoint.post("deleteDevice", "/me/devices/:deviceId/delete", {
       params: {
-        deviceId: Schema.String,
+        deviceId: DeviceId,
       },
       success: OkResponse,
       error: DeviceNotFound,
@@ -104,13 +107,13 @@ class MeGroup extends HttpApiGroup.make("me")
   )
   .add(
     HttpApiEndpoint.get("listTokens", "/me/tokens", {
-      success: Schema.Struct({ tokens: Schema.Array(CliTokenSummary) }),
+      success: ListTokensResponse,
     }),
   )
   .add(
     HttpApiEndpoint.post("revokeToken", "/me/tokens/:tokenId/revoke", {
       params: {
-        tokenId: Schema.String,
+        tokenId: TokenId,
       },
       success: OkResponse,
       error: TokenNotFound,
@@ -139,14 +142,14 @@ class UsageGroup extends HttpApiGroup.make("usage")
     HttpApiEndpoint.post("checkIn", "/usage/check-in", {
       payload: UsageCheckInInput,
       success: UsageCheckInResponse,
-      error: DeviceMissing,
+      error: TokenDeviceUnbound,
     }),
   )
   .add(
     HttpApiEndpoint.post("ingest", "/usage/ingest", {
       payload: IngestUsageInput,
       success: SyncUsageResponse,
-      error: DeviceMissing,
+      error: TokenDeviceUnbound,
     }),
   )
   .add(
@@ -155,7 +158,7 @@ class UsageGroup extends HttpApiGroup.make("usage")
     HttpApiEndpoint.post("sync", "/usage/sync", {
       payload: SyncUsageInput,
       success: SyncUsageResponse,
-      error: DeviceMissing,
+      error: TokenDeviceUnbound,
     }),
   )
   .add(
@@ -225,7 +228,7 @@ class AdminGroup extends HttpApiGroup.make("admin")
   .add(
     HttpApiEndpoint.post("shadowBanUser", "/admin/users/:userId/shadow-ban", {
       params: {
-        userId: Schema.String,
+        userId: UserId,
       },
       success: ShadowBanUserResponse,
       error: [Forbidden, AdminUserNotFound],
@@ -234,7 +237,7 @@ class AdminGroup extends HttpApiGroup.make("admin")
   .add(
     HttpApiEndpoint.post("shadowUnbanUser", "/admin/users/:userId/shadow-unban", {
       params: {
-        userId: Schema.String,
+        userId: UserId,
       },
       success: ShadowBanUserResponse,
       error: [Forbidden, AdminUserNotFound],

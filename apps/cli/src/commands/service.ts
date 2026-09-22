@@ -22,12 +22,12 @@ import { gunzip } from "node:zlib";
 import { Data, Effect, Option } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type {
-  ServiceAutoUpdateManagerValue,
-  ServiceAutoUpdateReasonValue,
-  ServiceAutoUpdateStatusValue,
-  ServiceCheckInStatusValue,
-  ServiceRepairReasonValue,
-  ServiceRepairStatusValue,
+  ServiceAutoUpdateManager,
+  ServiceAutoUpdateReason,
+  ServiceAutoUpdateStatus,
+  ServiceCheckInStatus,
+  ServiceRepairReason,
+  ServiceRepairStatus,
 } from "@tokenmaxxing/api-contract";
 
 import { ClockService, ConfigService, ConsoleService } from "../services";
@@ -189,9 +189,9 @@ interface ServiceAutoUpdateReport {
   error?: string | null | undefined;
   installedVersion?: string | null | undefined;
   latestVersion?: string | null | undefined;
-  manager: ServiceAutoUpdateManagerValue | null;
-  reason: ServiceAutoUpdateReasonValue | null;
-  status: ServiceAutoUpdateStatusValue;
+  manager: ServiceAutoUpdateManager | null;
+  reason: ServiceAutoUpdateReason | null;
+  status: ServiceAutoUpdateStatus;
 }
 
 interface ServiceAutoUpdateRuntime {
@@ -234,8 +234,8 @@ interface ServiceState {
   lastRepairAttemptAt?: string;
   lastRepairCompletedAt?: string;
   lastRepairError?: string;
-  lastRepairReason?: ServiceRepairReasonValue;
-  lastRepairStatus?: ServiceRepairStatusValue;
+  lastRepairReason?: ServiceRepairReason;
+  lastRepairStatus?: ServiceRepairStatus;
   lastRows?: number;
   lastSchedulerActive?: boolean;
   lastSince?: string;
@@ -278,12 +278,12 @@ interface ServiceCheckIn {
   repairAttemptedAt?: string | undefined;
   repairCompletedAt?: string | undefined;
   repairError?: string | undefined;
-  repairReason?: ServiceRepairReasonValue | undefined;
-  repairStatus?: ServiceRepairStatusValue | undefined;
+  repairReason?: ServiceRepairReason | undefined;
+  repairStatus?: ServiceRepairStatus | undefined;
   runnerTarget?: string | undefined;
   runnerVersion?: string | undefined;
   schedulerActive: boolean;
-  status: ServiceCheckInStatusValue;
+  status: ServiceCheckInStatus;
 }
 
 interface ServiceRunnerInstall {
@@ -305,8 +305,8 @@ interface ServiceRepairReport {
   attemptedAt: string;
   completedAt?: string | undefined;
   error?: string | undefined;
-  reason: ServiceRepairReasonValue;
-  status: ServiceRepairStatusValue;
+  reason: ServiceRepairReason;
+  status: ServiceRepairStatus;
 }
 
 type DoctorAuthConfig =
@@ -387,7 +387,7 @@ class ServiceRunnerPackageMissingError extends Data.TaggedError(
 class ServiceRunnerUpdateError extends Data.TaggedError("ServiceRunnerUpdateError")<{
   readonly cause: unknown;
   readonly reason: Extract<
-    ServiceAutoUpdateReasonValue,
+    ServiceAutoUpdateReason,
     "download-failed" | "integrity-mismatch" | "install-failed" | "platform-package-missing"
   >;
 }> {}
@@ -1495,7 +1495,7 @@ function serviceRepairReason(input: {
   reloadRequired?: boolean | undefined;
   schedulerActive?: boolean | undefined;
   serviceFailed?: boolean | undefined;
-}): ServiceRepairReasonValue | undefined {
+}): ServiceRepairReason | undefined {
   if (input.serviceFailed === true) {
     return "service-failure";
   }
@@ -1513,7 +1513,7 @@ function serviceRepairReason(input: {
 }
 
 function serviceRepairNeedsSchedulerInstall(input: {
-  reason: ServiceRepairReasonValue;
+  reason: ServiceRepairReason;
   reloadRequired?: boolean | undefined;
   schedulerActive: boolean;
 }): boolean {
@@ -1527,7 +1527,7 @@ function serviceRepairCanInstallScheduler(input: {
   return !(input.backend === "launchd" && input.deferred === true);
 }
 
-function parseServiceRepairReason(value: string | undefined): ServiceRepairReasonValue | undefined {
+function parseServiceRepairReason(value: string | undefined): ServiceRepairReason | undefined {
   if (
     value === "auto-updated" ||
     value === "reload-required" ||
@@ -1596,7 +1596,7 @@ function serviceRepairCommand(): string {
 
 function scheduleDeferredServiceRepair(
   commandPath: string,
-  reason: ServiceRepairReasonValue,
+  reason: ServiceRepairReason,
 ): Effect.Effect<ServiceRepairReport, never> {
   const attemptedAt = new Date().toISOString();
 
@@ -1627,7 +1627,7 @@ function scheduleDeferredServiceRepair(
 
 function spawnDeferredServiceRepair(
   commandPath: string,
-  reason: ServiceRepairReasonValue,
+  reason: ServiceRepairReason,
   platform = process.platform,
 ) {
   const invocation = deferredServiceRepairInvocation(commandPath, reason, platform, process.env);
@@ -1637,7 +1637,7 @@ function spawnDeferredServiceRepair(
 
 function deferredServiceRepairInvocation(
   commandPath: string,
-  reason: ServiceRepairReasonValue,
+  reason: ServiceRepairReason,
   platform: NodeJS.Platform,
   env: Record<string, string | undefined> = process.env,
 ): {
@@ -1700,7 +1700,7 @@ function deferredServiceRepairInvocation(
   };
 }
 
-function systemdRepairUnitName(reason: ServiceRepairReasonValue): string {
+function systemdRepairUnitName(reason: ServiceRepairReason): string {
   return `${SYSTEMD_NAME}-repair-${reason}`;
 }
 
@@ -1710,7 +1710,7 @@ function systemdRunEnvArgs(env: Record<string, string>): string[] {
 
 function maybeScheduleDeferredServiceRepair(input: {
   commandPath: string | undefined;
-  reason: ServiceRepairReasonValue | undefined;
+  reason: ServiceRepairReason | undefined;
   scheduled: boolean;
 }): Effect.Effect<ServiceRepairReport | undefined, never> {
   if (!input.scheduled || input.commandPath === undefined || input.reason === undefined) {

@@ -1,3 +1,4 @@
+import { DeviceId } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -97,7 +98,7 @@ function device(overrides: Partial<AdminDevice> = {}): AdminDevice {
   return {
     arch: null,
     createdAt: "2026-01-01T00:00:00.000Z",
-    id: "device_1",
+    id: DeviceId.make("device_1"),
     lastCheckInAt: null,
     lastSyncAt: null,
     name: "laptop",

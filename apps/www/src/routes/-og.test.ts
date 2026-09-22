@@ -281,12 +281,11 @@ function profile(): Profile {
       sessionCount: 14,
       sources: ["claude", "codex"],
       topModel: { model: "claude-opus", spendUsd: 42 },
-      totalSpendUsd: 123.45,
+      spendUsd: 123.45,
       totalTokens: 987_654,
     },
     user: {
       avatarUrl: "https://github.com/pondorasti.png",
-      id: "user_123",
       login: "pondorasti",
       name: null,
     },
@@ -297,7 +296,7 @@ function daily(): Daily {
   return {
     days: [
       {
-        costUsd: 12.34,
+        spendUsd: 12.34,
         date: "2026-06-21",
         key: "claude-opus",
         outputTokens: 200,
@@ -305,8 +304,8 @@ function daily(): Daily {
       },
     ],
     range: {
-      first: "2026-01-01",
-      last: "2026-06-21",
+      firstDate: "2026-01-01",
+      lastDate: "2026-06-21",
     },
   };
 }

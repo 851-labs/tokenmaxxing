@@ -18,7 +18,8 @@ describe("D1 leaderboard ranking", () => {
 
   beforeEach(() => {
     database = makeTestDatabase();
-    // Inserted out of id order so ties cannot pass by insertion order.
+    // Inserted out of id order so ties cannot pass by insertion order. Seeded
+    // logins equal ids, and public rows only carry the login.
     for (const id of ["delta", "charlie", "bravo", "alpha"]) {
       seedUser(database.sqlite, { id });
     }
@@ -56,12 +57,12 @@ describe("D1 leaderboard ranking", () => {
       leaderboard.list({ limit: 10, metric: "tokens", since: null, until }),
     );
 
-    expect(bySpend.map((entry) => [entry.rank, entry.user.id])).toEqual([
+    expect(bySpend.map((entry) => [entry.rank, entry.user.login])).toEqual([
       [1, "bravo"],
       [2, "charlie"],
       [3, "alpha"],
     ]);
-    expect(byTokens.map((entry) => entry.user.id)).toEqual(["alpha", "charlie", "bravo"]);
+    expect(byTokens.map((entry) => entry.user.login)).toEqual(["alpha", "charlie", "bravo"]);
   });
 
   it("breaks ties by ascending user id", async () => {
@@ -74,7 +75,12 @@ describe("D1 leaderboard ranking", () => {
       leaderboard.list({ limit: 10, metric: "spend", since: null, until }),
     );
 
-    expect(entries.map((entry) => entry.user.id)).toEqual(["alpha", "bravo", "charlie", "delta"]);
+    expect(entries.map((entry) => entry.user.login)).toEqual([
+      "alpha",
+      "bravo",
+      "charlie",
+      "delta",
+    ]);
   });
 
   it("applies the limit after ordering", async () => {
@@ -88,7 +94,7 @@ describe("D1 leaderboard ranking", () => {
       leaderboard.list({ limit: 2, metric: "spend", since: null, until }),
     );
 
-    expect(entries.map((entry) => entry.user.id)).toEqual(["bravo", "charlie"]);
+    expect(entries.map((entry) => entry.user.login)).toEqual(["bravo", "charlie"]);
   });
 
   it("windows usage by an inclusive since date", async () => {
@@ -108,7 +114,7 @@ describe("D1 leaderboard ranking", () => {
         lastDate: "2026-07-02",
         rank: 1,
         spendUsd: 2,
-        user: expect.objectContaining({ id: "bravo" }),
+        user: expect.objectContaining({ login: "bravo" }),
       }),
       expect.objectContaining({
         activeDays: 1,
@@ -116,7 +122,7 @@ describe("D1 leaderboard ranking", () => {
         rank: 2,
         spendUsd: 1,
         totalTokens: 1,
-        user: expect.objectContaining({ id: "alpha" }),
+        user: expect.objectContaining({ login: "alpha" }),
       }),
     ]);
   });
@@ -139,17 +145,23 @@ describe("D1 leaderboard ranking", () => {
       leaderboard.list({ limit: 10, metric: "spend", since: null, until }),
     );
     const snapshot = await Effect.runPromise(
-      stats.snapshot({ last30dSince: "2026-06-01", limit: 10, until }),
+      stats.snapshot({
+        limit: 10,
+        until,
+        windows: { allTime: null, last30d: "2026-06-01", ytd: "2026-01-01" },
+      }),
     );
     const profileRanks = await Promise.all(
       entries.map((entry) =>
-        Effect.runPromise(profiles.leaderboardRank({ since: null, until, userId: entry.user.id })),
+        Effect.runPromise(
+          profiles.leaderboardRank({ since: null, until, userId: entry.user.login }),
+        ),
       ),
     );
 
-    const leaderboardOrder = entries.map((entry) => entry.user.id);
-    expect(snapshot.topUsers.bySpend.map((row) => row.user.id)).toEqual(leaderboardOrder);
-    expect(snapshot.topUsers.byTokens.map((row) => row.user.id)).toEqual(leaderboardOrder);
+    const leaderboardOrder = entries.map((entry) => entry.user.login);
+    expect(snapshot.topUsers.bySpend.map((row) => row.user.login)).toEqual(leaderboardOrder);
+    expect(snapshot.topUsers.byTokens.map((row) => row.user.login)).toEqual(leaderboardOrder);
     expect(profileRanks).toEqual(entries.map((entry) => entry.rank));
   });
 });

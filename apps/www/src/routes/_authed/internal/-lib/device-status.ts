@@ -1,4 +1,4 @@
-import type { AdminUsersResponse, ServiceRepairReasonValue } from "@tokenmaxxing/api-contract";
+import type { AdminUsersResponse, ServiceRepairReason } from "@tokenmaxxing/api-contract";
 
 import { formatInteger } from "../../../../lib/format";
 
@@ -10,7 +10,7 @@ type NullableDeviceField = {
 }[keyof AdminDevice];
 type TitlePart = (device: AdminDevice) => string | undefined;
 
-const REPAIR_REASON_LABELS: Record<ServiceRepairReasonValue, string> = {
+const REPAIR_REASON_LABELS: Record<ServiceRepairReason, string> = {
   "auto-updated": "auto updated",
   "reload-required": "reload required",
   "scheduler-inactive": "scheduler inactive",
@@ -87,7 +87,7 @@ function serviceStatusTitle(device: AdminDevice): string {
 }
 
 /** The first repair the device needs, in priority order. */
-function repairReasonForDevice(device: AdminDevice | null): ServiceRepairReasonValue | null {
+function repairReasonForDevice(device: AdminDevice | null): ServiceRepairReason | null {
   if (device === null) {
     return null;
   }
@@ -104,7 +104,7 @@ function repairReasonForDevice(device: AdminDevice | null): ServiceRepairReasonV
   return null;
 }
 
-function repairReasonLabel(reason: ServiceRepairReasonValue): string {
+function repairReasonLabel(reason: ServiceRepairReason): string {
   return REPAIR_REASON_LABELS[reason];
 }
 

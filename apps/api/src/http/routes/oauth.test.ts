@@ -18,6 +18,7 @@ import {
   redirectPathFromOAuthState,
   sanitizeOAuthRedirectPath,
 } from "./oauth";
+import { UserId } from "@tokenmaxxing/api-contract";
 
 describe("sanitizeOAuthRedirectPath", () => {
   it("keeps same-site paths including query strings", () => {
@@ -202,7 +203,7 @@ describe("oauthErrorLocation", () => {
   });
 });
 
-const USER = { avatarUrl: null, id: "user_1", login: "alex", name: null };
+const USER = { avatarUrl: null, id: UserId.make("user_1"), login: "alex", name: null };
 
 function oauthHandler(options: { exchange?: "fail"; signIn?: "conflict" } = {}) {
   const calls = {

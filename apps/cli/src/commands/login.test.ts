@@ -1,5 +1,5 @@
 import { Cause, Effect, Layer, Option } from "effect";
-import type { AuthUser } from "@tokenmaxxing/api-contract";
+import { UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -50,7 +50,7 @@ interface TestState {
 
 const user: AuthUser = {
   avatarUrl: null,
-  id: "user_123",
+  id: UserId.make("user_123"),
   login: "pondorasti",
   name: "Alexandru Turcanu",
 };

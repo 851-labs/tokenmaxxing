@@ -1,17 +1,22 @@
 import { Effect, Option } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { UserNotFound } from "@tokenmaxxing/api-contract";
+import { UserId, UserNotFound } from "@tokenmaxxing/api-contract";
 
+import { yearStartDayKey } from "../date-keys";
 import { makeProfilesService, profileDailyRange, ProfilesRepository } from "./service";
 
 describe("profileDailyRange", () => {
   const now = new Date("2026-06-21T23:30:00.000Z");
 
-  it("defaults profile charts to 2026 year-to-date in UTC", () => {
+  it("defaults profile charts to the current UTC year to date", () => {
     expect(profileDailyRange({}, now)).toEqual({
-      first: "2026-01-01",
-      last: "2026-06-21",
+      firstDate: "2026-01-01",
+      lastDate: "2026-06-21",
+    });
+    expect(profileDailyRange({}, new Date("2027-01-03T12:00:00.000Z"))).toEqual({
+      firstDate: "2027-01-01",
+      lastDate: "2027-01-03",
     });
   });
 
@@ -25,8 +30,8 @@ describe("profileDailyRange", () => {
         now,
       ),
     ).toEqual({
-      first: "2026-06-20",
-      last: "2026-06-22",
+      firstDate: "2026-06-20",
+      lastDate: "2026-06-22",
     });
   });
 });
@@ -42,8 +47,8 @@ const profileStats = {
   peakDay: { date: "2026-06-21", spendUsd: 2 },
   sessionCount: 1,
   sources: ["codex"],
+  spendUsd: 2,
   topModel: { model: "gpt-5", spendUsd: 2 },
-  totalSpendUsd: 2,
   totalTokens: 100,
 };
 
@@ -59,10 +64,10 @@ async function makeProfileService(
           onDaily?.(query);
           return Effect.succeed([
             {
-              costUsd: 2,
               date: "2026-06-21",
               key: "gpt-5",
               outputTokens: 20,
+              spendUsd: 2,
               totalTokens: 100,
             },
           ]);
@@ -74,7 +79,7 @@ async function makeProfileService(
                   shadowBanned,
                   user: {
                     avatarUrl: null,
-                    id: "user_target",
+                    id: UserId.make("user_target"),
                     login: "target",
                     name: null,
                   },
@@ -105,7 +110,7 @@ describe("ProfilesService shadow-ban visibility", () => {
                 shadowBanned: false,
                 user: {
                   avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
-                  id: "user_target",
+                  id: UserId.make("user_target"),
                   login: "target",
                   name: null,
                 },
@@ -147,13 +152,12 @@ describe("ProfilesService shadow-ban visibility", () => {
     }
   });
 
-  it("keeps visible profiles public", async () => {
+  it("keeps visible profiles public without exposing the internal user id", async () => {
     const service = await makeProfileService(false);
+    const profile = await Effect.runPromise(service.getProfile("target", null));
 
-    await expect(Effect.runPromise(service.getProfile("target", null))).resolves.toMatchObject({
-      stats: { leaderboardRank: 7 },
-      user: { id: "user_target", login: "target" },
-    });
+    expect(profile).toMatchObject({ stats: { leaderboardRank: 7 } });
+    expect(profile.user).toEqual({ avatarUrl: null, login: "target", name: null });
   });
 
   it("returns not found for anonymous and other viewers of a banned profile", async () => {
@@ -163,34 +167,40 @@ describe("ProfilesService shadow-ban visibility", () => {
       UserNotFound,
     );
     await expect(
-      Effect.runPromise(service.getIdentity("target", "user_other")),
+      Effect.runPromise(service.getIdentity("target", UserId.make("user_other"))),
     ).rejects.toBeInstanceOf(UserNotFound);
     await expect(Effect.runPromise(service.getProfile("target", null))).rejects.toBeInstanceOf(
       UserNotFound,
     );
     await expect(
-      Effect.runPromise(service.getDaily("target", { groupBy: "model" }, "user_other")),
+      Effect.runPromise(
+        service.getDaily("target", { groupBy: "model" }, UserId.make("user_other")),
+      ),
     ).rejects.toBeInstanceOf(UserNotFound);
   });
 
   it("returns the normal identity, profile, and daily data to the banned owner", async () => {
     const service = await makeProfileService(true);
 
-    await expect(Effect.runPromise(service.getIdentity("target", "user_target"))).resolves.toEqual({
+    await expect(
+      Effect.runPromise(service.getIdentity("target", UserId.make("user_target"))),
+    ).resolves.toEqual({
       avatarUrl: null,
       login: "target",
     });
     await expect(
-      Effect.runPromise(service.getProfile("target", "user_target")),
+      Effect.runPromise(service.getProfile("target", UserId.make("user_target"))),
     ).resolves.toMatchObject({ stats: { totalTokens: 100 }, user: { login: "target" } });
     await expect(
-      Effect.runPromise(service.getDaily("target", { groupBy: "model" }, "user_target")),
+      Effect.runPromise(
+        service.getDaily("target", { groupBy: "model" }, UserId.make("user_target")),
+      ),
     ).resolves.toMatchObject({ days: [{ totalTokens: 100 }] });
   });
 });
 
 describe("ProfilesService.getDaily", () => {
-  it("queries from the same default lower bound it reports as range.first", async () => {
+  it("queries from the same default lower bound it reports as range.firstDate", async () => {
     const queries: Array<{ since?: string | undefined; until?: string | undefined }> = [];
     const service = await makeProfileService(false, undefined, (query) => queries.push(query));
 
@@ -198,9 +208,10 @@ describe("ProfilesService.getDaily", () => {
       service.getDaily("target", { groupBy: "model" }, null),
     );
 
-    expect(response.range.first).toBe("2026-01-01");
+    const yearStart = yearStartDayKey(new Date());
+    expect(response.range.firstDate).toBe(yearStart);
     // `until` is the ingest ceiling (UTC today + 1), applied by #83's cap.
-    expect(queries).toEqual([{ groupBy: "model", since: "2026-01-01", until: expect.any(String) }]);
+    expect(queries).toEqual([{ groupBy: "model", since: yearStart, until: expect.any(String) }]);
   });
 
   it("passes explicit bounds through unchanged", async () => {
@@ -215,7 +226,7 @@ describe("ProfilesService.getDaily", () => {
       ),
     );
 
-    expect(response.range).toEqual({ first: "2026-06-20", last: "2026-06-22" });
+    expect(response.range).toEqual({ firstDate: "2026-06-20", lastDate: "2026-06-22" });
     expect(queries).toEqual([{ groupBy: "model", since: "2026-06-20", until: "2026-06-22" }]);
   });
 });

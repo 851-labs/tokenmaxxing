@@ -9,20 +9,22 @@ import type {
   ProfileIdentityResponse,
   ProfileResponse,
   ProfileStats,
+  UserId,
 } from "@tokenmaxxing/api-contract";
 
 import type { DatabaseError } from "../database";
-import { latestUsageDateKey, utcDayKey, YEAR_2026_START } from "../date-keys";
+import { latestUsageDateKey, utcDayKey, yearStartDayKey } from "../date-keys";
+import { toPublicUser } from "../public-user";
 import { leaderboardWindowStart } from "../usage/ranking";
 
 /**
  * Public profile dashboards: lifetime stats for the header cards plus the
  * per-day series the charts consume, grouped by model or source. Without an
- * explicit `since`, charts cover 2026 year-to-date.
+ * explicit `since`, charts cover the current UTC year to date.
  */
 
 interface DailyQuery {
-  groupBy: typeof ProfileDailyGroupBy.Type;
+  groupBy: ProfileDailyGroupBy;
   since?: string | undefined;
   until?: string | undefined;
 }
@@ -30,25 +32,26 @@ interface DailyQuery {
 interface ProfilesServiceShape {
   getIdentity(
     login: string,
-    viewerUserId: string | null,
-  ): Effect.Effect<typeof ProfileIdentityResponse.Type, UserNotFound>;
+    viewerUserId: UserId | null,
+  ): Effect.Effect<ProfileIdentityResponse, UserNotFound>;
   getProfile(
     login: string,
-    viewerUserId: string | null,
-  ): Effect.Effect<typeof ProfileResponse.Type, UserNotFound>;
+    viewerUserId: UserId | null,
+  ): Effect.Effect<ProfileResponse, UserNotFound>;
   getDaily(
     login: string,
     query: DailyQuery,
-    viewerUserId: string | null,
-  ): Effect.Effect<typeof ProfileDailyResponse.Type, UserNotFound>;
+    viewerUserId: UserId | null,
+  ): Effect.Effect<ProfileDailyResponse, UserNotFound>;
 }
 
 interface ProfileUser {
   shadowBanned: boolean;
-  user: typeof AuthUser.Type;
+  /** Internal identity; responses expose it only as a PublicUser. */
+  user: AuthUser;
 }
 
-type ProfileStatsWithoutRank = Omit<typeof ProfileStats.Type, "leaderboardRank">;
+type ProfileStatsWithoutRank = Omit<ProfileStats, "leaderboardRank">;
 
 interface ProfilesRepositoryShape {
   findUserByLogin(login: string): Effect.Effect<Option.Option<ProfileUser>, DatabaseError>;
@@ -69,7 +72,7 @@ interface ProfilesRepositoryShape {
   daily(
     userId: string,
     query: DailyQuery & { until: string },
-  ): Effect.Effect<(typeof ProfileDailyRow.Type)[], DatabaseError>;
+  ): Effect.Effect<ProfileDailyRow[], DatabaseError>;
 }
 
 class ProfilesService extends Context.Service<ProfilesService, ProfilesServiceShape>()(
@@ -85,7 +88,7 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
 
   const requireUser = Effect.fn("ProfilesService.requireUser")(function* (
     login: string,
-    viewerUserId: string | null,
+    viewerUserId: UserId | null,
   ) {
     const result = yield* repository.findUserByLogin(login).pipe(Effect.orDie);
     if (
@@ -119,7 +122,7 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
         { concurrency: "unbounded" },
       ).pipe(Effect.orDie);
 
-      return { stats: { ...stats, leaderboardRank }, user };
+      return { stats: { ...stats, leaderboardRank }, user: toPublicUser(user) };
     }),
     getDaily: Effect.fn("ProfilesService.getDaily")(function* (login, query, viewerUserId) {
       const user = yield* requireUser(login, viewerUserId);
@@ -127,10 +130,10 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
       const ceiling = latestUsageDateKey(now);
       const until = query.until === undefined || query.until > ceiling ? ceiling : query.until;
       const range = profileDailyRange(query, now);
-      // The reported range.first is also the query's lower bound, so charts
-      // never receive rows before the range they draw.
+      // The reported range.firstDate is also the query's lower bound, so
+      // charts never receive rows before the range they draw.
       const days = yield* repository
-        .daily(user.id, { ...query, since: range.first, until })
+        .daily(user.id, { ...query, since: range.firstDate, until })
         .pipe(Effect.orDie);
 
       return { days, range };
@@ -138,10 +141,13 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
   });
 });
 
-function profileDailyRange(query: Pick<DailyQuery, "since" | "until">, now: Date) {
+function profileDailyRange(
+  query: Pick<DailyQuery, "since" | "until">,
+  now: Date,
+): ProfileDailyResponse["range"] {
   return {
-    first: query.since ?? YEAR_2026_START,
-    last: query.until ?? utcDayKey(now),
+    firstDate: query.since ?? yearStartDayKey(now),
+    lastDate: query.until ?? utcDayKey(now),
   };
 }
 
