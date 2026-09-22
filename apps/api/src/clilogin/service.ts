@@ -42,7 +42,7 @@ import type { CurrentUser } from "../auth/service";
 
 const LOGIN_REQUEST_TTL_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_SECONDS = 2;
-const LEGACY_LOGIN_SUNSET = new Date("2026-11-01T00:00:00.000Z");
+const LEGACY_LOGIN_SUNSET = new Date("2027-11-01T00:00:00.000Z");
 
 interface StartInput {
   deviceArch?: string | undefined;
