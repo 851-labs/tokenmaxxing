@@ -14,6 +14,7 @@ interface R2BucketLike {
       httpMetadata?: { contentType?: string };
     },
   ): Effect.Effect<unknown, unknown, any>;
+  delete(keys: string[]): Effect.Effect<unknown, unknown, any>;
 }
 
 interface RawUsageObjectStoreShape {
@@ -23,7 +24,12 @@ interface RawUsageObjectStoreShape {
     payloadHash: string;
     payloadJson: string;
   }): Effect.Effect<void, RawUsageStorageError, any>;
+  /** Deletes objects by key; missing keys are a no-op, so retries are safe. */
+  deleteObjects(keys: readonly string[]): Effect.Effect<void, RawUsageStorageError, any>;
 }
+
+/** R2 caps a multi-key delete at 1000 keys. */
+const DELETE_BATCH_SIZE = 1000;
 
 class RawUsageObjectStore extends Context.Service<RawUsageObjectStore, RawUsageObjectStoreShape>()(
   "@tokenmaxxing/api/RawUsageObjectStore",
@@ -45,6 +51,14 @@ class RawUsageObjectStore extends Context.Service<RawUsageObjectStore, RawUsageO
               Effect.asVoid,
               Effect.mapError((cause) => new RawUsageStorageError({ cause })),
             ),
+        deleteObjects: (keys) =>
+          Effect.gen(function* () {
+            for (let offset = 0; offset < keys.length; offset += DELETE_BATCH_SIZE) {
+              yield* bucket
+                .delete(keys.slice(offset, offset + DELETE_BATCH_SIZE))
+                .pipe(Effect.mapError((cause) => new RawUsageStorageError({ cause })));
+            }
+          }),
       }),
     );
   }

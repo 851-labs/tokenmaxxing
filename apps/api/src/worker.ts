@@ -79,7 +79,11 @@ const ApiWorker = Cloudflare.Worker(
       Effect.provide(CliLoginRepositoryLive.pipe(Layer.provide(drizzleLayer))),
     );
     const tokens = yield* makeTokensService().pipe(
-      Effect.provide(TokensRepositoryLive.pipe(Layer.provide(drizzleLayer))),
+      Effect.provide(
+        TokensRepositoryLive.pipe(
+          Layer.provide(Layer.mergeAll(drizzleLayer, rawUsageObjectStoreLayer)),
+        ),
+      ),
     );
     const github = yield* makeGitHubClient().pipe(
       Effect.provide(FetchHttpClient.layer),

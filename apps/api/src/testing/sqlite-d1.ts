@@ -1,23 +1,18 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { fileURLToPath } from "node:url";
 
-import { Effect } from "effect";
-import type { Layer } from "effect";
+import { applyMigrations } from "@tokenmaxxing/db/migrations";
+import { Effect, Layer } from "effect";
 
 import { Drizzle } from "../database";
 
 /**
- * Test-only D1 stand-in over node:sqlite with every drizzle migration
- * applied, so repository tests run the real D1 query builder SQL (including
- * `RETURNING` and `db.batch`) against the real schema. Implements just the
- * D1 surface drizzle-orm/d1 calls: prepare/bind/all/raw/run and batch.
+ * Shared D1 test harness: an in-memory node:sqlite database migrated with
+ * the real packages/db migrations (journal order), wrapped in the subset of
+ * the D1 binding drizzle-orm/d1 calls — prepare/bind/all/raw/run/first and
+ * an atomic batch — so repository tests run the real query-builder SQL
+ * (including `RETURNING` and `db.batch`) against the real schema. Foreign
+ * keys stay on, matching D1.
  */
-
-const MIGRATIONS_DIR = fileURLToPath(
-  new URL("../../../../packages/db/migrations/", import.meta.url).href,
-);
 
 /** A service with its `any` requirements erased so tests can runPromise it
  * directly (the repositories are already provided). */
@@ -27,82 +22,110 @@ type RunnableService<S> = {
     : S[K];
 };
 
-interface TestDatabase {
-  drizzleLayer: Layer.Layer<Drizzle>;
-  sqlite: DatabaseSync;
+interface ExecutedQuery {
+  parameters: SQLInputValue[];
+  sql: string;
 }
 
-function makeTestDatabase(): TestDatabase {
-  const sqlite = new DatabaseSync(":memory:");
-  sqlite.exec("PRAGMA foreign_keys = ON;");
-  for (const file of readdirSync(MIGRATIONS_DIR)
-    .filter((name) => name.endsWith(".sql"))
-    .sort()) {
-    const migration = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
-    for (const statement of migration.split("--> statement-breakpoint")) {
-      if (statement.trim() !== "") {
-        sqlite.exec(statement);
-      }
-    }
-  }
+interface TestDatabase {
+  readonly d1: D1Database;
+  readonly drizzleLayer: Layer.Layer<Drizzle>;
+  /** Every statement run through the D1 shim, in execution order. */
+  readonly executed: ExecutedQuery[];
+  readonly sqlite: DatabaseSync;
+  close(): void;
+  /** `EXPLAIN QUERY PLAN` details for one executed statement. */
+  queryPlan(query: ExecutedQuery): string[];
+  /** Executed statements whose plan full-scans `table` instead of using an index. */
+  tableScans(table: string): string[];
+}
 
-  const d1 = new SqliteD1(sqlite) as unknown as D1Database;
+/** `before` stops ahead of the named migration tag. */
+function makeTestDatabase(options: { before?: string } = {}): TestDatabase {
+  const sqlite = new DatabaseSync(":memory:", { enableForeignKeyConstraints: true });
+  applyMigrations(sqlite, options);
+  const executed: ExecutedQuery[] = [];
+  const d1 = makeD1Database(sqlite, executed);
+  const queryPlan = ({ parameters, sql }: ExecutedQuery) =>
+    sqlite
+      .prepare(`explain query plan ${sql}`)
+      .all(...parameters)
+      .map((row) => String(row.detail));
 
   return {
+    close: () => sqlite.close(),
+    d1,
     drizzleLayer: Drizzle.layer({ raw: Effect.succeed(d1) }),
+    executed,
+    queryPlan,
     sqlite,
+    tableScans: (table) =>
+      executed
+        .filter((query) => queryPlan(query).some((detail) => detail === `SCAN ${table}`))
+        .map((query) => query.sql),
   };
 }
 
-class SqliteD1 {
-  constructor(private readonly sqlite: DatabaseSync) {}
-
-  prepare(query: string): SqliteD1Statement {
-    return new SqliteD1Statement(this.sqlite, query, []);
-  }
-
-  /** D1 batches run as one implicit transaction. */
-  async batch(statements: SqliteD1Statement[]) {
-    this.sqlite.exec("BEGIN");
-    try {
-      const results = statements.map((statement) => statement.allSync());
-      this.sqlite.exec("COMMIT");
-      return results;
-    } catch (cause) {
-      this.sqlite.exec("ROLLBACK");
-      throw cause;
-    }
-  }
+function makeD1Database(sqlite: DatabaseSync, executed: ExecutedQuery[] = []): D1Database {
+  return {
+    /** D1 batches run as one implicit transaction. */
+    batch: async (statements: D1PreparedStatement[]) => {
+      sqlite.exec("begin");
+      try {
+        const results = [];
+        for (const statement of statements) {
+          results.push(await statement.all());
+        }
+        sqlite.exec("commit");
+        return results;
+      } catch (error) {
+        sqlite.exec("rollback");
+        throw error;
+      }
+    },
+    exec: async (query: string) => {
+      sqlite.exec(query);
+      return { count: 0, duration: 0 };
+    },
+    prepare: (query: string) => makeD1Statement(sqlite, executed, query),
+  } as unknown as D1Database;
 }
 
-class SqliteD1Statement {
-  constructor(
-    private readonly sqlite: DatabaseSync,
-    private readonly query: string,
-    private readonly params: SQLInputValue[],
-  ) {}
+function makeD1Statement(
+  sqlite: DatabaseSync,
+  executed: ExecutedQuery[],
+  query: string,
+  parameters: SQLInputValue[] = [],
+): D1PreparedStatement {
+  const prepareRecorded = () => {
+    executed.push({ parameters, sql: query });
+    return sqlite.prepare(query);
+  };
 
-  bind(...params: unknown[]): SqliteD1Statement {
-    return new SqliteD1Statement(this.sqlite, this.query, params.map(toSqlValue));
-  }
-
-  allSync() {
-    const results = this.sqlite.prepare(this.query).all(...this.params);
-    return { meta: { changes: results.length }, results, success: true };
-  }
-
-  async all() {
-    return this.allSync();
-  }
-
-  async raw() {
-    return this.allSync().results.map((row) => Object.values(row));
-  }
-
-  async run() {
-    const result = this.sqlite.prepare(this.query).run(...this.params);
-    return { meta: { changes: Number(result.changes) }, results: [], success: true };
-  }
+  return {
+    all: async () => {
+      const results = prepareRecorded().all(...parameters);
+      return { meta: { changes: results.length }, results, success: true };
+    },
+    bind: (...values: unknown[]) =>
+      makeD1Statement(sqlite, executed, query, values.map(toSqlValue)),
+    first: async () => prepareRecorded().get(...parameters) ?? null,
+    // Positional arrays, not Object.values: joined tables share column
+    // names, which would collapse in row objects.
+    raw: async () => {
+      const statement = prepareRecorded();
+      statement.setReturnArrays(true);
+      return statement.all(...parameters);
+    },
+    run: async () => {
+      const result = prepareRecorded().run(...parameters);
+      return {
+        meta: { changes: Number(result.changes), last_row_id: Number(result.lastInsertRowid) },
+        results: [],
+        success: true,
+      };
+    },
+  } as unknown as D1PreparedStatement;
 }
 
 function toSqlValue(value: unknown): SQLInputValue {
@@ -116,6 +139,6 @@ function toSqlValue(value: unknown): SQLInputValue {
   return value as SQLInputValue;
 }
 
-export { makeTestDatabase };
+export { makeD1Database, makeTestDatabase };
 
-export type { RunnableService, TestDatabase };
+export type { ExecutedQuery, RunnableService, TestDatabase };

@@ -205,20 +205,23 @@ function usersBy(db: DrizzleD1Database, until: string, orderBy: "spend" | "token
     "total_tokens_sum",
   );
 
-  return db
-    .select({
-      activeDays: sql<number>`count(distinct ${usageDays.date})`,
-      lastDate: sql<string | null>`max(${usageDays.date})`,
-      spendUsd,
-      totalTokens,
-      user: users,
-    })
-    .from(usageDays)
-    .innerJoin(users, eq(usageDays.userId, users.id))
-    .where(visibleUsage(until))
-    .groupBy(usageDays.userId)
-    .orderBy(orderBy === "spend" ? desc(spendUsd) : desc(totalTokens))
-    .limit(limit);
+  return (
+    db
+      .select({
+        activeDays: sql<number>`count(distinct ${usageDays.date})`,
+        lastDate: sql<string | null>`max(${usageDays.date})`,
+        spendUsd,
+        totalTokens,
+        user: users,
+      })
+      .from(usageDays)
+      .innerJoin(users, eq(usageDays.userId, users.id))
+      .where(visibleUsage(until))
+      .groupBy(usageDays.userId)
+      // Same tiebreak as the leaderboard, so equal totals rank identically.
+      .orderBy(orderBy === "spend" ? desc(spendUsd) : desc(totalTokens), asc(usageDays.userId))
+      .limit(limit)
+  );
 }
 
 function toUserMetric(row: {

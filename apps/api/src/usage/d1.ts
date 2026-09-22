@@ -1,5 +1,5 @@
 import { devices, usageDays, usageRawBatches, usageSourceStats } from "@tokenmaxxing/db";
-import { and, eq, lt, notInArray } from "drizzle-orm";
+import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
 import { Effect } from "effect";
 import { Layer } from "effect";
 
@@ -176,7 +176,31 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
           return;
         }
 
-        for (const report of reports) {
+        // A re-ingested payload keeps its first object: the id pins device +
+        // payload hash, so the content is identical, while the key embeds the
+        // owner at first ingest — rewriting it after the device changed hands
+        // would strand the original object with no row pointing at it.
+        const storedKeys = new Map<string, string>();
+        for (let offset = 0; offset < reports.length; offset += ID_LOOKUP_CHUNK_SIZE) {
+          const ids = reports
+            .slice(offset, offset + ID_LOOKUP_CHUNK_SIZE)
+            .map((report) => report.id);
+          const rows = yield* database.use((db) =>
+            db
+              .select({ id: usageRawBatches.id, objectKey: usageRawBatches.objectKey })
+              .from(usageRawBatches)
+              .where(inArray(usageRawBatches.id, ids)),
+          );
+          for (const row of rows) {
+            storedKeys.set(row.id, row.objectKey);
+          }
+        }
+        const pending = reports.map((report) => ({
+          ...report,
+          objectKey: storedKeys.get(report.id) ?? report.objectKey,
+        }));
+
+        for (const report of reports.filter((report) => !storedKeys.has(report.id))) {
           yield* rawStore.putObject({
             key: report.objectKey,
             payloadBytes: report.payloadBytes,
@@ -186,7 +210,7 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
         }
 
         yield* database.use((db) => {
-          const statements = reports.map((report) =>
+          const statements = pending.map((report) =>
             db
               .insert(usageRawBatches)
               .values({
@@ -226,6 +250,9 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
       }),
   });
 });
+
+/** D1 caps bound parameters at 100 per statement. */
+const ID_LOOKUP_CHUNK_SIZE = 90;
 
 const UsageRepositoryLive = Layer.effect(UsageRepository, makeD1UsageRepository());
 

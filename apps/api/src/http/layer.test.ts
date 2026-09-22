@@ -2,7 +2,7 @@ import * as Http from "alchemy/Http";
 import { Context, Effect, Layer, Scope } from "effect";
 import * as FileSystem from "effect/FileSystem";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { UserNotFound } from "@tokenmaxxing/api-contract";
 
@@ -15,6 +15,7 @@ import { Drizzle } from "../database";
 import { LeaderboardService } from "../leaderboard/service";
 import { ProfilesService } from "../profiles/service";
 import { StatsService } from "../stats/service";
+import { makeTestApp, TEST_CORS_ORIGIN, type TestApp } from "../testing/http";
 import { TokensService } from "../tokens/service";
 import { UsageService } from "../usage/service";
 import { makeApiFetch, makeApiHttpEffect } from "./layer";
@@ -106,6 +107,98 @@ describe("api cache headers", () => {
     expect(signedIn.status).toBe(200);
     expect(signedIn.headers.get("cache-control")).toBe("private, no-store");
     expect(health.headers.get("cache-control")).toBeNull();
+  });
+});
+
+describe("API HTTP responses", () => {
+  let app: TestApp | undefined;
+
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+
+  describe("CORS", () => {
+    it("allows the trace-context and auth headers the web client sends", async () => {
+      app = await makeTestApp();
+      const requestedHeaders = [
+        "authorization",
+        "b3",
+        "content-type",
+        "traceparent",
+        "tracestate",
+        "x-request-id",
+      ];
+
+      const response = await app.fetch(
+        new Request("https://api.tokenmaxxing.sh/me", {
+          headers: {
+            "access-control-request-headers": requestedHeaders.join(","),
+            "access-control-request-method": "GET",
+            origin: TEST_CORS_ORIGIN,
+          },
+          method: "OPTIONS",
+        }),
+      );
+
+      expect(response.status).toBeLessThan(300);
+      expect(response.headers.get("access-control-allow-origin")).toBe(TEST_CORS_ORIGIN);
+      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+      const allowedHeaders = (response.headers.get("access-control-allow-headers") ?? "")
+        .split(",")
+        .map((header) => header.trim().toLowerCase());
+      expect(allowedHeaders).toEqual(expect.arrayContaining(requestedHeaders));
+    });
+
+    it("does not grant unknown origins", async () => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(
+        new Request("https://api.tokenmaxxing.sh/me", {
+          headers: {
+            "access-control-request-method": "GET",
+            origin: "https://evil.example",
+          },
+          method: "OPTIONS",
+        }),
+      );
+
+      expect(response.headers.get("access-control-allow-origin")).not.toBe("https://evil.example");
+    });
+  });
+
+  describe("defect recovery", () => {
+    it("answers an unexpected defect with an opaque 500", async () => {
+      app = await makeTestApp({
+        stats: { getStats: () => Effect.die(new Error("D1 exploded: secret-table")) },
+      });
+
+      const response = await app.fetch(new Request("https://api.tokenmaxxing.sh/stats"));
+
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe("");
+    });
+
+    it("keeps schema decode failures as 400s", async () => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(
+        new Request("https://api.tokenmaxxing.sh/leaderboard?metric=bogus"),
+      );
+
+      expect(response.status).toBe(400);
+    });
+  });
+
+  it("echoes the caller's x-request-id", async () => {
+    app = await makeTestApp();
+
+    const response = await app.fetch(
+      new Request("https://api.tokenmaxxing.sh/health", { headers: { "x-request-id": "req-1" } }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBe("req-1");
   });
 });
 
