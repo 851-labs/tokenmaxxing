@@ -1,11 +1,12 @@
-import { dateKeyToDayNumber } from "@tokenmaxxing/api-contract";
+import { isDateKey } from "@tokenmaxxing/api-contract";
 
-import { MAX_USAGE_DAYS_AHEAD_OF_UTC } from "../usage/date-window";
+import { MAX_USAGE_DAYS_AHEAD_OF_UTC, shiftDayKey } from "../date-keys";
 
 /**
- * Streaks over opaque YYYY-MM-DD usage keys, computed on integer day numbers
- * (no `Date` parsing). Malformed keys and keys beyond the ingest ceiling are
- * ignored rather than trusted, so legacy bad rows cannot fail a profile.
+ * Streaks over opaque YYYY-MM-DD usage keys, using string day arithmetic (no
+ * `Date` parsing; zero-padded keys sort and compare lexicographically).
+ * Malformed keys and keys beyond the ingest ceiling are ignored rather than
+ * trusted, so legacy bad rows cannot fail a profile.
  *
  * `currentStreakDays` is the run ending on the latest active day, but only
  * while that run is still alive: its last day must be no earlier than
@@ -23,30 +24,25 @@ interface UsageStreaks {
 }
 
 function usageStreaks(dates: readonly string[], todayUtc: string): UsageStreaks {
-  const today = dateKeyToDayNumber(todayUtc);
-  if (today === undefined) {
+  if (!isDateKey(todayUtc)) {
     return { currentStreakDays: 0, longestStreakDays: 0 };
   }
 
-  const latestAccepted = today + MAX_USAGE_DAYS_AHEAD_OF_UTC;
-  const dayNumbers = new Set<number>();
-  for (const date of dates) {
-    const dayNumber = dateKeyToDayNumber(date);
-    if (dayNumber !== undefined && dayNumber <= latestAccepted) {
-      dayNumbers.add(dayNumber);
-    }
-  }
+  const latestAccepted = shiftDayKey(todayUtc, MAX_USAGE_DAYS_AHEAD_OF_UTC);
+  const activeDays = [
+    ...new Set(dates.filter((date) => isDateKey(date) && date <= latestAccepted)),
+  ].sort();
 
   let latestRun = 0;
   let longest = 0;
-  let previous: number | null = null;
-  for (const dayNumber of [...dayNumbers].sort((left, right) => left - right)) {
-    latestRun = previous !== null && dayNumber === previous + 1 ? latestRun + 1 : 1;
+  let previous: string | null = null;
+  for (const date of activeDays) {
+    latestRun = previous !== null && date === shiftDayKey(previous, 1) ? latestRun + 1 : 1;
     longest = Math.max(longest, latestRun);
-    previous = dayNumber;
+    previous = date;
   }
 
-  const alive = previous !== null && previous >= today - GRACE_DAYS_BEHIND_UTC;
+  const alive = previous !== null && previous >= shiftDayKey(todayUtc, -GRACE_DAYS_BEHIND_UTC);
 
   return {
     currentStreakDays: alive ? latestRun : 0,

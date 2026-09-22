@@ -6,7 +6,7 @@ import type { StatsResponse } from "@tokenmaxxing/api-contract";
 
 import type { JsonCache } from "../cloudflare/edge-cache";
 import type { DatabaseError } from "../database";
-import { latestUsageDateKey, trailingWindowStart } from "../usage/date-window";
+import { latestUsageDateKey, trailingWindowStart } from "../date-keys";
 
 const STATS_RANK_LIMIT = 10;
 const THIRTY_DAYS = 30;
@@ -85,7 +85,7 @@ const makeStatsService = Effect.fn("makeStatsService")(function* (
 });
 
 function statsWindowStart(now: Date): string {
-  return trailingWindowStart(now, THIRTY_DAYS);
+  return trailingWindowStart(THIRTY_DAYS, now);
 }
 
 export {

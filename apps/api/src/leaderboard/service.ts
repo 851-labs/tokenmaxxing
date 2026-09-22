@@ -8,7 +8,7 @@ import type {
 } from "@tokenmaxxing/api-contract";
 
 import type { DatabaseError } from "../database";
-import { latestUsageDateKey, trailingWindowStart } from "../usage/date-window";
+import { latestUsageDateKey, trailingWindowStart } from "../date-keys";
 
 /**
  * Public rankings. Windows are computed as UTC date strings and compared
@@ -53,7 +53,7 @@ function windowStart(window: typeof LeaderboardWindow.Type, now: Date): string |
     return null;
   }
 
-  return trailingWindowStart(now, window === "30d" ? 30 : 7);
+  return trailingWindowStart(window === "30d" ? 30 : 7, now);
 }
 
 const makeLeaderboardService = Effect.fn("makeLeaderboardService")(function* () {

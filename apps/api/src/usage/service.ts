@@ -18,13 +18,13 @@ import type {
 
 import { sha256Hex } from "../auth/crypto";
 import type { DatabaseError } from "../database";
+import { latestUsageDateKey } from "../date-keys";
 import {
   parseRawUsageReports,
   PARSER_VERSION,
   type CoveredUsageDay,
   type PersistableDailyReport,
 } from "./ccusage";
-import { latestUsageDateKey } from "./date-window";
 import { normalizeUsageDays } from "./models";
 import type { RawUsageStorageError } from "./raw-store";
 

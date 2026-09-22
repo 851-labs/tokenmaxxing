@@ -5,7 +5,8 @@ import * as Schema from "effect/Schema";
  * buckets). They are never parsed into `Date` objects: day arithmetic runs on
  * integer day numbers (days since 1970-01-01 in the proleptic Gregorian
  * calendar) computed from the key's digits, so a key can neither shift across
- * timezones nor throw on malformed input.
+ * timezones nor throw on malformed input. API-side windows live in
+ * apps/api/src/date-keys.ts.
  */
 
 const DATE_KEY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -24,7 +25,7 @@ function daysInMonth(year: number, month: number): number {
 }
 
 /** Day number for a calendar-valid key; `undefined` for anything else. */
-function dateKeyToDayNumber(value: string): number | undefined {
+function dayNumberOf(value: string): number | undefined {
   const match = DATE_KEY_PATTERN.exec(value);
   if (match === null) {
     return undefined;
@@ -49,8 +50,8 @@ function dateKeyToDayNumber(value: string): number | undefined {
   return era * 146_097 + dayOfEra - 719_468;
 }
 
-/** Inverse of {@link dateKeyToDayNumber} (civil_from_days). */
-function dayNumberToDateKey(dayNumber: number): string {
+/** Inverse of {@link dayNumberOf} (civil_from_days). */
+function dateKeyOf(dayNumber: number): string {
   const shifted = dayNumber + 719_468;
   const era = Math.floor(shifted / 146_097);
   const dayOfEra = shifted - era * 146_097;
@@ -72,17 +73,22 @@ function dayNumberToDateKey(dayNumber: number): string {
 }
 
 function isDateKey(value: string): boolean {
-  return dateKeyToDayNumber(value) !== undefined;
+  return dayNumberOf(value) !== undefined;
 }
 
-/** The UTC calendar day containing `now`, as a day number. */
-function utcDayNumber(now: Date): number {
-  return Math.floor(now.getTime() / MS_PER_DAY);
+/** The UTC calendar day containing `now`. */
+function utcDayKey(now: Date): string {
+  return dateKeyOf(Math.floor(now.getTime() / MS_PER_DAY));
 }
 
-/** The UTC calendar day containing `now`, as a day key. */
-function utcDateKey(now: Date): string {
-  return dayNumberToDateKey(utcDayNumber(now));
+/**
+ * Moves `key` by `days` calendar days (negative moves backwards). Keys that
+ * are not calendar-valid are returned unchanged; check {@link isDateKey}
+ * first where that matters.
+ */
+function shiftDayKey(key: string, days: number): string {
+  const dayNumber = dayNumberOf(key);
+  return dayNumber === undefined ? key : dateKeyOf(dayNumber + days);
 }
 
 /**
@@ -94,4 +100,4 @@ const DateKey = Schema.String.check(
   Schema.makeFilter((value: string) => isDateKey(value) || "expected a calendar date"),
 );
 
-export { DateKey, dateKeyToDayNumber, dayNumberToDateKey, isDateKey, utcDateKey, utcDayNumber };
+export { DateKey, isDateKey, shiftDayKey, utcDayKey };

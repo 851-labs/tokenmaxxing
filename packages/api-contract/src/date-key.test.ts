@@ -1,35 +1,47 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  DateKey,
-  dateKeyToDayNumber,
-  dayNumberToDateKey,
-  isDateKey,
-  utcDateKey,
-  utcDayNumber,
-} from "./date-key";
+import { DateKey, isDateKey, shiftDayKey, utcDayKey } from "./date-key";
+
+const MS_PER_DAY = 86_400_000;
 
 describe("date keys", () => {
-  it("anchors day numbers at the Unix epoch", () => {
-    expect(dateKeyToDayNumber("1970-01-01")).toBe(0);
-    expect(dateKeyToDayNumber("1969-12-31")).toBe(-1);
-    expect(dayNumberToDateKey(0)).toBe("1970-01-01");
-  });
-
-  it("round-trips every day across several centuries and leap rules", () => {
-    const start = dateKeyToDayNumber("1899-12-25")!;
-    const end = dateKeyToDayNumber("2401-01-05")!;
-    const mismatches: number[] = [];
-    for (let dayNumber = start; dayNumber <= end; dayNumber += 1) {
-      const key = dayNumberToDateKey(dayNumber);
-      // Test-only oracle: the implementation itself never touches Date.
-      const expected = new Date(dayNumber * 86_400_000).toISOString().slice(0, 10);
-      if (key !== expected || dateKeyToDayNumber(key) !== dayNumber) {
-        mismatches.push(dayNumber);
+  it("shifts across every day of several centuries and leap rules", () => {
+    // Test-only oracle: the implementation itself never touches Date.
+    const oracle = (dayNumber: number) =>
+      new Date(dayNumber * MS_PER_DAY).toISOString().slice(0, 10);
+    const mismatches: string[] = [];
+    let key = oracle(-25_575);
+    expect(key).toBe("1899-12-24");
+    for (let dayNumber = -25_575; dayNumber <= 157_000; dayNumber += 1) {
+      const expected = oracle(dayNumber);
+      if (key !== expected) {
+        mismatches.push(`${key} != ${expected}`);
+        break;
       }
+      if (shiftDayKey(shiftDayKey(key, 37), -37) !== key) {
+        mismatches.push(`${key} does not round-trip`);
+        break;
+      }
+      key = shiftDayKey(key, 1);
     }
     expect(mismatches).toEqual([]);
+  });
+
+  it("shifts by arbitrary offsets in both directions", () => {
+    expect(shiftDayKey("2024-02-28", 1)).toBe("2024-02-29");
+    expect(shiftDayKey("2025-02-28", 1)).toBe("2025-03-01");
+    expect(shiftDayKey("2026-01-01", -1)).toBe("2025-12-31");
+    expect(shiftDayKey("2026-06-12", -29)).toBe("2026-05-14");
+    expect(shiftDayKey("2026-06-12", 0)).toBe("2026-06-12");
+    expect(shiftDayKey("2000-03-01", -1)).toBe("2000-02-29");
+    expect(shiftDayKey("1900-03-01", -1)).toBe("1900-02-28");
+  });
+
+  it("returns malformed keys unchanged instead of throwing", () => {
+    for (const key of ["", "garbage", "2026-02-30", "2026-6-1"]) {
+      expect(shiftDayKey(key, 1)).toBe(key);
+    }
   });
 
   it("accepts only real calendar days in YYYY-MM-DD form", () => {
@@ -54,15 +66,14 @@ describe("date keys", () => {
       "２０２６-06-01",
     ]) {
       expect(isDateKey(invalid)).toBe(false);
-      expect(dateKeyToDayNumber(invalid)).toBeUndefined();
     }
   });
 
   it("formats the UTC calendar day of an instant", () => {
-    const now = new Date("2026-06-21T23:59:59.999Z");
-    expect(utcDateKey(now)).toBe("2026-06-21");
-    expect(utcDayNumber(now)).toBe(dateKeyToDayNumber("2026-06-21"));
-    expect(utcDateKey(new Date("2026-06-22T00:00:00.000Z"))).toBe("2026-06-22");
+    expect(utcDayKey(new Date("2026-06-21T23:59:59.999Z"))).toBe("2026-06-21");
+    expect(utcDayKey(new Date("2026-06-22T00:00:00.000Z"))).toBe("2026-06-22");
+    expect(utcDayKey(new Date(0))).toBe("1970-01-01");
+    expect(utcDayKey(new Date(-1))).toBe("1969-12-31");
   });
 
   it("decodes as a plain string and rejects impossible dates", async () => {

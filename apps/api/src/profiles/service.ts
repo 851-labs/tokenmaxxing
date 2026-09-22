@@ -2,7 +2,7 @@ import { Context } from "effect";
 import { Effect } from "effect";
 import { Option } from "effect";
 
-import { DEFAULT_LEADERBOARD_WINDOW, UserNotFound, utcDateKey } from "@tokenmaxxing/api-contract";
+import { DEFAULT_LEADERBOARD_WINDOW, UserNotFound } from "@tokenmaxxing/api-contract";
 import type {
   AuthUser,
   ProfileDailyGroupBy,
@@ -15,7 +15,7 @@ import type {
 
 import type { DatabaseError } from "../database";
 import { windowStart } from "../leaderboard/service";
-import { latestUsageDateKey } from "../usage/date-window";
+import { latestUsageDateKey, utcDayKey } from "../date-keys";
 
 /**
  * Public profile dashboards: lifetime stats for the header cards plus the
@@ -109,7 +109,7 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
       const until = latestUsageDateKey(now);
       const [stats, leaderboardRank] = yield* Effect.all(
         [
-          repository.stats(user.id, { today: utcDateKey(now), until }),
+          repository.stats(user.id, { today: utcDayKey(now), until }),
           repository.leaderboardRank({
             since: windowStart(DEFAULT_LEADERBOARD_WINDOW, now),
             until,
@@ -144,7 +144,7 @@ function profileDailyRange(query: Pick<DailyQuery, "since" | "until">, now: Date
 }
 
 function todayKeyUtc(now: Date): string {
-  return utcDateKey(now);
+  return utcDayKey(now);
 }
 
 export {
