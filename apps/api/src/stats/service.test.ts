@@ -6,10 +6,6 @@ import { StatsResponse } from "@tokenmaxxing/api-contract";
 import { type EdgeCacheLike, makeEdgeJsonCache } from "../cloudflare/edge-cache";
 import { makeStatsService, StatsRepository, statsWindowStart, type StatsSnapshot } from "./service";
 
-interface TestStatsService {
-  getStats(): Effect.Effect<typeof StatsResponse.Type, never>;
-}
-
 const emptySnapshot: StatsSnapshot = {
   allTime: {
     activeDates: 0,
@@ -87,7 +83,7 @@ describe("statsWindowStart", () => {
 describe("StatsService.getStats", () => {
   it("adds generatedAt, the last-30d lower bound, and the future-date ceiling", async () => {
     const calls: Array<{ last30dSince: string; limit: number; until: string }> = [];
-    const service = (await Effect.runPromise(
+    const service = await Effect.runPromise(
       makeStatsService({
         now: () => new Date("2026-07-09T20:00:00.000Z"),
       }).pipe(
@@ -99,7 +95,7 @@ describe("StatsService.getStats", () => {
             }),
         }),
       ),
-    )) as unknown as TestStatsService;
+    );
 
     const response = await Effect.runPromise(service.getStats());
 
@@ -114,7 +110,7 @@ describe("StatsService.getStats", () => {
     const edge = memoryEdgeCache();
     let snapshots = 0;
     let clock = new Date("2026-07-09T20:00:00.000Z");
-    const service = (await Effect.runPromise(
+    const service = await Effect.runPromise(
       makeStatsService({
         cache: makeEdgeJsonCache({
           cache: edge,
@@ -132,7 +128,7 @@ describe("StatsService.getStats", () => {
             }),
         }),
       ),
-    )) as unknown as TestStatsService;
+    );
 
     const first = await Effect.runPromise(service.getStats());
     clock = new Date("2026-07-09T20:01:00.000Z");

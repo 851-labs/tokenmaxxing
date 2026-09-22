@@ -1,7 +1,6 @@
 import { devices, usageDays, usageRawBatches, usageSourceStats } from "@tokenmaxxing/db";
 import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
-import { Effect } from "effect";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 
 import { Drizzle } from "../database";
 import { RawUsageObjectStore } from "./raw-store";

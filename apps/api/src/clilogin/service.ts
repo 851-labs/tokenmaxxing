@@ -22,7 +22,7 @@ import {
   hashDeviceCode,
   normalizeLoginCode,
 } from "../auth/crypto";
-import type { CurrentUser } from "../auth/service";
+import type { AuthUser as CurrentUser } from "@tokenmaxxing/api-contract";
 
 /**
  * The device-code login flow (RFC 8628 shaped):

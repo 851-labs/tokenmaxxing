@@ -1,17 +1,12 @@
-import { Context } from "effect";
-import { Effect } from "effect";
+import { Context, Effect } from "effect";
 
 import { DeviceMissing } from "@tokenmaxxing/api-contract";
 import type {
   CliIdentity,
   RawUsageReportInput,
-  ServiceAutoUpdateManagerValue,
-  ServiceAutoUpdateReasonValue,
-  ServiceAutoUpdateStatusValue,
-  ServiceCheckInStatusValue,
-  ServiceRepairReasonValue,
-  ServiceRepairStatusValue,
   SourceUsageStatsInput,
+  SyncUsageResponse,
+  UsageCheckInInput,
   UsageDayInput,
   UsageSource,
 } from "@tokenmaxxing/api-contract";
@@ -37,11 +32,11 @@ import type { RawUsageStorageError } from "./raw-store";
  * (not rejected): a skewed device clock should not block its real history.
  */
 
-interface SyncResult {
-  received: number;
-  syncedAt: string;
-  upserted: number;
-}
+type SyncResult = typeof SyncUsageResponse.Type;
+
+type UsageDevice = (typeof UsageCheckInInput.Type)["device"];
+
+type UsageServiceCheckIn = (typeof UsageCheckInInput.Type)["service"];
 
 interface StoredRawUsageReport {
   ccusageCommand: string;
@@ -61,56 +56,19 @@ interface UsageServiceShape {
     identity: typeof CliIdentity.Type,
     device: UsageDevice,
     service: UsageServiceCheckIn,
-  ): Effect.Effect<{ checkedInAt: string }, DeviceMissing, any>;
+  ): Effect.Effect<{ checkedInAt: string }, DeviceMissing>;
   ingestRaw(
     identity: typeof CliIdentity.Type,
     device: UsageDevice,
     reports: readonly RawUsageReportInput[],
     sourceStats?: readonly SourceUsageStatsInput[],
-  ): Effect.Effect<SyncResult, DeviceMissing, any>;
+  ): Effect.Effect<SyncResult, DeviceMissing>;
   syncBatch(
     identity: typeof CliIdentity.Type,
     device: UsageDevice,
     days: readonly UsageDayInput[],
     sourceStats?: readonly SourceUsageStatsInput[],
-  ): Effect.Effect<SyncResult, DeviceMissing, any>;
-}
-
-interface UsageDevice {
-  arch?: string | undefined;
-  name: string;
-  platform: string;
-  version?: string | undefined;
-}
-
-interface UsageServiceCheckIn {
-  autoUpdate?: UsageServiceAutoUpdate | undefined;
-  backend?: string | undefined;
-  error?: string | undefined;
-  reloadRequired?: boolean | undefined;
-  repairAttemptedAt?: string | undefined;
-  repairCompletedAt?: string | undefined;
-  repairError?: string | undefined;
-  repairReason?: ServiceRepairReasonValue | undefined;
-  repairStatus?: ServiceRepairStatusValue | undefined;
-  runnerTarget?: string | undefined;
-  runnerVersion?: string | undefined;
-  schedulerActive?: boolean | undefined;
-  status: ServiceCheckInStatusValue;
-  templateVersion?: number | undefined;
-}
-
-interface UsageServiceAutoUpdate {
-  attemptedAt?: string | null | undefined;
-  completedAt?: string | null | undefined;
-  currentVersion?: string | null | undefined;
-  enabled: boolean;
-  error?: string | null | undefined;
-  installedVersion?: string | null | undefined;
-  latestVersion?: string | null | undefined;
-  manager: ServiceAutoUpdateManagerValue | null;
-  reason: ServiceAutoUpdateReasonValue | null;
-  status: ServiceAutoUpdateStatusValue;
+  ): Effect.Effect<SyncResult, DeviceMissing>;
 }
 
 interface UsageReplacementScope {
@@ -125,37 +83,37 @@ interface UsageRepositoryShape {
     device: UsageDevice,
     service: UsageServiceCheckIn,
     checkedInAt: Date,
-  ): Effect.Effect<void, DatabaseError, any>;
+  ): Effect.Effect<void, DatabaseError>;
   /** One db.batch of single-row upserts (D1 binds ~100 params/statement). */
   upsertChunk(
     userId: string,
     deviceId: string,
     rows: readonly UsageDayInput[],
     syncedAt: Date,
-  ): Effect.Effect<void, DatabaseError, any>;
+  ): Effect.Effect<void, DatabaseError>;
   /** Removes models omitted by an authoritative raw daily report. */
   pruneChunk(
     deviceId: string,
     scopes: readonly UsageReplacementScope[],
     syncedAt: Date,
-  ): Effect.Effect<void, DatabaseError, any>;
+  ): Effect.Effect<void, DatabaseError>;
   touchDevice(
     deviceId: string,
     device: UsageDevice,
     syncedAt: Date,
-  ): Effect.Effect<void, DatabaseError, any>;
+  ): Effect.Effect<void, DatabaseError>;
   upsertSourceStats(
     userId: string,
     deviceId: string,
     stats: readonly SourceUsageStatsInput[],
     syncedAt: Date,
-  ): Effect.Effect<void, DatabaseError, any>;
+  ): Effect.Effect<void, DatabaseError>;
   upsertRawReports(
     userId: string,
     deviceId: string,
     reports: readonly StoredRawUsageReport[],
     capturedAt: Date,
-  ): Effect.Effect<void, DatabaseError | RawUsageStorageError, any>;
+  ): Effect.Effect<void, DatabaseError | RawUsageStorageError>;
 }
 
 class UsageService extends Context.Service<UsageService, UsageServiceShape>()(
@@ -401,10 +359,4 @@ const textEncoder = new TextEncoder();
 
 export { makeUsageService, UsageRepository, UsageService };
 
-export type {
-  StoredRawUsageReport,
-  SyncResult,
-  UsageReplacementScope,
-  UsageRepositoryShape,
-  UsageServiceCheckIn,
-};
+export type { StoredRawUsageReport, UsageReplacementScope, UsageRepositoryShape };

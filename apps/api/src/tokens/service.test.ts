@@ -6,11 +6,6 @@ import { makeTokensService, TokensRepository, type TokensRepositoryShape } from 
 
 type Token = typeof CliTokenSummary.Type;
 
-interface TestTokensService {
-  deleteDevice(userId: string, deviceId: string): Effect.Effect<void, DeviceNotFound>;
-  listTokens(userId: string): Effect.Effect<Token[]>;
-}
-
 function repositoryWithDeleteResult(result: boolean) {
   const deleteDevice = vi.fn(() => Effect.succeed(result));
 
@@ -37,9 +32,9 @@ function tokenSummary(id: string, revokedAt: string | null): Token {
 }
 
 async function makeService(repository: TokensRepositoryShape) {
-  return (await Effect.runPromise(
+  return Effect.runPromise(
     makeTokensService().pipe(Effect.provideService(TokensRepository, repository)),
-  )) as unknown as TestTokensService;
+  );
 }
 
 describe("TokensService.deleteDevice", () => {

@@ -1,3 +1,4 @@
+import { RuntimeContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import { Context } from "effect";
 import { Effect } from "effect";
@@ -66,8 +67,17 @@ const ApiWorker = Cloudflare.Worker(
     // binding discovery sees them (secrets bind as secret_text).
     const config = yield* AppConfig.fromEnv;
     const appConfigLayer = Layer.succeed(AppConfig, config);
-    const drizzleLayer = Drizzle.layer(connection);
-    const rawUsageObjectStoreLayer = RawUsageObjectStore.layer(bucket);
+    // Binding calls are typed as needing alchemy's RuntimeContext; the
+    // worker runtime supplies it per event, so the phantom only discharges
+    // the type.
+    const drizzleLayer = Drizzle.layer({
+      raw: connection.raw.pipe(Effect.provide(RuntimeContext.phantom)),
+    });
+    const rawUsageObjectStoreLayer = RawUsageObjectStore.layer({
+      put: (key, value, options) =>
+        bucket.put(key, value, options).pipe(Effect.provide(RuntimeContext.phantom)),
+      delete: (keys) => bucket.delete(keys).pipe(Effect.provide(RuntimeContext.phantom)),
+    });
     const usageRepositoryLayer = UsageRepositoryLive.pipe(
       Layer.provide(Layer.mergeAll(drizzleLayer, rawUsageObjectStoreLayer)),
     );
@@ -106,7 +116,9 @@ const ApiWorker = Cloudflare.Worker(
     const stats = yield* makeStatsService({
       cache: makeEdgeJsonCache({
         decode: Schema.decodeUnknownOption(StatsResponse),
-        key: `${config.urls.apiUrl}/__cache/stats`,
+        // Cache API key only — never routed. Kept byte-identical to the
+        // previous key so deploys don't cold-start the colo caches.
+        key: "https://api.tokenmaxxing.sh/__cache/stats",
         ttlSeconds: STATS_CACHE_TTL_SECONDS,
       }),
     }).pipe(Effect.provide(StatsRepositoryLive.pipe(Layer.provide(drizzleLayer))));

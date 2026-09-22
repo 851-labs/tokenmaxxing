@@ -2,7 +2,7 @@ import { Context, Data, Effect } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { AppConfig, type GitHubOAuthConfig } from "../config";
+import { AppConfig, type AppConfigShape } from "../config";
 import type { OAuthProfile } from "../auth/service";
 
 /**
@@ -127,7 +127,7 @@ const makeGitHubClient = Effect.fn("makeGitHubClient")(function* () {
 });
 
 function buildAuthorizeUrl(
-  config: GitHubOAuthConfig,
+  config: AppConfigShape["github"],
   redirectUri: string,
   state: string,
   codeChallenge: string,

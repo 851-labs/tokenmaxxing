@@ -28,11 +28,6 @@ const config: AppConfigShape = {
   github: { clientId: "github-id", clientSecret: "github-secret" },
   google: { clientId: "google-id", clientSecret: "google-secret" },
   productName: "Tokenmaxxing",
-  urls: {
-    apiUrl: "https://api.tokenmaxxing.sh",
-    sandbox: "production",
-    wwwUrl: "https://tokenmaxxing.sh",
-  },
 };
 
 describe("api router construction", () => {

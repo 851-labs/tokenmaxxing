@@ -4,7 +4,7 @@ import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { hashCliToken, hashDeviceCode } from "../auth/crypto";
-import type { CurrentUser } from "../auth/service";
+import type { AuthUser as CurrentUser } from "@tokenmaxxing/api-contract";
 import { makeTestDatabase, type RunnableService } from "../testing/sqlite-d1";
 import { CliLoginRepositoryLive } from "./d1";
 import {

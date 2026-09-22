@@ -215,11 +215,6 @@ function oauthHandler(options: { exchange?: "fail"; signIn?: "conflict" } = {}) 
       github: { clientId: "github-client", clientSecret: "github-secret" },
       google: { clientId: "google-client", clientSecret: "google-secret" },
       productName: "Tokenmaxxing",
-      urls: {
-        apiUrl: "https://api.tokenmaxxing.sh",
-        sandbox: "production",
-        wwwUrl: "https://tokenmaxxing.sh",
-      },
     }),
     Context.add(
       AuthService,

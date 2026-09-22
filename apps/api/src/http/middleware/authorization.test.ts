@@ -10,12 +10,9 @@ import {
   TokenmaxxingApi,
   type Unauthorized,
 } from "@tokenmaxxing/api-contract";
+import type { AuthUser } from "@tokenmaxxing/api-contract";
 
-import {
-  AuthService,
-  type AuthServiceShape,
-  type CurrentUser as AuthUser,
-} from "../../auth/service";
+import { AuthService, type AuthServiceShape } from "../../auth/service";
 import { makeTestApp, type TestApp } from "../../testing/http";
 import { TokensService, type TokensServiceShape } from "../../tokens/service";
 import { AuthorizationLive } from "./authorization";

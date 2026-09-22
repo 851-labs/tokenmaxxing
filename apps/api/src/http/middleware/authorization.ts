@@ -10,10 +10,11 @@ import {
   CurrentUser,
   Unauthorized,
 } from "@tokenmaxxing/api-contract";
+import type { AuthUser } from "@tokenmaxxing/api-contract";
 
 import { CLI_TOKEN_PREFIX } from "../../auth/crypto";
 import { sessionTokenFrom } from "../../auth/cookies";
-import { AuthService, type CurrentUser as AuthUser } from "../../auth/service";
+import { AuthService } from "../../auth/service";
 import { TokensService } from "../../tokens/service";
 
 /**

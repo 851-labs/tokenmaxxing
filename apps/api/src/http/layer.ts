@@ -28,8 +28,8 @@ import {
 } from "@tokenmaxxing/api-contract";
 import type { Authorization, CliAuth } from "@tokenmaxxing/api-contract";
 
-import { AppConfig } from "../config";
-import { cookieScopeFor, sessionTokenFrom } from "../auth/cookies";
+import { AppConfig, deploymentForHost } from "../config";
+import { sessionTokenFrom } from "../auth/cookies";
 import { AdminService } from "../admin/service";
 import { AuthService } from "../auth/service";
 import { CliLoginService } from "../clilogin/service";
@@ -114,7 +114,7 @@ const meHandlers = HttpApiBuilder.group(TokenmaxxingApi, "me", (handlers) =>
       Effect.gen(function* () {
         const user = yield* CurrentUser;
         const auth = yield* AuthService;
-        return { accounts: yield* auth.listAccounts(user.id).pipe(Effect.orDie) };
+        return { accounts: yield* auth.listAccounts(user.id) };
       }),
     )
     .handle("describeCliLogin", ({ query }) =>
@@ -169,9 +169,11 @@ const cliLoginHandlers = HttpApiBuilder.group(TokenmaxxingApi, "cliLogin", (hand
       Effect.gen(function* () {
         yield* rejectUndeclaredProperties(endpoint);
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const scope = cookieScopeFor(request.headers["host"] ?? "");
         const cliLogin = yield* CliLoginService;
-        return yield* cliLogin.start(payload, scope.wwwOrigin);
+        return yield* cliLogin.start(
+          payload,
+          deploymentForHost(request.headers["host"] ?? "").wwwOrigin,
+        );
       }),
     )
     .handle("poll", ({ endpoint, payload }) =>

@@ -1,9 +1,6 @@
 import { cliTokens, devices, usageDays, userAccounts, users } from "@tokenmaxxing/db";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { Effect } from "effect";
-import { Layer } from "effect";
-
-import type { OAuthProviderId } from "@tokenmaxxing/api-contract";
+import { Effect, Layer } from "effect";
 
 import { Drizzle } from "../database";
 import { AdminRepository, type AdminUserSnapshot } from "./service";
@@ -167,7 +164,7 @@ const makeD1AdminRepository = Effect.fn("makeD1AdminRepository")(function* () {
               email: account.email,
               emailVerified: account.emailVerified,
               login: account.login,
-              provider: account.provider as OAuthProviderId,
+              provider: account.provider,
             })),
             devices: (devicesByUser.get(user.id) ?? []).map((device) => ({
               arch: device.arch,

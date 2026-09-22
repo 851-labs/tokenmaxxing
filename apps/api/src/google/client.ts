@@ -3,7 +3,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import type { OAuthProfile } from "../auth/service";
-import { AppConfig, type GoogleOAuthConfig } from "../config";
+import { AppConfig, type AppConfigShape } from "../config";
 
 class GoogleApiError extends Data.TaggedError("GoogleApiError")<{
   readonly cause: unknown;
@@ -96,7 +96,7 @@ const makeGoogleClient = Effect.fn("makeGoogleClient")(function* () {
 });
 
 function buildGoogleAuthorizeUrl(
-  config: GoogleOAuthConfig,
+  config: AppConfigShape["google"],
   redirectUri: string,
   state: string,
   codeChallenge: string,

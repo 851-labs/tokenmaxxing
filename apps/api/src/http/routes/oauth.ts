@@ -3,25 +3,24 @@ import { Layer } from "effect";
 import { Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
+import type { AuthUser, OAuthProviderId } from "@tokenmaxxing/api-contract";
+
 import {
   cookieOptions,
-  cookieScopeFor,
-  type CookieScope,
   PKCE_COOKIE,
   readCookie,
   SESSION_COOKIE,
   sessionTokenFrom,
   STATE_COOKIE,
 } from "../../auth/cookies";
-import { generateToken, pkceChallenge } from "../../auth/crypto";
+import { generateToken, pkceChallenge, toBase64Url } from "../../auth/crypto";
 import {
   AuthService,
   type AuthServiceShape,
-  type CurrentUser,
   type OAuthProfile,
-  type OAuthProviderId,
+  SESSION_TTL_MS,
 } from "../../auth/service";
-import { AppConfig, type AppConfigShape } from "../../config";
+import { AppConfig, type AppConfigShape, type Deployment, deploymentForHost } from "../../config";
 import { buildAuthorizeUrl, GitHubClient } from "../../github/client";
 import { buildGoogleAuthorizeUrl, GoogleClient } from "../../google/client";
 
@@ -40,7 +39,6 @@ import { buildGoogleAuthorizeUrl, GoogleClient } from "../../google/client";
 type OAuthCallbackError = "oauth_account_conflict" | "oauth_failed" | "oauth_state_mismatch";
 
 const OAUTH_ROUNDTRIP_MAX_AGE_SECONDS = 600;
-const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
 const githubOAuthStartRoute = oauthStartRoute("github");
 const googleOAuthStartRoute = oauthStartRoute("google");
@@ -54,13 +52,13 @@ function oauthStartRoute(provider: OAuthProviderId) {
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const config = yield* AppConfig;
-      const scope = cookieScopeFor(request.headers["host"] ?? "");
+      const deployment = deploymentForHost(request.headers["host"] ?? "");
       const url = new URL(request.url, "http://localhost");
       const redirectPath = sanitizeOAuthRedirectPath(url.searchParams.get("redirect"));
       const state = encodeOAuthState(generateToken(), redirectPath);
       const codeVerifier = generateToken();
       const codeChallenge = yield* pkceChallenge(codeVerifier);
-      const roundtrip = cookieOptions(scope, OAUTH_ROUNDTRIP_MAX_AGE_SECONDS);
+      const roundtrip = cookieOptions(deployment, OAUTH_ROUNDTRIP_MAX_AGE_SECONDS);
 
       return HttpServerResponse.empty({ status: 302 }).pipe(
         HttpServerResponse.setHeader(
@@ -68,7 +66,7 @@ function oauthStartRoute(provider: OAuthProviderId) {
           buildProviderAuthorizeUrl(
             provider,
             config,
-            `${scope.apiOrigin}/auth/${provider}/callback`,
+            `${deployment.apiOrigin}/auth/${provider}/callback`,
             state,
             codeChallenge,
           ),
@@ -88,7 +86,7 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
     `/auth/${provider}/callback`,
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const scope = cookieScopeFor(request.headers["host"] ?? "");
+      const deployment = deploymentForHost(request.headers["host"] ?? "");
       const url = new URL(request.url, "http://localhost");
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
@@ -104,7 +102,7 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
         codeVerifier === null ||
         state !== expectedState
       ) {
-        return oauthErrorRedirect(scope, "oauth_state_mismatch", provider, redirectPath);
+        return oauthErrorRedirect(deployment, "oauth_state_mismatch", provider, redirectPath);
       }
 
       const auth = yield* AuthService;
@@ -115,7 +113,7 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
         const profile = yield* fetchProviderProfile(
           provider,
           code,
-          `${scope.apiOrigin}/auth/${provider}/callback`,
+          `${deployment.apiOrigin}/auth/${provider}/callback`,
           codeVerifier,
         ).pipe(Effect.orDie);
         // Provider access tokens are dropped here on purpose — identity is all
@@ -136,24 +134,24 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
 
       switch (result._tag) {
         case "conflict":
-          return oauthErrorRedirect(scope, "oauth_account_conflict", provider, redirectPath);
+          return oauthErrorRedirect(deployment, "oauth_account_conflict", provider, redirectPath);
         case "failed":
-          return oauthErrorRedirect(scope, "oauth_failed", provider, redirectPath);
+          return oauthErrorRedirect(deployment, "oauth_failed", provider, redirectPath);
         case "success": {
           // Signing in again replaces the browser's session: drop the old row
           // so it cannot outlive the cookie it was issued for.
           if (priorSessionToken !== null && priorSessionToken !== result.token) {
-            yield* auth.signOut(priorSessionToken).pipe(Effect.ignore);
+            yield* auth.signOut(priorSessionToken).pipe(Effect.ignoreCause);
           }
 
           return HttpServerResponse.empty({ status: 302 }).pipe(
             HttpServerResponse.setHeader(
               "location",
-              `${scope.wwwOrigin}${redirectPath ?? defaultOAuthRedirectPath(result.user.login)}`,
+              `${deployment.wwwOrigin}${redirectPath ?? defaultOAuthRedirectPath(result.user.login)}`,
             ),
             HttpServerResponse.setCookiesUnsafe([
-              ...clearedRoundtripCookies(scope),
-              [SESSION_COOKIE, result.token, cookieOptions(scope, SESSION_MAX_AGE_SECONDS)],
+              ...clearedRoundtripCookies(deployment),
+              [SESSION_COOKIE, result.token, cookieOptions(deployment, SESSION_TTL_MS / 1000)],
             ]),
           );
         }
@@ -163,7 +161,7 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
 }
 
 function oauthErrorRedirect(
-  scope: CookieScope,
+  deployment: Deployment,
   error: OAuthCallbackError,
   provider: OAuthProviderId,
   redirectPath: string | null,
@@ -171,9 +169,9 @@ function oauthErrorRedirect(
   return HttpServerResponse.empty({ status: 302 }).pipe(
     HttpServerResponse.setHeader(
       "location",
-      oauthErrorLocation(scope.wwwOrigin, error, provider, redirectPath),
+      oauthErrorLocation(deployment.wwwOrigin, error, provider, redirectPath),
     ),
-    HttpServerResponse.setCookiesUnsafe(clearedRoundtripCookies(scope)),
+    HttpServerResponse.setCookiesUnsafe(clearedRoundtripCookies(deployment)),
   );
 }
 
@@ -193,8 +191,8 @@ function oauthErrorLocation(
   return url.toString();
 }
 
-function clearedRoundtripCookies(scope: CookieScope) {
-  const expired = cookieOptions(scope, 0);
+function clearedRoundtripCookies(deployment: Deployment) {
+  const expired = cookieOptions(deployment, 0);
   return [
     [STATE_COOKIE, "", expired],
     [PKCE_COOKIE, "", expired],
@@ -208,15 +206,17 @@ const signoutRoute = HttpRouter.add(
   "/auth/signout",
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const scope = cookieScopeFor(request.headers["host"] ?? "");
+    const deployment = deploymentForHost(request.headers["host"] ?? "");
     const token = sessionTokenFrom(request);
     if (token !== null) {
       const auth = yield* AuthService;
-      yield* auth.signOut(token).pipe(Effect.ignore);
+      // Best effort: the cookie is cleared regardless, and a row that
+      // survives a failed delete still expires on its own.
+      yield* auth.signOut(token).pipe(Effect.ignoreCause);
     }
 
     return HttpServerResponse.jsonUnsafe({ ok: true }).pipe(
-      HttpServerResponse.setCookiesUnsafe([[SESSION_COOKIE, "", cookieOptions(scope, 0)]]),
+      HttpServerResponse.setCookiesUnsafe([[SESSION_COOKIE, "", cookieOptions(deployment, 0)]]),
     );
   }),
 );
@@ -269,7 +269,7 @@ function fetchProviderProfile(
 function currentUserFromSessionToken(
   token: string | null,
   auth: AuthServiceShape,
-): Effect.Effect<CurrentUser | null, never, any> {
+): Effect.Effect<AuthUser | null> {
   if (token === null) {
     return Effect.succeed(null);
   }
@@ -315,7 +315,7 @@ function encodeOAuthState(nonce: string, redirectPath: string | null): string {
     return nonce;
   }
 
-  return `${nonce}.${base64UrlEncode(redirectPath)}`;
+  return `${nonce}.${toBase64Url(new TextEncoder().encode(redirectPath))}`;
 }
 
 function redirectPathFromOAuthState(state: string): string | null {
@@ -334,16 +334,6 @@ function redirectPathFromOAuthState(state: string): string | null {
 
 function defaultOAuthRedirectPath(login: string): string {
   return `/${encodeURIComponent(login)}`;
-}
-
-function base64UrlEncode(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
 function base64UrlDecode(value: string): string | null {

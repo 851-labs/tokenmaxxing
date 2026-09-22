@@ -1,8 +1,8 @@
 import { usageDays, users } from "@tokenmaxxing/db";
 import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
-import { Effect } from "effect";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 
+import { toAuthUser } from "../auth/d1";
 import { Drizzle } from "../database";
 import { LeaderboardRepository } from "./service";
 
@@ -51,12 +51,7 @@ const makeD1LeaderboardRepository = Effect.fn("makeD1LeaderboardRepository")(fun
           rank: index + 1,
           spendUsd: row.spendUsd ?? 0,
           totalTokens: row.totalTokens ?? 0,
-          user: {
-            avatarUrl: row.user.avatarUrl,
-            id: row.user.id,
-            login: row.user.login,
-            name: row.user.name,
-          },
+          user: toAuthUser(row.user),
         }));
       }),
   });

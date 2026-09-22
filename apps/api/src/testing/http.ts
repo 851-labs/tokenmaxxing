@@ -46,11 +46,6 @@ const testConfig: AppConfig["Service"] = {
   github: { clientId: "github-id", clientSecret: "github-secret" },
   google: { clientId: "google-id", clientSecret: "google-secret" },
   productName: "Tokenmaxxing",
-  urls: {
-    apiUrl: "https://api.tokenmaxxing.sh",
-    sandbox: "production",
-    wwwUrl: TEST_CORS_ORIGIN,
-  },
 };
 
 async function makeTestApp(services: TestAppServices = {}): Promise<TestApp> {

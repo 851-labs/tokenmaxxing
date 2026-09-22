@@ -1,5 +1,4 @@
-import { Context } from "effect";
-import { Effect } from "effect";
+import { Context, Effect } from "effect";
 
 import type {
   LeaderboardEntry,
@@ -24,7 +23,7 @@ interface LeaderboardServiceShape {
   list(
     metric: typeof LeaderboardMetric.Type,
     window: typeof LeaderboardWindow.Type,
-  ): Effect.Effect<(typeof LeaderboardEntry.Type)[], never, any>;
+  ): Effect.Effect<(typeof LeaderboardEntry.Type)[]>;
 }
 
 interface LeaderboardRepositoryShape {
@@ -35,7 +34,7 @@ interface LeaderboardRepositoryShape {
     since: string | null;
     /** Inclusive YYYY-MM-DD upper bound. */
     until: string;
-  }): Effect.Effect<(typeof LeaderboardEntry.Type)[], DatabaseError, any>;
+  }): Effect.Effect<(typeof LeaderboardEntry.Type)[], DatabaseError>;
 }
 
 class LeaderboardService extends Context.Service<LeaderboardService, LeaderboardServiceShape>()(

@@ -120,11 +120,6 @@ beforeAll(async () => {
     github: { clientId: "github", clientSecret: "secret" },
     google: { clientId: "google", clientSecret: "secret" },
     productName: "Tokenmaxxing",
-    urls: {
-      apiUrl: "https://api.tokenmaxxing.sh",
-      sandbox: "production",
-      wwwUrl: "https://tokenmaxxing.sh",
-    },
   });
   const unused = <S>() => ({}) as S;
 

@@ -1,14 +1,17 @@
-import { DeviceMissing, type RawUsageReportInput } from "@tokenmaxxing/api-contract";
+import {
+  DeviceMissing,
+  type RawUsageReportInput,
+  type SourceUsageStatsInput,
+  type UsageDayInput,
+} from "@tokenmaxxing/api-contract";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   makeUsageService,
   UsageRepository,
-  type SyncResult,
   type StoredRawUsageReport,
   type UsageRepositoryShape,
-  type UsageServiceCheckIn,
 } from "./service";
 import { RawUsageStorageError } from "./raw-store";
 
@@ -24,7 +27,7 @@ const device = {
   platform: "darwin",
 };
 
-const usageDay = {
+const usageDay: UsageDayInput = {
   cacheCreationTokens: 0,
   cacheReadTokens: 0,
   costUsd: 12.34,
@@ -36,7 +39,7 @@ const usageDay = {
   totalTokens: 300,
 };
 
-const sourceStats = [{ sessionCount: 706, source: "codex" }];
+const sourceStats: SourceUsageStatsInput[] = [{ sessionCount: 706, source: "codex" }];
 
 const rawReports: RawUsageReportInput[] = [
   {
@@ -68,38 +71,6 @@ const rawReports: RawUsageReportInput[] = [
     source: "codex",
   },
 ];
-
-interface TestUsageService {
-  checkIn(
-    identity: {
-      deviceId: string | null;
-      tokenId: string;
-      user: typeof user;
-    },
-    syncDevice: typeof device,
-    service: UsageServiceCheckIn,
-  ): Effect.Effect<{ checkedInAt: string }, DeviceMissing>;
-  syncBatch(
-    identity: {
-      deviceId: string | null;
-      tokenId: string;
-      user: typeof user;
-    },
-    syncDevice: typeof device,
-    days: readonly (typeof usageDay)[],
-    syncSourceStats?: readonly (typeof sourceStats)[number][],
-  ): Effect.Effect<SyncResult, DeviceMissing>;
-  ingestRaw(
-    identity: {
-      deviceId: string | null;
-      tokenId: string;
-      user: typeof user;
-    },
-    syncDevice: typeof device,
-    reports: readonly RawUsageReportInput[],
-    syncSourceStats?: readonly (typeof sourceStats)[number][],
-  ): Effect.Effect<SyncResult, DeviceMissing>;
-}
 
 interface RepositoryOptions {
   rawReportsError?: RawUsageStorageError;
@@ -138,11 +109,11 @@ function makeRepository(options: RepositoryOptions = {}) {
 }
 
 async function makeService(repository: UsageRepositoryShape, now?: () => Date) {
-  return (await Effect.runPromise(
+  return Effect.runPromise(
     makeUsageService(now === undefined ? {} : { now }).pipe(
       Effect.provideService(UsageRepository, repository),
     ),
-  )) as unknown as TestUsageService;
+  );
 }
 
 describe("UsageService.checkIn", () => {

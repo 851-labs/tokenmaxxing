@@ -1,11 +1,11 @@
 import { usageDays, users, type User } from "@tokenmaxxing/db";
 import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import { Effect } from "effect";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 
 import type { StatsTotals } from "@tokenmaxxing/api-contract";
 
+import { toAuthUser } from "../auth/d1";
 import { Drizzle } from "../database";
 import { STATS_2026_START, StatsRepository } from "./service";
 
@@ -236,12 +236,7 @@ function toUserMetric(row: {
     lastDate: row.lastDate,
     spendUsd: row.spendUsd,
     totalTokens: row.totalTokens,
-    user: {
-      avatarUrl: row.user.avatarUrl,
-      id: row.user.id,
-      login: row.user.login,
-      name: row.user.name,
-    },
+    user: toAuthUser(row.user),
   };
 }
 

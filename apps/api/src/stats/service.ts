@@ -1,6 +1,4 @@
-import { Context } from "effect";
-import { Effect } from "effect";
-import { Option } from "effect";
+import { Context, Effect, Option } from "effect";
 
 import type { StatsResponse } from "@tokenmaxxing/api-contract";
 
@@ -20,7 +18,7 @@ type StatsSnapshot = Omit<
 >;
 
 interface StatsServiceShape {
-  getStats(): Effect.Effect<typeof StatsResponse.Type, never, any>;
+  getStats(): Effect.Effect<typeof StatsResponse.Type>;
 }
 
 interface StatsRepositoryShape {
@@ -29,7 +27,7 @@ interface StatsRepositoryShape {
     limit: number;
     /** Inclusive YYYY-MM-DD upper bound applied to every aggregate. */
     until: string;
-  }): Effect.Effect<StatsSnapshot, DatabaseError, any>;
+  }): Effect.Effect<StatsSnapshot, DatabaseError>;
 }
 
 class StatsService extends Context.Service<StatsService, StatsServiceShape>()(
