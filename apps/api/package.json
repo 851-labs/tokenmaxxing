@@ -2,10 +2,6 @@
   "name": "@tokenmaxxing/api",
   "private": true,
   "type": "module",
-  "scripts": {
-    "build": "bun run typecheck",
-    "typecheck": "tsc --project tsconfig.json"
-  },
   "dependencies": {
     "@tokenmaxxing/api-contract": "workspace:*",
     "@tokenmaxxing/db": "workspace:*",

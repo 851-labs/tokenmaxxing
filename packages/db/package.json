@@ -6,9 +6,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "bun run typecheck",
-    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "typecheck": "tsc --project tsconfig.json"
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts"
   },
   "dependencies": {
     "drizzle-orm": "catalog:"

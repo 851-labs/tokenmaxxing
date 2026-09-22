@@ -107,7 +107,6 @@ no global CLI installation is required.
 bun install --frozen-lockfile
 bun run dev          # Start the Alchemy development environment
 bun run check        # Check formatting, lint rules, and types
-bun run typecheck    # Run TypeScript across all workspaces
 bun run test         # Run all test projects
 bun run build        # Build workspaces in dependency order
 bun run fmt:fix      # Format files
@@ -115,7 +114,8 @@ bun run fmt:fix      # Format files
 
 Shared formatting, linting, and test settings live in the root
 `vite.config.ts`; the web app keeps its framework plugins in `apps/www/vite.config.ts`.
-Builds and typechecks use Vite Task caching. Tests and database generation are uncached.
+`bun run check` includes TypeScript diagnostics through `lint.options.typeCheck`.
+Builds use Vite Task caching. Checks, tests, and database generation are uncached.
 Run tests from the repository root. To run one project, use
 `bun run vp test --project cli` (or `api`, `www`, `api-contract`, or `db`).
 Use `bun run vp test watch --project cli` for watch mode.

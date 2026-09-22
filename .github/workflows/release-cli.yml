@@ -51,17 +51,11 @@ jobs:
           }
           NODE
 
-      - name: Typecheck CLI
-        run: bun --filter @851-labs/tokenmaxxing typecheck
+      - name: Check formatting, lint, and types
+        run: bun run check
 
       - name: Test CLI
         run: bun run vp test --project cli
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Format
-        run: bun run fmt
 
       - name: Publish CLI and native packages
         run: bun apps/cli/script/publish.ts

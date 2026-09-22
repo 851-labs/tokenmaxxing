@@ -50,7 +50,6 @@
     "build": "vp run --cache -r build",
     "db:generate": "vp run --no-cache @tokenmaxxing/db#db:generate",
     "test": "vp test",
-    "typecheck": "vp run --cache -r typecheck",
     "lint": "vp lint",
     "lint:fix": "vp lint --fix",
     "fmt": "vp fmt --check",

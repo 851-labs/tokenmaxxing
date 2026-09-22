@@ -50,10 +50,8 @@ Use today's date in `YYYY-MM-DD` format.
 Run the existing checks directly.
 
 ```sh
-bun --filter @851-labs/tokenmaxxing typecheck
+bun run check
 bun run vp test --project cli
-bun run lint
-bun run fmt
 bun --filter @851-labs/tokenmaxxing build
 bun --filter @851-labs/tokenmaxxing build:native-packages --single
 ```
