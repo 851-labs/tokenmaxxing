@@ -148,6 +148,61 @@ describe("public usage visibility", () => {
     expect(recentVisibleRank).toBe(2);
     expect(recentBannedRank).toBe(1);
   });
+
+  it("exposes only public user fields, and no rank on stats top users", async () => {
+    seedUser(sqlite, {
+      avatarUrl: "https://avatar.example/tied",
+      id: "tied",
+      login: "tied",
+      name: "Tied",
+    });
+    seedUsage(sqlite, {
+      costUsd: 1,
+      date: "2026-07-08",
+      deviceId: "tied-device",
+      model: "visible-model",
+      source: "codex",
+      totalTokens: 100_000,
+      userId: "tied",
+    });
+    const leaderboard = await buildService(
+      LeaderboardRepository,
+      LeaderboardRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
+    );
+    const stats = await buildService(
+      StatsRepository,
+      StatsRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
+    );
+
+    const [first] = await Effect.runPromise(
+      leaderboard.list({ limit: 10, metric: "tokens", since: "2026-06-10", until }),
+    );
+    const snapshot = await Effect.runPromise(
+      stats.snapshot({ last30dSince: "2026-06-10", limit: 10, until }),
+    );
+    const user = {
+      avatarUrl: "https://avatar.example/tied",
+      id: "tied",
+      login: "tied",
+      name: "Tied",
+    };
+
+    expect(first).toEqual({
+      activeDays: 1,
+      lastDate: "2026-07-08",
+      rank: 1,
+      spendUsd: 1,
+      totalTokens: 100_000,
+      user,
+    });
+    expect(snapshot.topUsers.byTokens[0]).toEqual({
+      activeDays: 1,
+      lastDate: "2026-07-08",
+      spendUsd: 1,
+      totalTokens: 100_000,
+      user,
+    });
+  });
 });
 
 describe("future-dated usage rows", () => {

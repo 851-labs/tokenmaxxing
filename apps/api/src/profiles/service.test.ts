@@ -50,12 +50,14 @@ const profileStats = {
 async function makeProfileService(
   shadowBanned: boolean,
   onLeaderboardRank?: (input: { since: string | null; userId: string }) => void,
+  onDaily?: (query: { since?: string | undefined; until?: string | undefined }) => void,
 ) {
   return Effect.runPromise(
     makeProfilesService().pipe(
       Effect.provideService(ProfilesRepository, {
-        daily: () =>
-          Effect.succeed([
+        daily: (_userId, query) => {
+          onDaily?.(query);
+          return Effect.succeed([
             {
               costUsd: 2,
               date: "2026-06-21",
@@ -63,7 +65,8 @@ async function makeProfileService(
               outputTokens: 20,
               totalTokens: 100,
             },
-          ]),
+          ]);
+        },
         findUserByLogin: (login) =>
           Effect.succeed(
             login === "target"
@@ -114,7 +117,7 @@ describe("ProfilesService shadow-ban visibility", () => {
       ),
     );
 
-    await expect(Effect.runPromise(service.getIdentity("target"))).resolves.toEqual({
+    await expect(Effect.runPromise(service.getIdentity("target", null))).resolves.toEqual({
       avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
       login: "target",
     });
@@ -156,9 +159,12 @@ describe("ProfilesService shadow-ban visibility", () => {
   it("returns not found for anonymous and other viewers of a banned profile", async () => {
     const service = await makeProfileService(true);
 
-    await expect(Effect.runPromise(service.getIdentity("target"))).rejects.toBeInstanceOf(
+    await expect(Effect.runPromise(service.getIdentity("target", null))).rejects.toBeInstanceOf(
       UserNotFound,
     );
+    await expect(
+      Effect.runPromise(service.getIdentity("target", "user_other")),
+    ).rejects.toBeInstanceOf(UserNotFound);
     await expect(Effect.runPromise(service.getProfile("target", null))).rejects.toBeInstanceOf(
       UserNotFound,
     );
@@ -167,14 +173,49 @@ describe("ProfilesService shadow-ban visibility", () => {
     ).rejects.toBeInstanceOf(UserNotFound);
   });
 
-  it("returns the normal profile and daily data to the banned owner", async () => {
+  it("returns the normal identity, profile, and daily data to the banned owner", async () => {
     const service = await makeProfileService(true);
 
+    await expect(Effect.runPromise(service.getIdentity("target", "user_target"))).resolves.toEqual({
+      avatarUrl: null,
+      login: "target",
+    });
     await expect(
       Effect.runPromise(service.getProfile("target", "user_target")),
     ).resolves.toMatchObject({ stats: { totalTokens: 100 }, user: { login: "target" } });
     await expect(
       Effect.runPromise(service.getDaily("target", { groupBy: "model" }, "user_target")),
     ).resolves.toMatchObject({ days: [{ totalTokens: 100 }] });
+  });
+});
+
+describe("ProfilesService.getDaily", () => {
+  it("queries from the same default lower bound it reports as range.first", async () => {
+    const queries: Array<{ since?: string | undefined; until?: string | undefined }> = [];
+    const service = await makeProfileService(false, undefined, (query) => queries.push(query));
+
+    const response = await Effect.runPromise(
+      service.getDaily("target", { groupBy: "model" }, null),
+    );
+
+    expect(response.range.first).toBe("2026-01-01");
+    // `until` is the ingest ceiling (UTC today + 1), applied by #83's cap.
+    expect(queries).toEqual([{ groupBy: "model", since: "2026-01-01", until: expect.any(String) }]);
+  });
+
+  it("passes explicit bounds through unchanged", async () => {
+    const queries: Array<{ since?: string | undefined; until?: string | undefined }> = [];
+    const service = await makeProfileService(false, undefined, (query) => queries.push(query));
+
+    const response = await Effect.runPromise(
+      service.getDaily(
+        "target",
+        { groupBy: "model", since: "2026-06-20", until: "2026-06-22" },
+        null,
+      ),
+    );
+
+    expect(response.range).toEqual({ first: "2026-06-20", last: "2026-06-22" });
+    expect(queries).toEqual([{ groupBy: "model", since: "2026-06-20", until: "2026-06-22" }]);
   });
 });

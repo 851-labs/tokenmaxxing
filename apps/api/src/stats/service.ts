@@ -4,11 +4,10 @@ import type { StatsResponse } from "@tokenmaxxing/api-contract";
 
 import type { JsonCache } from "../cloudflare/edge-cache";
 import type { DatabaseError } from "../database";
-import { latestUsageDateKey, trailingWindowStart } from "../date-keys";
+import { latestUsageDateKey, trailingWindowStart, YEAR_2026_START } from "../date-keys";
 
 const STATS_RANK_LIMIT = 10;
 const THIRTY_DAYS = 30;
-const STATS_2026_START = "2026-01-01";
 /** /stats is a global aggregate over every usage row; minutes of staleness are fine. */
 const STATS_CACHE_TTL_SECONDS = 300;
 
@@ -58,7 +57,7 @@ const makeStatsService = Effect.fn("makeStatsService")(function* (
       }
 
       const generatedAt = now();
-      const last30dSince = statsWindowStart(generatedAt);
+      const last30dSince = trailingWindowStart(THIRTY_DAYS, generatedAt);
       const snapshot = yield* repository
         .snapshot({
           last30dSince,
@@ -71,7 +70,7 @@ const makeStatsService = Effect.fn("makeStatsService")(function* (
         ...snapshot,
         generatedAt: generatedAt.toISOString(),
         last30dSince,
-        year2026Since: STATS_2026_START,
+        year2026Since: YEAR_2026_START,
       };
       if (cache !== undefined) {
         yield* cache.set(stats);
@@ -82,18 +81,12 @@ const makeStatsService = Effect.fn("makeStatsService")(function* (
   });
 });
 
-function statsWindowStart(now: Date): string {
-  return trailingWindowStart(THIRTY_DAYS, now);
-}
-
 export {
   makeStatsService,
-  STATS_2026_START,
   STATS_CACHE_TTL_SECONDS,
   STATS_RANK_LIMIT,
   StatsRepository,
   StatsService,
-  statsWindowStart,
 };
 
 export type { StatsRepositoryShape, StatsSnapshot };

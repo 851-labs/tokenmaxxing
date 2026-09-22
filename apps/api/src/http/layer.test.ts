@@ -25,6 +25,7 @@ import { UsageService } from "../usage/service";
 import { makeApiFetch, makeApiHttpEffect } from "./layer";
 
 const config: AppConfigShape = {
+  adminEmails: [],
   apiWorkerName: "tokenmaxxing-api",
   corsOrigins: ["https://tokenmaxxing.sh"],
   github: { clientId: "github-id", clientSecret: "github-secret" },

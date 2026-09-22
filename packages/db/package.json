@@ -10,6 +10,7 @@
     "db:generate": "drizzle-kit generate --config drizzle.config.ts"
   },
   "dependencies": {
+    "@tokenmaxxing/api-contract": "workspace:*",
     "drizzle-orm": "catalog:"
   },
   "devDependencies": {

@@ -1,10 +1,22 @@
-import { devices, usageDays, usageRawBatches, usageSourceStats } from "@tokenmaxxing/db";
+import {
+  devices,
+  usageDays,
+  usageRawBatches,
+  usageSourceStats,
+  type NewDevice,
+} from "@tokenmaxxing/db";
 import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
 import { Effect, Layer } from "effect";
 
-import { Drizzle } from "../database";
+import { batchNonEmpty, Drizzle } from "../database";
 import { RawUsageObjectStore } from "./raw-store";
-import { makeUsageService, UsageRepository, UsageService } from "./service";
+import {
+  makeUsageService,
+  UsageRepository,
+  UsageService,
+  type UsageDevice,
+  type UsageServiceCheckIn,
+} from "./service";
 
 const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
   const database = yield* Drizzle;
@@ -16,40 +28,7 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
         yield* database.use((db) =>
           db
             .update(devices)
-            .set({
-              arch: device.arch ?? null,
-              lastCheckInAt: checkedInAt,
-              name: device.name,
-              platform: device.platform,
-              ...(service.autoUpdate === undefined
-                ? {}
-                : {
-                    serviceAutoUpdateAttemptedAt: optionalDate(service.autoUpdate.attemptedAt),
-                    serviceAutoUpdateCompletedAt: optionalDate(service.autoUpdate.completedAt),
-                    serviceAutoUpdateCurrentVersion: service.autoUpdate.currentVersion ?? null,
-                    serviceAutoUpdateEnabled: service.autoUpdate.enabled,
-                    serviceAutoUpdateError: service.autoUpdate.error ?? null,
-                    serviceAutoUpdateInstalledVersion: service.autoUpdate.installedVersion ?? null,
-                    serviceAutoUpdateLatestVersion: service.autoUpdate.latestVersion ?? null,
-                    serviceAutoUpdateManager: service.autoUpdate.manager,
-                    serviceAutoUpdateReason: service.autoUpdate.reason,
-                    serviceAutoUpdateStatus: service.autoUpdate.status,
-                  }),
-              serviceBackend: service.backend ?? null,
-              serviceError: service.error ?? null,
-              serviceReloadRequired: service.reloadRequired ?? null,
-              serviceRepairAttemptedAt: optionalDate(service.repairAttemptedAt),
-              serviceRepairCompletedAt: optionalDate(service.repairCompletedAt),
-              serviceRepairError: service.repairError ?? null,
-              serviceRepairReason: service.repairReason ?? null,
-              serviceRepairStatus: service.repairStatus ?? null,
-              serviceRunnerTarget: service.runnerTarget ?? null,
-              serviceRunnerVersion: service.runnerVersion ?? null,
-              serviceSchedulerActive: service.schedulerActive ?? null,
-              serviceStatus: service.status,
-              serviceTemplateVersion: service.templateVersion ?? null,
-              version: device.version ?? null,
-            })
+            .set(checkInColumns(device, service, checkedInAt))
             .where(eq(devices.id, deviceId)),
         );
       }),
@@ -91,9 +70,7 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
                 },
               }),
           );
-          const [first, ...rest] = statements;
-
-          return db.batch([first!, ...rest]);
+          return batchNonEmpty(db, statements);
         });
       }),
     pruneChunk: (deviceId, scopes, syncedAt) =>
@@ -118,9 +95,7 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
                 ),
               ),
           );
-          const [first, ...rest] = statements;
-
-          return db.batch([first!, ...rest]);
+          return batchNonEmpty(db, statements);
         });
       }),
     touchDevice: (deviceId, device, syncedAt) =>
@@ -164,9 +139,7 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
                 },
               }),
           );
-          const [first, ...rest] = statements;
-
-          return db.batch([first!, ...rest]);
+          return batchNonEmpty(db, statements);
         });
       }),
     upsertRawReports: (userId, deviceId, reports, capturedAt) =>
@@ -242,9 +215,7 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
                 },
               }),
           );
-          const [first, ...rest] = statements;
-
-          return db.batch([first!, ...rest]);
+          return batchNonEmpty(db, statements);
         });
       }),
   });
@@ -258,6 +229,48 @@ const UsageRepositoryLive = Layer.effect(UsageRepository, makeD1UsageRepository(
 const UsageServiceLive = Layer.effect(UsageService, makeUsageService()).pipe(
   Layer.provide(UsageRepositoryLive),
 );
+
+/** Device columns written on each check-in: identity plus service telemetry. */
+function checkInColumns(
+  device: UsageDevice,
+  service: UsageServiceCheckIn,
+  checkedInAt: Date,
+): Partial<NewDevice> {
+  return {
+    arch: device.arch ?? null,
+    lastCheckInAt: checkedInAt,
+    name: device.name,
+    platform: device.platform,
+    ...(service.autoUpdate === undefined
+      ? {}
+      : {
+          serviceAutoUpdateAttemptedAt: optionalDate(service.autoUpdate.attemptedAt),
+          serviceAutoUpdateCompletedAt: optionalDate(service.autoUpdate.completedAt),
+          serviceAutoUpdateCurrentVersion: service.autoUpdate.currentVersion ?? null,
+          serviceAutoUpdateEnabled: service.autoUpdate.enabled,
+          serviceAutoUpdateError: service.autoUpdate.error ?? null,
+          serviceAutoUpdateInstalledVersion: service.autoUpdate.installedVersion ?? null,
+          serviceAutoUpdateLatestVersion: service.autoUpdate.latestVersion ?? null,
+          serviceAutoUpdateManager: service.autoUpdate.manager,
+          serviceAutoUpdateReason: service.autoUpdate.reason,
+          serviceAutoUpdateStatus: service.autoUpdate.status,
+        }),
+    serviceBackend: service.backend ?? null,
+    serviceError: service.error ?? null,
+    serviceReloadRequired: service.reloadRequired ?? null,
+    serviceRepairAttemptedAt: optionalDate(service.repairAttemptedAt),
+    serviceRepairCompletedAt: optionalDate(service.repairCompletedAt),
+    serviceRepairError: service.repairError ?? null,
+    serviceRepairReason: service.repairReason ?? null,
+    serviceRepairStatus: service.repairStatus ?? null,
+    serviceRunnerTarget: service.runnerTarget ?? null,
+    serviceRunnerVersion: service.runnerVersion ?? null,
+    serviceSchedulerActive: service.schedulerActive ?? null,
+    serviceStatus: service.status,
+    serviceTemplateVersion: service.templateVersion ?? null,
+    version: device.version ?? null,
+  };
+}
 
 function optionalDate(value: string | null | undefined): Date | null {
   if (value === undefined || value === null) {

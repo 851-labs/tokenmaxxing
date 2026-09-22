@@ -113,6 +113,7 @@ beforeAll(async () => {
     ),
   );
   const config = AppConfig.of({
+    adminEmails: [],
     apiWorkerName: "tokenmaxxing-api",
     corsOrigins: ["https://tokenmaxxing.sh"],
     github: { clientId: "github", clientSecret: "secret" },

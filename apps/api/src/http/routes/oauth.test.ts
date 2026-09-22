@@ -214,6 +214,7 @@ function oauthHandler(options: { exchange?: "fail"; signIn?: "conflict" } = {}) 
   const github = Effect.runSync(
     makeGitHubProvider().pipe(
       Effect.provideService(AppConfig, {
+        adminEmails: [],
         apiWorkerName: "tokenmaxxing-api",
         corsOrigins: [],
         github: { clientId: "github-client", clientSecret: "github-secret" },

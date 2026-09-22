@@ -9,7 +9,7 @@ import {
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { Effect, Layer, Option } from "effect";
 
-import { toAuthUser } from "../auth/d1";
+import { toAuthUser } from "../public-user";
 import { Drizzle, firstRow } from "../database";
 import { RawUsageObjectStore } from "../usage/raw-store";
 import { makeTokensService, TokensRepository, TokensService } from "./service";

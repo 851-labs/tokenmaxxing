@@ -349,7 +349,6 @@ describe("admin fleet responses", () => {
         latest: "0.5.4",
         rc: null,
       },
-      rolloutGraceHours: 2,
       staleThresholdHours: 6,
       summary: {
         healthy: 1,

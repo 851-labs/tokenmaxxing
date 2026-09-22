@@ -359,4 +359,10 @@ const textEncoder = new TextEncoder();
 
 export { makeUsageService, UsageRepository, UsageService };
 
-export type { StoredRawUsageReport, UsageReplacementScope, UsageRepositoryShape };
+export type {
+  StoredRawUsageReport,
+  UsageDevice,
+  UsageReplacementScope,
+  UsageRepositoryShape,
+  UsageServiceCheckIn,
+};

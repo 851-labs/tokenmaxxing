@@ -2,8 +2,12 @@ import { usageDays, usageSourceStats, users } from "@tokenmaxxing/db";
 import { and, asc, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { Effect, Layer, Option } from "effect";
 
-import { toAuthUser } from "../auth/d1";
+import { DEFAULT_LEADERBOARD_METRIC } from "@tokenmaxxing/api-contract";
+
 import { Drizzle, firstRow } from "../database";
+import { publicUserColumns } from "../public-user";
+import { singleAggregateRow, usageAggregates } from "../usage/aggregates";
+import { userRank } from "../usage/ranking";
 import { makeProfilesService, ProfilesRepository, ProfilesService } from "./service";
 import { usageStreaks } from "./streaks";
 
@@ -14,44 +18,22 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
     findUserByLogin: (login) =>
       Effect.gen(function* () {
         const rows = yield* database.use((db) =>
-          db.select().from(users).where(eq(users.login, login)).limit(1),
+          db
+            .select({ shadowBannedAt: users.shadowBannedAt, user: publicUserColumns })
+            .from(users)
+            .where(eq(users.login, login))
+            .limit(1),
         );
 
         return firstRow(rows).pipe(
-          Option.map((row) => ({
-            shadowBanned: row.shadowBannedAt !== null,
-            user: toAuthUser(row),
-          })),
+          Option.map((row) => ({ shadowBanned: row.shadowBannedAt !== null, user: row.user })),
         );
       }),
     leaderboardRank: (input) =>
       Effect.gen(function* () {
-        const rows = yield* database.use((db) => {
-          const rankedUsers = db
-            .select({
-              rank: sql<number>`row_number() over (
-                order by sum(${usageDays.costUsd}) desc, ${usageDays.userId} asc
-              )`.as("leaderboard_rank"),
-              userId: usageDays.userId,
-            })
-            .from(usageDays)
-            .innerJoin(users, eq(usageDays.userId, users.id))
-            .where(
-              and(
-                isNull(users.shadowBannedAt),
-                lte(usageDays.date, input.until),
-                input.since === null ? undefined : gte(usageDays.date, input.since),
-              ),
-            )
-            .groupBy(usageDays.userId)
-            .as("ranked_users");
-
-          return db
-            .select({ rank: rankedUsers.rank })
-            .from(rankedUsers)
-            .where(eq(rankedUsers.userId, input.userId))
-            .limit(1);
-        });
+        const rows = yield* database.use((db) =>
+          userRank(db, { metric: DEFAULT_LEADERBOARD_METRIC, ...input }),
+        );
 
         return rows[0]?.rank ?? null;
       }),
@@ -62,20 +44,20 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
         const userUsage = and(eq(usageDays.userId, userId), lte(usageDays.date, window.until));
         // One D1 round trip. Batched rows come back as objects keyed by
         // column name, so every statement here must select unique names.
-        const [[totals], [sessionStats], [fallbackSessions], dayRows, topModels, sourceRows] =
+        const [totalRows, sessionRows, fallbackSessionRows, dayRows, topModels, sourceRows] =
           yield* database.use((db) =>
             db.batch([
               db
                 .select({
-                  deviceCount: sql<number>`count(distinct ${usageDays.deviceId})`,
-                  totalSpendUsd: sql<number | null>`sum(${usageDays.costUsd})`,
-                  totalTokens: sql<number | null>`sum(${usageDays.totalTokens})`,
+                  deviceCount: usageAggregates.deviceCount(),
+                  totalSpendUsd: usageAggregates.spendUsd(),
+                  totalTokens: usageAggregates.totalTokens(),
                 })
                 .from(usageDays)
                 .where(userUsage),
               db
                 .select({
-                  sessionCount: sql<number | null>`sum(${usageSourceStats.sessionCount})`,
+                  sessionCount: sql<number>`coalesce(sum(${usageSourceStats.sessionCount}), 0)`,
                 })
                 .from(usageSourceStats)
                 .where(eq(usageSourceStats.userId, userId)),
@@ -97,7 +79,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
               db
                 .select({
                   date: usageDays.date,
-                  spendUsd: sql<number>`sum(${usageDays.costUsd})`,
+                  spendUsd: usageAggregates.spendUsd(),
                 })
                 .from(usageDays)
                 .where(userUsage)
@@ -106,7 +88,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
               db
                 .select({
                   model: usageDays.model,
-                  spendUsd: sql<number>`sum(${usageDays.costUsd})`.as("model_spend"),
+                  spendUsd: usageAggregates.spendUsd().as("model_spend"),
                 })
                 .from(usageDays)
                 .where(userUsage)
@@ -121,10 +103,14 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
             ]),
           );
 
+        const [totals, sessionStats, fallbackSessions] = yield* Effect.all([
+          singleAggregateRow(totalRows),
+          singleAggregateRow(sessionRows),
+          singleAggregateRow(fallbackSessionRows),
+        ]);
         const activeDays = dayRows.length;
-        const totalSpendUsd = totals?.totalSpendUsd ?? 0;
-        const sessionCount =
-          (sessionStats?.sessionCount ?? 0) + (fallbackSessions?.sessionCount ?? 0);
+        const { totalSpendUsd } = totals;
+        const sessionCount = sessionStats.sessionCount + fallbackSessions.sessionCount;
         const streaks = usageStreaks(
           dayRows.map((row) => row.date),
           window.today,
@@ -134,7 +120,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
           activeDays,
           avgSpendPerActiveDay: activeDays === 0 ? 0 : totalSpendUsd / activeDays,
           currentStreakDays: streaks.currentStreakDays,
-          deviceCount: totals?.deviceCount ?? 0,
+          deviceCount: totals.deviceCount,
           firstDate: dayRows[0]?.date ?? null,
           lastDate: dayRows.at(-1)?.date ?? null,
           longestStreakDays: streaks.longestStreakDays,
@@ -143,7 +129,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
           sources: sourceRows.map((row) => row.source),
           topModel: topModels[0] ?? null,
           totalSpendUsd,
-          totalTokens: totals?.totalTokens ?? 0,
+          totalTokens: totals.totalTokens,
         };
       }),
     daily: (userId, query) =>

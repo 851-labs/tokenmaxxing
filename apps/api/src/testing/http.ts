@@ -39,6 +39,7 @@ interface TestApp {
 const TEST_CORS_ORIGIN = "https://tokenmaxxing.sh";
 
 const testConfig: AppConfig["Service"] = {
+  adminEmails: [],
   apiWorkerName: "tokenmaxxing-api-test",
   corsOrigins: [TEST_CORS_ORIGIN],
   github: { clientId: "github-id", clientSecret: "github-secret" },
