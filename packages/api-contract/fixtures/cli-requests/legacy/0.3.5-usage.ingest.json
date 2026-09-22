@@ -1,0 +1,60 @@
+{
+  "cli": "0.3.5",
+  "endpoint": "usage.ingest",
+  "method": "POST",
+  "path": "/usage/ingest",
+  "body": {
+    "device": {
+      "name": "fixture-host",
+      "platform": "darwin"
+    },
+    "reports": [
+      {
+        "command": ["ccusage@^20", "claude", "daily", "--json", "--breakdown", "--mode", "calculate"],
+        "payload": {
+          "daily": [
+            {
+              "cacheCreationTokens": 20,
+              "cacheReadTokens": 50,
+              "date": "2026-06-15",
+              "inputTokens": 1200,
+              "modelBreakdowns": [
+                {
+                  "cacheCreationTokens": 20,
+                  "cacheReadTokens": 50,
+                  "cost": 0.34,
+                  "inputTokens": 1200,
+                  "modelName": "claude-sonnet-4-20250514",
+                  "outputTokens": 300
+                }
+              ],
+              "modelsUsed": ["claude-sonnet-4-20250514"],
+              "outputTokens": 300,
+              "totalCost": 0.34,
+              "totalTokens": 1570
+            }
+          ]
+        },
+        "reportKind": "daily",
+        "source": "claude"
+      },
+      {
+        "command": ["ccusage@^20", "claude", "session", "--json", "--mode", "calculate"],
+        "payload": {
+          "sessions": [
+            {
+              "inputTokens": 1200,
+              "lastActivity": "2026-06-15",
+              "modelsUsed": ["claude-sonnet-4-20250514"],
+              "outputTokens": 300,
+              "sessionId": "-Users-alex-project",
+              "totalCost": 0.34
+            }
+          ]
+        },
+        "reportKind": "session",
+        "source": "claude"
+      }
+    ]
+  }
+}

@@ -44,9 +44,11 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
             .from(usageDays)
             .innerJoin(users, eq(usageDays.userId, users.id))
             .where(
-              input.since === null
-                ? isNull(users.shadowBannedAt)
-                : and(isNull(users.shadowBannedAt), gte(usageDays.date, input.since)),
+              and(
+                isNull(users.shadowBannedAt),
+                lte(usageDays.date, input.until),
+                input.since === null ? undefined : gte(usageDays.date, input.since),
+              ),
             )
             .groupBy(usageDays.userId)
             .as("ranked_users");
@@ -60,8 +62,11 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
 
         return rows[0]?.rank ?? null;
       }),
-    stats: (userId) =>
+    stats: (userId, window) =>
       Effect.gen(function* () {
+        // Rows dated past the ingest ceiling are never real usage; keep them
+        // out of every lifetime aggregate.
+        const userUsage = and(eq(usageDays.userId, userId), lte(usageDays.date, window.until));
         // One D1 round trip. Batched rows come back as objects keyed by
         // column name, so every statement here must select unique names.
         const [[totals], [sessionStats], [fallbackSessions], dayRows, topModels, sourceRows] =
@@ -74,7 +79,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
                   totalTokens: sql<number | null>`sum(${usageDays.totalTokens})`,
                 })
                 .from(usageDays)
-                .where(eq(usageDays.userId, userId)),
+                .where(userUsage),
               db
                 .select({
                   sessionCount: sql<number | null>`sum(${usageSourceStats.sessionCount})`,
@@ -93,7 +98,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
                     eq(usageSourceStats.source, usageDays.source),
                   ),
                 )
-                .where(and(eq(usageDays.userId, userId), isNull(usageSourceStats.deviceId))),
+                .where(and(userUsage, isNull(usageSourceStats.deviceId))),
               // Every active day, ascending: active-day count, first/last
               // date, streaks and the peak day all derive from this.
               db
@@ -102,7 +107,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
                   spendUsd: sql<number>`sum(${usageDays.costUsd})`,
                 })
                 .from(usageDays)
-                .where(eq(usageDays.userId, userId))
+                .where(userUsage)
                 .groupBy(usageDays.date)
                 .orderBy(asc(usageDays.date)),
               db
@@ -111,14 +116,14 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
                   spendUsd: sql<number>`sum(${usageDays.costUsd})`.as("model_spend"),
                 })
                 .from(usageDays)
-                .where(eq(usageDays.userId, userId))
+                .where(userUsage)
                 .groupBy(usageDays.model)
                 .orderBy(desc(sql`model_spend`))
                 .limit(1),
               db
                 .selectDistinct({ source: usageDays.source })
                 .from(usageDays)
-                .where(eq(usageDays.userId, userId))
+                .where(userUsage)
                 .orderBy(asc(usageDays.source)),
             ]),
           );
@@ -127,7 +132,10 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
         const totalSpendUsd = totals?.totalSpendUsd ?? 0;
         const sessionCount =
           (sessionStats?.sessionCount ?? 0) + (fallbackSessions?.sessionCount ?? 0);
-        const streaks = usageStreaks(dayRows.map((row) => row.date));
+        const streaks = usageStreaks(
+          dayRows.map((row) => row.date),
+          window.today,
+        );
 
         return {
           activeDays,
@@ -153,9 +161,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
         if (query.since !== undefined) {
           conditions.push(gte(usageDays.date, query.since));
         }
-        if (query.until !== undefined) {
-          conditions.push(lte(usageDays.date, query.until));
-        }
+        conditions.push(lte(usageDays.date, query.until));
 
         const rows = yield* database.use((db) =>
           db

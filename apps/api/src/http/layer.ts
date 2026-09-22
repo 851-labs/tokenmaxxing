@@ -14,15 +14,18 @@ import {
 } from "effect/unstable/http";
 import * as Etag from "effect/unstable/http/Etag";
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
 
 import {
+  CliLoginGroup,
   CurrentCliIdentity,
   CurrentUser,
   DEFAULT_LEADERBOARD_METRIC,
   DEFAULT_LEADERBOARD_WINDOW,
   TokenmaxxingApi,
+  UsageGroup,
 } from "@tokenmaxxing/api-contract";
 import type { Authorization, CliAuth } from "@tokenmaxxing/api-contract";
 
@@ -44,6 +47,20 @@ import { oauthRoutesLayer } from "./routes/oauth";
  * domain services. Groups whose milestone has not landed yet die with
  * "not implemented"; the contract still serves and typechecks end-to-end.
  */
+
+/**
+ * Server-only view of the CLI-facing groups whose payloads decode with
+ * `onExcessProperty: "error"`. The contract's per-struct `parseOptions`
+ * annotations are not enforced by Effect v4 on their own, and the option is
+ * applied here rather than on the shared contract because HttpApiClient reads
+ * the same annotation to decode responses: a strict CLI would reject every
+ * response field the server adds later. Routes are still collected by group
+ * key under TokenmaxxingApi, so only these handlers are built from it.
+ */
+const StrictCliApi = HttpApi.make(TokenmaxxingApi.identifier)
+  .add(CliLoginGroup, UsageGroup)
+  .annotateMerge(TokenmaxxingApi.annotations)
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: "error" });
 
 const healthHandlers = HttpApiBuilder.group(TokenmaxxingApi, "health", (handlers) =>
   handlers.handle("status", () =>
@@ -119,7 +136,7 @@ const meHandlers = HttpApiBuilder.group(TokenmaxxingApi, "me", (handlers) =>
     ),
 );
 
-const cliLoginHandlers = HttpApiBuilder.group(TokenmaxxingApi, "cliLogin", (handlers) =>
+const cliLoginHandlers = HttpApiBuilder.group(StrictCliApi, "cliLogin", (handlers) =>
   handlers
     .handle("start", ({ payload }) =>
       Effect.gen(function* () {
@@ -137,7 +154,7 @@ const cliLoginHandlers = HttpApiBuilder.group(TokenmaxxingApi, "cliLogin", (hand
     ),
 );
 
-const usageHandlers = HttpApiBuilder.group(TokenmaxxingApi, "usage", (handlers) =>
+const usageHandlers = HttpApiBuilder.group(StrictCliApi, "usage", (handlers) =>
   handlers
     .handle("checkIn", ({ payload }) =>
       Effect.gen(function* () {
@@ -453,4 +470,4 @@ const HttpPlatformStub = Layer.succeed(HttpPlatform.HttpPlatform, {
   fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
 });
 
-export { makeApiFetch, makeApiHttpEffect };
+export { makeApiFetch, makeApiHttpEffect, StrictCliApi };

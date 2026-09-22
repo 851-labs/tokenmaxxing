@@ -1,0 +1,6 @@
+{
+  "cli": "current",
+  "endpoint": "me.me",
+  "method": "GET",
+  "path": "/me"
+}

@@ -401,7 +401,7 @@ describe("sync source outcomes", () => {
   it("derives ok, partial, and error aggregate statuses", () => {
     const skipped = {
       reason: "no_data" as const,
-      source: "gemini",
+      source: "gemini" as const,
       status: "skipped" as const,
       summary: null,
     };
@@ -411,7 +411,7 @@ describe("sync source outcomes", () => {
         message: "ccusage command failed",
         report: "daily" as const,
       },
-      source: "codex",
+      source: "codex" as const,
       status: "failed" as const,
       summary: null,
     };
@@ -429,7 +429,7 @@ describe("sync source outcomes", () => {
           message: "ccusage command failed",
           report: "daily" as const,
         },
-        source: "codex",
+        source: "codex" as const,
         status: "failed" as const,
         summary: null,
       },

@@ -6,6 +6,7 @@ import type { StatsResponse } from "@tokenmaxxing/api-contract";
 
 import type { JsonCache } from "../cloudflare/edge-cache";
 import type { DatabaseError } from "../database";
+import { latestUsageDateKey, trailingWindowStart } from "../date-keys";
 
 const STATS_RANK_LIMIT = 10;
 const THIRTY_DAYS = 30;
@@ -26,6 +27,8 @@ interface StatsRepositoryShape {
   snapshot(input: {
     last30dSince: string;
     limit: number;
+    /** Inclusive YYYY-MM-DD upper bound applied to every aggregate. */
+    until: string;
   }): Effect.Effect<StatsSnapshot, DatabaseError, any>;
 }
 
@@ -59,7 +62,11 @@ const makeStatsService = Effect.fn("makeStatsService")(function* (
       const generatedAt = now();
       const last30dSince = statsWindowStart(generatedAt);
       const snapshot = yield* repository
-        .snapshot({ last30dSince, limit: STATS_RANK_LIMIT })
+        .snapshot({
+          last30dSince,
+          limit: STATS_RANK_LIMIT,
+          until: latestUsageDateKey(generatedAt),
+        })
         .pipe(Effect.orDie);
 
       const stats = {
@@ -78,8 +85,7 @@ const makeStatsService = Effect.fn("makeStatsService")(function* (
 });
 
 function statsWindowStart(now: Date): string {
-  const start = new Date(now.getTime() - (THIRTY_DAYS - 1) * 24 * 60 * 60 * 1000);
-  return start.toISOString().slice(0, 10);
+  return trailingWindowStart(THIRTY_DAYS, now);
 }
 
 export {

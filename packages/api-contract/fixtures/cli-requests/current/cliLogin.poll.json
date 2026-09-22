@@ -1,0 +1,9 @@
+{
+  "cli": "current",
+  "endpoint": "cliLogin.poll",
+  "method": "POST",
+  "path": "/cli/login/poll",
+  "body": {
+    "deviceCode": "device-code-secret"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "cli": "0.6.0",
+  "endpoint": "cliLogin.start",
+  "method": "POST",
+  "path": "/cli/login/start",
+  "body": {
+    "deviceArch": "arm64",
+    "deviceId": "7d0f3a52-5f0a-4f39-9d7c-3b8f1c2a9e11",
+    "deviceName": "fixture-host",
+    "devicePlatform": "darwin",
+    "deviceVersion": "0.0.0-fixture"
+  }
+}

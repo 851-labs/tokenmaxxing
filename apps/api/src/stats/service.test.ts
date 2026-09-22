@@ -85,8 +85,8 @@ describe("statsWindowStart", () => {
 });
 
 describe("StatsService.getStats", () => {
-  it("adds generatedAt and the last-30d lower bound", async () => {
-    const calls: Array<{ last30dSince: string; limit: number }> = [];
+  it("adds generatedAt, the last-30d lower bound, and the future-date ceiling", async () => {
+    const calls: Array<{ last30dSince: string; limit: number; until: string }> = [];
     const service = (await Effect.runPromise(
       makeStatsService({
         now: () => new Date("2026-07-09T20:00:00.000Z"),
@@ -103,7 +103,7 @@ describe("StatsService.getStats", () => {
 
     const response = await Effect.runPromise(service.getStats());
 
-    expect(calls).toEqual([{ last30dSince: "2026-06-10", limit: 10 }]);
+    expect(calls).toEqual([{ last30dSince: "2026-06-10", limit: 10, until: "2026-07-10" }]);
     expect(response.generatedAt).toBe("2026-07-09T20:00:00.000Z");
     expect(response.last30dSince).toBe("2026-06-10");
     expect(response.year2026Since).toBe("2026-01-01");

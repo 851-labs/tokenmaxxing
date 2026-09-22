@@ -1,51 +1,70 @@
-import type {
-  RawUsageReportInput,
-  SourceUsageStatsInput,
-  UsageDayInput,
+import {
+  DateKey,
+  TokenCount,
+  UsdAmount,
+  type RawUsageReportInput,
+  type SourceUsageStatsInput,
+  type UsageDayInput,
+  type UsageSource,
 } from "@tokenmaxxing/api-contract";
 import { Effect, Option, Schema } from "effect";
 
-const PARSER_VERSION = "ccusage-v20-raw-4";
+const PARSER_VERSION = "ccusage-v20-raw-5";
+
+/** ~27 years of daily rows; anything larger is not a real ccusage report. */
+const MAX_REPORT_DAYS = 10_000;
+const MAX_MODELS_PER_DAY = 256;
+
+const CcusageModelName = Schema.String.check(Schema.isMaxLength(256));
 
 const CcusageModelBreakdown = Schema.Struct({
-  cacheCreationTokens: Schema.optional(Schema.Number),
-  cacheReadTokens: Schema.optional(Schema.Number),
-  cost: Schema.optional(Schema.Number),
-  inputTokens: Schema.optional(Schema.Number),
-  modelName: Schema.String,
-  outputTokens: Schema.optional(Schema.Number),
+  cacheCreationTokens: Schema.optional(TokenCount),
+  cacheReadTokens: Schema.optional(TokenCount),
+  cost: Schema.optional(UsdAmount),
+  inputTokens: Schema.optional(TokenCount),
+  modelName: CcusageModelName,
+  outputTokens: Schema.optional(TokenCount),
 });
 
 type CcusageModelBreakdown = typeof CcusageModelBreakdown.Type;
 
 const CcusageModelEntry = Schema.Struct({
-  cacheCreationTokens: Schema.optional(Schema.Number),
-  cacheReadTokens: Schema.optional(Schema.Number),
-  inputTokens: Schema.optional(Schema.Number),
-  outputTokens: Schema.optional(Schema.Number),
-  totalTokens: Schema.optional(Schema.Number),
+  cacheCreationTokens: Schema.optional(TokenCount),
+  cacheReadTokens: Schema.optional(TokenCount),
+  inputTokens: Schema.optional(TokenCount),
+  outputTokens: Schema.optional(TokenCount),
+  totalTokens: Schema.optional(TokenCount),
 });
 
 type CcusageModelEntry = typeof CcusageModelEntry.Type;
 
 const CcusageDay = Schema.Struct({
-  cacheCreationTokens: Schema.optional(Schema.Number),
-  cacheReadTokens: Schema.optional(Schema.Number),
-  costUSD: Schema.optional(Schema.Number),
-  date: Schema.String,
-  inputTokens: Schema.optional(Schema.Number),
-  modelBreakdowns: Schema.optional(Schema.Array(CcusageModelBreakdown)),
-  models: Schema.optional(Schema.Record(Schema.String, CcusageModelEntry)),
-  modelsUsed: Schema.optional(Schema.Array(Schema.String)),
-  outputTokens: Schema.optional(Schema.Number),
-  totalCost: Schema.optional(Schema.Number),
-  totalTokens: Schema.optional(Schema.Number),
+  cacheCreationTokens: Schema.optional(TokenCount),
+  cacheReadTokens: Schema.optional(TokenCount),
+  costUSD: Schema.optional(UsdAmount),
+  date: DateKey,
+  inputTokens: Schema.optional(TokenCount),
+  modelBreakdowns: Schema.optional(
+    Schema.Array(CcusageModelBreakdown).check(Schema.isMaxLength(MAX_MODELS_PER_DAY)),
+  ),
+  models: Schema.optional(
+    Schema.Record(CcusageModelName, CcusageModelEntry).check(
+      Schema.isMaxProperties(MAX_MODELS_PER_DAY),
+    ),
+  ),
+  modelsUsed: Schema.optional(
+    Schema.Array(CcusageModelName).check(Schema.isMaxLength(MAX_MODELS_PER_DAY)),
+  ),
+  outputTokens: Schema.optional(TokenCount),
+  totalCost: Schema.optional(UsdAmount),
+  totalTokens: Schema.optional(TokenCount),
 });
 
 type CcusageDay = typeof CcusageDay.Type;
 
+/** Days are decoded one by one so a single malformed day cannot sink a report. */
 const CcusageDailyReport = Schema.Struct({
-  daily: Schema.Array(CcusageDay),
+  daily: Schema.Array(Schema.Unknown).check(Schema.isMaxLength(MAX_REPORT_DAYS)),
 });
 
 const CcusageSessionReport = Schema.Struct({
@@ -53,6 +72,7 @@ const CcusageSessionReport = Schema.Struct({
 });
 
 const decodeDailyReport = Schema.decodeUnknownEffect(CcusageDailyReport);
+const decodeDay = Schema.decodeUnknownEffect(CcusageDay);
 const decodeSessionReport = Schema.decodeUnknownEffect(CcusageSessionReport);
 
 interface ParsedRawUsageReports {
@@ -64,40 +84,59 @@ interface ParsedRawUsageReports {
 
 interface CoveredUsageDay {
   date: string;
-  source: string;
+  source: UsageSource;
 }
 
 type PersistableDailyReport = Omit<RawUsageReportInput, "reportKind"> & {
   reportKind: "daily";
 };
 
+interface ParseRawUsageOptions {
+  /**
+   * Inclusive upper bound for accepted day keys. Later days are dropped: they
+   * are neither stored, persisted in the raw report, nor treated as covered.
+   */
+  latestDate: string;
+}
+
+/**
+ * Turns raw report envelopes into structured rows. Each daily report is
+ * authoritative for its source, so when a payload carries several daily
+ * reports for one source the last decodable one wins — concatenating them
+ * would sum the same days twice and break idempotent re-syncs.
+ */
 function parseRawUsageReports(
   reports: readonly RawUsageReportInput[],
+  options: ParseRawUsageOptions,
 ): Effect.Effect<ParsedRawUsageReports> {
   return Effect.gen(function* () {
-    const coveredDays = new Map<string, CoveredUsageDay>();
-    const persistableReports: PersistableDailyReport[] = [];
-    const rows: UsageDayInput[] = [];
+    const dailyBySource = new Map<UsageSource, PersistableDailyReport & { days: CcusageDay[] }>();
     const sourceStats: SourceUsageStatsInput[] = [];
 
     for (const report of reports) {
       if (report.reportKind === "daily") {
         const decoded = yield* decodeDailyReport(report.payload).pipe(Effect.option);
-        if (Option.isSome(decoded)) {
-          persistableReports.push({
-            command: report.command,
-            payload: decoded.value,
-            reportKind: "daily",
-            source: report.source,
-          });
-          for (const day of decoded.value.daily) {
-            coveredDays.set(JSON.stringify([report.source, day.date]), {
-              date: day.date,
-              source: report.source,
-            });
-          }
-          rows.push(...aggregateDays(report.source, decoded.value.daily));
+        if (Option.isNone(decoded)) {
+          continue;
         }
+
+        const days: CcusageDay[] = [];
+        for (const rawDay of decoded.value.daily) {
+          const day = yield* decodeDay(rawDay).pipe(Effect.option);
+          if (Option.isSome(day) && day.value.date <= options.latestDate) {
+            days.push(day.value);
+          }
+        }
+
+        // Delete first so the surviving report keeps the position of the last one.
+        dailyBySource.delete(report.source);
+        dailyBySource.set(report.source, {
+          command: report.command,
+          days,
+          payload: { daily: days },
+          reportKind: "daily",
+          source: report.source,
+        });
       } else {
         const decoded = yield* decodeSessionReport(report.payload).pipe(Effect.option);
         if (Option.isSome(decoded)) {
@@ -109,11 +148,25 @@ function parseRawUsageReports(
       }
     }
 
+    const coveredDays = new Map<string, CoveredUsageDay>();
+    const persistableReports: PersistableDailyReport[] = [];
+    const rows: UsageDayInput[] = [];
+    for (const { days, ...report } of dailyBySource.values()) {
+      persistableReports.push(report);
+      for (const day of days) {
+        coveredDays.set(JSON.stringify([report.source, day.date]), {
+          date: day.date,
+          source: report.source,
+        });
+      }
+      rows.push(...aggregateDays(report.source, days));
+    }
+
     return { coveredDays: [...coveredDays.values()], persistableReports, rows, sourceStats };
   });
 }
 
-function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInput[] {
+function aggregateDays(source: UsageSource, days: readonly CcusageDay[]): UsageDayInput[] {
   const merged = new Map<string, UsageDayInput>();
 
   const add = (row: UsageDayInput) => {
@@ -161,13 +214,24 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
     const unpriced = entries.filter((entry) => entry.cost === undefined);
     const unpricedWeight = unpriced.reduce((sum, entry) => sum + tokensOf(entry), 0);
     const remainder = Math.max(dayCost - knownCost, 0);
+    // With every entry priced, any day-level surplus (e.g. reasoning tokens
+    // ccusage prices but omits from the breakdown) is spread over all entries
+    // by token weight instead of being dropped.
+    const surplusWeight = entries.reduce((sum, entry) => sum + tokensOf(entry), 0);
+    const surplusShare = (entry: ModelTotals) =>
+      unpriced.length > 0
+        ? 0
+        : surplusWeight > 0
+          ? (remainder * tokensOf(entry)) / surplusWeight
+          : remainder / entries.length;
 
     for (const [index, entry] of entries.entries()) {
       const cost =
-        entry.cost ??
-        (unpricedWeight > 0
-          ? (remainder * tokensOf(entry)) / unpricedWeight
-          : remainder / unpriced.length);
+        entry.cost === undefined
+          ? unpricedWeight > 0
+            ? (remainder * tokensOf(entry)) / unpricedWeight
+            : remainder / unpriced.length
+          : entry.cost + surplusShare(entry);
       add({
         cacheCreationTokens: entry.cacheCreationTokens,
         cacheReadTokens: entry.cacheReadTokens,
@@ -263,4 +327,4 @@ function modelTotalTokens<T extends { totalTokens: number | undefined }>(
 
 export { parseRawUsageReports, PARSER_VERSION };
 
-export type { CoveredUsageDay, PersistableDailyReport };
+export type { CoveredUsageDay, ParseRawUsageOptions, PersistableDailyReport };

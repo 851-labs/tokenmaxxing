@@ -1,4 +1,4 @@
-import type { UsageDayInput } from "@tokenmaxxing/api-contract";
+import type { UsageDayInput, UsageSource } from "@tokenmaxxing/api-contract";
 
 import type { CcusageDay } from "./schema";
 
@@ -19,7 +19,7 @@ import type { CcusageDay } from "./schema";
  * Duplicate (date, model) pairs sum.
  */
 
-function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInput[] {
+function aggregateDays(source: UsageSource, days: readonly CcusageDay[]): UsageDayInput[] {
   const merged = new Map<string, UsageDayInput>();
 
   const add = (row: UsageDayInput) => {
@@ -105,13 +105,23 @@ function aggregateDays(source: string, days: readonly CcusageDay[]): UsageDayInp
     const unpriced = entries.filter((entry) => entry.cost === undefined);
     const unpricedWeight = unpriced.reduce((sum, entry) => sum + tokensOf(entry), 0);
     const remainder = Math.max(dayCost - knownCost, 0);
+    // With every entry priced, any day-level surplus is spread over all
+    // entries by token weight instead of being dropped (mirrors the API).
+    const surplusWeight = entries.reduce((sum, entry) => sum + tokensOf(entry), 0);
+    const surplusShare = (entry: ModelTotals) =>
+      unpriced.length > 0
+        ? 0
+        : surplusWeight > 0
+          ? (remainder * tokensOf(entry)) / surplusWeight
+          : remainder / entries.length;
 
     for (const [index, entry] of entries.entries()) {
       const cost =
-        entry.cost ??
-        (unpricedWeight > 0
-          ? (remainder * tokensOf(entry)) / unpricedWeight
-          : remainder / unpriced.length);
+        entry.cost === undefined
+          ? unpricedWeight > 0
+            ? (remainder * tokensOf(entry)) / unpricedWeight
+            : remainder / unpriced.length
+          : entry.cost + surplusShare(entry);
       add({
         cacheCreationTokens: entry.cacheCreationTokens,
         cacheReadTokens: entry.cacheReadTokens,

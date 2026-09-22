@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { DateKey } from "./date-key";
+
 const HealthResponse = Schema.Struct({
   ok: Schema.Boolean,
   product: Schema.String,
@@ -150,19 +152,57 @@ const CliLoginApproveResponse = Schema.Struct({
 });
 
 /**
+ * Agents the CLI can sync, in CLI display order. Input schemas only accept
+ * these; response schemas keep `source` as a plain string so older decoders
+ * keep working when a source is added.
+ */
+const USAGE_SOURCES = ["claude", "codex", "opencode", "gemini", "copilot", "hermes", "pi"] as const;
+
+const UsageSource = Schema.Literals(USAGE_SOURCES);
+
+type UsageSource = typeof UsageSource.Type;
+
+/** Token counts are non-negative safe integers (ccusage never emits fractions). */
+const TokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+/** USD amounts are finite and non-negative; rejects JSON "NaN"/"Infinity" too. */
+const UsdAmount = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
+
+const boundedString = (maxLength: number) => Schema.String.check(Schema.isMaxLength(maxLength));
+
+const boundedArray = <S extends Schema.Top>(item: S, maxLength: number) =>
+  Schema.Array(item).check(Schema.isMaxLength(maxLength));
+
+const MAX_MODEL_NAME_LENGTH = 256;
+/** Legacy `/usage/sync` clients upload in chunks of 1000 rows. */
+const MAX_SYNC_DAYS = 1_000;
+/** One daily plus one legacy session report per source, with headroom. */
+const MAX_RAW_REPORTS = 64;
+const MAX_SOURCE_STATS = 64;
+const MAX_COMMAND_ARGS = 32;
+const MAX_COMMAND_ARG_LENGTH = 256;
+
+const UsageDeviceInput = Schema.Struct({
+  arch: Schema.optional(boundedString(64)),
+  name: boundedString(256),
+  platform: boundedString(64),
+  version: Schema.optional(boundedString(64)),
+});
+
+/**
  * One day of usage for one (source, model) pair, as aggregated by the CLI
  * from ccusage output. `date` is an opaque YYYY-MM-DD local-time bucket.
  */
 const UsageDayInput = Schema.Struct({
-  cacheCreationTokens: Schema.Number,
-  cacheReadTokens: Schema.Number,
-  costUsd: Schema.Number,
-  date: Schema.String,
-  inputTokens: Schema.Number,
-  model: Schema.String,
-  outputTokens: Schema.Number,
-  source: Schema.String,
-  totalTokens: Schema.Number,
+  cacheCreationTokens: TokenCount,
+  cacheReadTokens: TokenCount,
+  costUsd: UsdAmount,
+  date: DateKey,
+  inputTokens: TokenCount,
+  model: boundedString(MAX_MODEL_NAME_LENGTH),
+  outputTokens: TokenCount,
+  source: UsageSource,
+  totalTokens: TokenCount,
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
@@ -170,8 +210,8 @@ const UsageDayInput = Schema.Struct({
 type UsageDayInput = typeof UsageDayInput.Type;
 
 const SourceUsageStatsInput = Schema.Struct({
-  sessionCount: Schema.Number,
-  source: Schema.String,
+  sessionCount: TokenCount,
+  source: UsageSource,
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
@@ -184,11 +224,15 @@ const UsageRawReportKind = Schema.Literals(["daily", "session"]);
 
 type UsageRawReportKind = typeof UsageRawReportKind.Type;
 
+/**
+ * `payload` is raw ccusage JSON in one of several per-source dialects; the
+ * API decodes it leniently (and day by day) after the envelope is accepted.
+ */
 const RawUsageReportInput = Schema.Struct({
-  command: Schema.Array(Schema.String),
+  command: boundedArray(boundedString(MAX_COMMAND_ARG_LENGTH), MAX_COMMAND_ARGS),
   payload: Schema.Unknown,
   reportKind: UsageRawReportKind,
-  source: Schema.String,
+  source: UsageSource,
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
@@ -250,12 +294,7 @@ const ServiceRepairStatus = Schema.Literals(["failure", "scheduled", "success"])
 type ServiceRepairStatusValue = typeof ServiceRepairStatus.Type;
 
 const UsageCheckInInput = Schema.Struct({
-  device: Schema.Struct({
-    arch: Schema.optional(Schema.String),
-    name: Schema.String,
-    platform: Schema.String,
-    version: Schema.optional(Schema.String),
-  }),
+  device: UsageDeviceInput,
   service: Schema.Struct({
     autoUpdate: Schema.optional(ServiceAutoUpdate),
     backend: Schema.optional(Schema.String),
@@ -281,27 +320,17 @@ const UsageCheckInResponse = Schema.Struct({
 });
 
 const IngestUsageInput = Schema.Struct({
-  device: Schema.Struct({
-    arch: Schema.optional(Schema.String),
-    name: Schema.String,
-    platform: Schema.String,
-    version: Schema.optional(Schema.String),
-  }),
-  reports: Schema.Array(RawUsageReportInput),
-  sourceStats: Schema.optional(Schema.Array(SourceUsageStatsInput)),
+  device: UsageDeviceInput,
+  reports: boundedArray(RawUsageReportInput, MAX_RAW_REPORTS),
+  sourceStats: Schema.optional(boundedArray(SourceUsageStatsInput, MAX_SOURCE_STATS)),
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
 
 const SyncUsageInput = Schema.Struct({
-  days: Schema.Array(UsageDayInput),
-  device: Schema.Struct({
-    arch: Schema.optional(Schema.String),
-    name: Schema.String,
-    platform: Schema.String,
-    version: Schema.optional(Schema.String),
-  }),
-  sourceStats: Schema.optional(Schema.Array(SourceUsageStatsInput)),
+  days: boundedArray(UsageDayInput, MAX_SYNC_DAYS),
+  device: UsageDeviceInput,
+  sourceStats: Schema.optional(boundedArray(SourceUsageStatsInput, MAX_SOURCE_STATS)),
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
@@ -686,7 +715,12 @@ export {
   UsageCheckInResponse,
   UserAccountSummary,
   UsageDayInput,
+  UsageDeviceInput,
   UsageRawReportKind,
+  USAGE_SOURCES,
+  UsageSource,
+  UsdAmount,
+  TokenCount,
 };
 
 export type {

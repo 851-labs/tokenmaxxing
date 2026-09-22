@@ -13,10 +13,12 @@ import type {
   ServiceRepairStatusValue,
   SourceUsageStatsInput,
   UsageDayInput,
+  UsageSource,
 } from "@tokenmaxxing/api-contract";
 
 import { sha256Hex } from "../auth/crypto";
 import type { DatabaseError } from "../database";
+import { latestUsageDateKey } from "../date-keys";
 import {
   parseRawUsageReports,
   PARSER_VERSION,
@@ -31,7 +33,8 @@ import type { RawUsageStorageError } from "./raw-store";
  * structured rows and aggregate source stats are upserted idempotently.
  * Legacy session reports are counted in memory and never persisted. The
  * deviceId always comes from the presenting token, so payloads cannot write
- * into another device's history.
+ * into another device's history. Days later than UTC today + 1 are dropped
+ * (not rejected): a skewed device clock should not block its real history.
  */
 
 interface SyncResult {
@@ -113,7 +116,7 @@ interface UsageServiceAutoUpdate {
 interface UsageReplacementScope {
   date: string;
   models: readonly string[];
-  source: string;
+  source: UsageSource;
 }
 
 interface UsageRepositoryShape {
@@ -165,13 +168,16 @@ class UsageRepository extends Context.Service<UsageRepository, UsageRepositorySh
 
 const UPSERT_CHUNK_SIZE = 40;
 
-const makeUsageService = Effect.fn("makeUsageService")(function* () {
+const makeUsageService = Effect.fn("makeUsageService")(function* (
+  options: { now?: () => Date } = {},
+) {
   const repository = yield* UsageRepository;
+  const now = options.now ?? (() => new Date());
 
   return UsageService.of({
     checkIn: Effect.fn("UsageService.checkIn")(function* (identity, device, service) {
       const deviceId = yield* requireDeviceId(identity);
-      const checkedInAt = new Date();
+      const checkedInAt = now();
       yield* repository.checkInDevice(deviceId, device, service, checkedInAt).pipe(Effect.orDie);
 
       return {
@@ -185,8 +191,10 @@ const makeUsageService = Effect.fn("makeUsageService")(function* () {
       sourceStats = [],
     ) {
       const deviceId = yield* requireDeviceId(identity);
-      const syncedAt = new Date();
-      const parsed = yield* parseRawUsageReports(reports);
+      const syncedAt = now();
+      const parsed = yield* parseRawUsageReports(reports, {
+        latestDate: latestUsageDateKey(syncedAt),
+      });
       const rawReports = yield* prepareRawReports(
         identity.user.id,
         deviceId,
@@ -222,14 +230,15 @@ const makeUsageService = Effect.fn("makeUsageService")(function* () {
       sourceStats = [],
     ) {
       const deviceId = yield* requireDeviceId(identity);
-      const syncedAt = new Date();
+      const syncedAt = now();
+      const latestDate = latestUsageDateKey(syncedAt);
 
       const upserted = yield* writeStructuredUsage(
         repository,
         identity.user.id,
         deviceId,
         device,
-        days,
+        days.filter((day) => day.date <= latestDate),
         sourceStats,
         syncedAt,
       );
@@ -319,7 +328,7 @@ function mergeSourceStats(
   legacyStats: readonly SourceUsageStatsInput[],
   explicitStats: readonly SourceUsageStatsInput[],
 ): SourceUsageStatsInput[] {
-  const merged = new Map<string, SourceUsageStatsInput>();
+  const merged = new Map<UsageSource, SourceUsageStatsInput>();
   for (const stat of legacyStats) {
     merged.set(stat.source, stat);
   }
@@ -369,7 +378,7 @@ function buildReplacementScopes(
   coveredDays: readonly CoveredUsageDay[],
   normalizedDays: readonly UsageDayInput[],
 ): UsageReplacementScope[] {
-  const scopes = new Map<string, { date: string; models: Set<string>; source: string }>();
+  const scopes = new Map<string, { date: string; models: Set<string>; source: UsageSource }>();
   for (const coveredDay of coveredDays) {
     scopes.set(JSON.stringify([coveredDay.date, coveredDay.source]), {
       date: coveredDay.date,

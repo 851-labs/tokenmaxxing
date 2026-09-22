@@ -1,0 +1,41 @@
+{
+  "cli": "current",
+  "endpoint": "usage.checkIn",
+  "method": "POST",
+  "path": "/usage/check-in",
+  "body": {
+    "device": {
+      "arch": "arm64",
+      "name": "fixture-host",
+      "platform": "darwin",
+      "version": "0.0.0-fixture"
+    },
+    "service": {
+      "autoUpdate": {
+        "attemptedAt": "2026-06-21T17:59:00.000Z",
+        "completedAt": "2026-06-21T17:59:30.000Z",
+        "currentVersion": "0.5.9",
+        "enabled": true,
+        "error": null,
+        "installedVersion": "0.6.0",
+        "latestVersion": "0.6.0",
+        "manager": "registry",
+        "reason": null,
+        "status": "success"
+      },
+      "backend": "launchd",
+      "error": null,
+      "reloadRequired": false,
+      "repairAttemptedAt": "2026-06-21T17:58:00.000Z",
+      "repairCompletedAt": null,
+      "repairError": null,
+      "repairReason": "auto-updated",
+      "repairStatus": "scheduled",
+      "runnerTarget": "darwin-arm64",
+      "runnerVersion": "0.6.0",
+      "schedulerActive": true,
+      "status": "success",
+      "templateVersion": 5
+    }
+  }
+}

@@ -137,9 +137,11 @@ function makeRepository(options: RepositoryOptions = {}) {
   };
 }
 
-async function makeService(repository: UsageRepositoryShape) {
+async function makeService(repository: UsageRepositoryShape, now?: () => Date) {
   return (await Effect.runPromise(
-    makeUsageService().pipe(Effect.provideService(UsageRepository, repository)),
+    makeUsageService(now === undefined ? {} : { now }).pipe(
+      Effect.provideService(UsageRepository, repository),
+    ),
   )) as unknown as TestUsageService;
 }
 
@@ -340,7 +342,7 @@ describe("UsageService.ingestRaw", () => {
           ) as unknown as string,
           payloadBytes: JSON.stringify(rawReports[0]!.payload).length,
           payloadJson: JSON.stringify(rawReports[0]!.payload),
-          parserVersion: "ccusage-v20-raw-4",
+          parserVersion: "ccusage-v20-raw-5",
           reportKind: "daily",
           source: "codex",
         }),
@@ -432,5 +434,84 @@ describe("UsageService.ingestRaw", () => {
     expect(pruneChunk).not.toHaveBeenCalled();
     expect(upsertSourceStats).not.toHaveBeenCalled();
     expect(touchDevice).not.toHaveBeenCalled();
+  });
+});
+
+describe("UsageService future-dated usage", () => {
+  // 23:30 UTC on 06-15: a UTC+14 device is already on 06-16, never 06-17.
+  const now = () => new Date("2026-06-15T23:30:00.000Z");
+  const identity = { deviceId: "device_123", tokenId: "token_123", user };
+
+  it("drops legacy structured rows dated after UTC today + 1", async () => {
+    const { repository, upsertChunk } = makeRepository();
+    const service = await makeService(repository, now);
+    const tomorrow = { ...usageDay, date: "2026-06-16" };
+
+    const result = await Effect.runPromise(
+      service.syncBatch(identity, device, [
+        usageDay,
+        tomorrow,
+        { ...usageDay, date: "2026-06-17" },
+        { ...usageDay, date: "9999-12-31" },
+      ]),
+    );
+
+    expect(result).toMatchObject({ received: 4, upserted: 2 });
+    expect(upsertChunk).toHaveBeenCalledWith(
+      "user_123",
+      "device_123",
+      [usageDay, tomorrow],
+      expect.any(Date),
+    );
+  });
+
+  it("drops raw report days after UTC today + 1 without pruning them", async () => {
+    const { pruneChunk, repository, upsertChunk } = makeRepository();
+    const service = await makeService(repository, now);
+
+    const result = await Effect.runPromise(
+      service.ingestRaw(identity, device, [
+        {
+          command: ["ccusage@^20", "codex", "daily", "--json"],
+          payload: {
+            daily: [
+              { costUSD: 1, date: "2026-06-15", totalTokens: 10 },
+              { costUSD: 1, date: "9999-12-31", totalTokens: 10 },
+            ],
+          },
+          reportKind: "daily",
+          source: "codex",
+        },
+      ]),
+    );
+
+    expect(result.upserted).toBe(1);
+    expect(upsertChunk).toHaveBeenCalledWith(
+      "user_123",
+      "device_123",
+      [expect.objectContaining({ date: "2026-06-15" })],
+      expect.any(Date),
+    );
+    expect(pruneChunk).toHaveBeenCalledWith(
+      "device_123",
+      [{ date: "2026-06-15", models: ["unknown"], source: "codex" }],
+      expect.any(Date),
+    );
+  });
+
+  it("counts a duplicated report once so re-sending a payload stays idempotent", async () => {
+    const { repository, upsertChunk } = makeRepository();
+    const service = await makeService(repository, now);
+    const daily = rawReports[0]!;
+
+    await Effect.runPromise(service.ingestRaw(identity, device, [daily, daily]));
+
+    expect(upsertChunk).toHaveBeenCalledTimes(1);
+    expect(upsertChunk).toHaveBeenCalledWith(
+      "user_123",
+      "device_123",
+      [expect.objectContaining({ inputTokens: 100, outputTokens: 200, totalTokens: 300 })],
+      expect.any(Date),
+    );
   });
 });

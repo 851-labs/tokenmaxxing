@@ -2,7 +2,13 @@ import { defineConfig } from "vite-plus";
 
 const config = defineConfig({
   fmt: {
-    ignorePatterns: ["**/routeTree.gen.ts", "packages/db/migrations/**", "**/.repos/**"],
+    ignorePatterns: [
+      "**/routeTree.gen.ts",
+      "packages/db/migrations/**",
+      "**/.repos/**",
+      // Written by toMatchFileSnapshot; formatting would break the match.
+      "packages/api-contract/fixtures/**",
+    ],
   },
   lint: {
     ignorePatterns: ["**/routeTree.gen.ts", "packages/db/migrations/**", "**/.repos/**"],

@@ -1,0 +1,22 @@
+{
+  "cli": "0.4.13",
+  "endpoint": "usage.checkIn",
+  "method": "POST",
+  "path": "/usage/check-in",
+  "body": {
+    "device": {
+      "arch": "x64",
+      "name": "fixture-host",
+      "platform": "linux",
+      "version": "0.4.13"
+    },
+    "service": {
+      "backend": "systemd",
+      "error": null,
+      "reloadRequired": false,
+      "schedulerActive": true,
+      "status": "success",
+      "templateVersion": 2
+    }
+  }
+}

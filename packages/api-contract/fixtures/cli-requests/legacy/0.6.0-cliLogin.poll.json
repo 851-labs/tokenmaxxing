@@ -1,0 +1,9 @@
+{
+  "cli": "0.6.0",
+  "endpoint": "cliLogin.poll",
+  "method": "POST",
+  "path": "/cli/login/poll",
+  "body": {
+    "code": "ABCD-1234"
+  }
+}
