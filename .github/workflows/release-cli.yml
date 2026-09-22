@@ -54,8 +54,8 @@ jobs:
       - name: Check formatting, lint, and types
         run: bun run check
 
-      - name: Test CLI
-        run: bun run vp test --project cli
+      - name: Test CLI and bundled API contract
+        run: bun run vp test --project cli --project api-contract
 
       - name: Publish CLI and native packages
         run: bun apps/cli/script/publish.ts

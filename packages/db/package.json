@@ -12,9 +12,7 @@
     "drizzle-orm": "catalog:"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "catalog:",
     "@types/bun": "catalog:",
-    "better-sqlite3": "catalog:",
     "drizzle-kit": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
