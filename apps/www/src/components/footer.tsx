@@ -1,19 +1,8 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-const GITHUB_REPO = "851-labs/tokenmaxxing";
-const GITHUB_URL = `https://github.com/${GITHUB_REPO}`;
-
-const LINKS = {
-  changelog: `${GITHUB_URL}/blob/main/CHANGELOG.md`,
-  discord: "https://discord.gg/WzX6BpfaRH",
-  x: "https://x.com/pondorasti",
-};
-
-const starsFormatter = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 1,
-  notation: "compact",
-});
+import { formatCompact } from "../lib/format";
+import { CHANGELOG_URL, DISCORD_URL, GITHUB_REPO, GITHUB_URL, X_URL } from "../lib/site";
 
 /** Live GitHub star count for the badge. Unauthenticated, cached for an hour;
  * on failure the count is simply omitted. */
@@ -41,12 +30,12 @@ function Footer() {
       <FooterLink href={GITHUB_URL}>
         GitHub
         {stars.data === undefined ? null : (
-          <span className="text-muted-foreground">[{starsFormatter.format(stars.data)}]</span>
+          <span className="text-muted-foreground">[{formatCompact(stars.data)}]</span>
         )}
       </FooterLink>
-      <FooterLink href={LINKS.changelog}>Changelog</FooterLink>
-      <FooterLink href={LINKS.discord}>Discord</FooterLink>
-      <FooterLink href={LINKS.x}>X</FooterLink>
+      <FooterLink href={CHANGELOG_URL}>Changelog</FooterLink>
+      <FooterLink href={DISCORD_URL}>Discord</FooterLink>
+      <FooterLink href={X_URL}>X</FooterLink>
     </footer>
   );
 }

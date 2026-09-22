@@ -1,10 +1,22 @@
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import { createIsomorphicFn } from "@tanstack/react-start";
-import { TokenmaxxingApi } from "@tokenmaxxing/api-contract";
+import {
+  AdminUserNotFound,
+  CliUpgradeRequired,
+  DeviceMissing,
+  DeviceNotFound,
+  Forbidden,
+  LoginCodeExpired,
+  LoginCodeNotFound,
+  TokenmaxxingApi,
+  TokenNotFound,
+  Unauthorized,
+  UserNotFound,
+} from "@tokenmaxxing/api-contract";
 
 import { resolveApiUrl } from "./config";
 
@@ -12,42 +24,45 @@ import { resolveApiUrl } from "./config";
  * The typed client derived from the shared contract, cookie-authenticated
  * (credentials ride on every request). Library functions keep Promise
  * signatures — Effects stay inside this module; components never see them.
+ *
+ * One runtime and one client serve every call. Per-request fetch options
+ * (the SSR cookie) are provided to each call's fiber, which is where
+ * FetchHttpClient reads them, so nothing is rebuilt or leaked per request.
  */
 
 type TokenmaxxingApiClient = HttpApiClient.ForApi<typeof TokenmaxxingApi>;
 
-interface ApiClientHandle {
-  client(): Promise<TokenmaxxingApiClient>;
-  run<A, E>(effect: Effect.Effect<A, E, never>): Promise<A>;
-}
+/** Contract failures are deliberate 4xx answers; retrying cannot change them. */
+const CONTRACT_ERRORS = [
+  AdminUserNotFound,
+  CliUpgradeRequired,
+  DeviceMissing,
+  DeviceNotFound,
+  Forbidden,
+  LoginCodeExpired,
+  LoginCodeNotFound,
+  TokenNotFound,
+  Unauthorized,
+  UserNotFound,
+] as const;
 
-function createApiClient(apiUrl: string, requestInit: RequestInit): ApiClientHandle {
-  const layer = Layer.mergeAll(
-    FetchHttpClient.layer,
-    Layer.succeed(FetchHttpClient.RequestInit, requestInit),
-  );
-  const runtime = ManagedRuntime.make(layer);
+class SignOutFailed extends Data.TaggedError("SignOutFailed")<{
+  message: string;
+  status: number;
+}> {}
 
-  let cached: Promise<TokenmaxxingApiClient> | null = null;
-  const build = HttpApiClient.make(TokenmaxxingApi, {
-    baseUrl: apiUrl.replace(/\/$/, ""),
-  });
+const runtime = ManagedRuntime.make(FetchHttpClient.layer);
+const clients = new Map<string, Promise<TokenmaxxingApiClient>>();
 
-  return {
-    client: () => (cached ??= runtime.runPromise(build)),
-    run: (effect) => runtime.runPromise(effect),
-  };
-}
-
-let handle: ApiClientHandle | null = null;
-
-async function clientHandle(): Promise<ApiClientHandle> {
-  if (typeof window === "undefined") {
-    return createApiClient(resolveApiUrl(), await serverRequestInit());
+function apiClient(apiUrl: string): Promise<TokenmaxxingApiClient> {
+  const baseUrl = apiUrl.replace(/\/$/, "");
+  let client = clients.get(baseUrl);
+  if (client === undefined) {
+    client = runtime.runPromise(HttpApiClient.make(TokenmaxxingApi, { baseUrl }));
+    clients.set(baseUrl, client);
   }
 
-  handle ??= createApiClient(resolveApiUrl(), { credentials: "include" });
-  return handle;
+  return client;
 }
 
 const requestCookie = createIsomorphicFn()
@@ -58,7 +73,7 @@ const requestCookie = createIsomorphicFn()
     return getRequestHeader("cookie");
   });
 
-async function serverRequestInit(): Promise<RequestInit> {
+async function requestInit(): Promise<RequestInit> {
   const cookie = await requestCookie();
 
   return {
@@ -70,10 +85,11 @@ async function serverRequestInit(): Promise<RequestInit> {
 async function runApi<A, E>(
   call: (client: TokenmaxxingApiClient) => Effect.Effect<A, E, never>,
 ): Promise<A> {
-  const active = await clientHandle();
-  const client = await active.client();
+  const [client, init] = await Promise.all([apiClient(resolveApiUrl()), requestInit()]);
 
-  return active.run(call(client));
+  return runtime.runPromise(
+    call(client).pipe(Effect.provideService(FetchHttpClient.RequestInit, init)),
+  );
 }
 
 /** Best-effort message extraction from the contract's tagged errors. */
@@ -94,6 +110,13 @@ function isApiError(error: unknown, tag: string): boolean {
   return innerTag === tag;
 }
 
+/** Transport failures and 5xx are worth retrying; contract 4xx failures are not. */
+function isRetryableApiError(error: unknown): boolean {
+  const inner = apiError(error);
+
+  return !CONTRACT_ERRORS.some((ContractError) => inner instanceof ContractError);
+}
+
 function apiError(error: unknown): unknown {
   if (typeof error === "object" && error !== null) {
     const cause = (error as { cause?: unknown }).cause ?? error;
@@ -107,10 +130,16 @@ function apiError(error: unknown): unknown {
 
 /** Raw routes (OAuth signout) sit outside the derived client. */
 async function signOut(): Promise<void> {
-  await fetch(`${resolveApiUrl()}/auth/signout`, {
+  const response = await fetch(`${resolveApiUrl()}/auth/signout`, {
     credentials: "include",
     method: "POST",
   });
+  if (!response.ok) {
+    throw new SignOutFailed({
+      message: `Sign out failed (${response.status}).`,
+      status: response.status,
+    });
+  }
 }
 
-export { errorMessage, isApiError, runApi, signOut };
+export { errorMessage, isApiError, isRetryableApiError, runApi, SignOutFailed, signOut };

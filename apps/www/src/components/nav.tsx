@@ -4,11 +4,10 @@ import { Gear, SignOut, Star, User } from "@phosphor-icons/react/ssr";
 
 import { signOut } from "../lib/api";
 import { meQueryOptions } from "../lib/queries";
+import { GITHUB_URL } from "../lib/site";
 import { Avatar } from "./ui/avatar";
 import { buttonClassName } from "./ui/button";
 import { Menu } from "./ui/menu";
-
-const GITHUB_URL = "https://github.com/851-labs/tokenmaxxing";
 
 function Nav() {
   return (

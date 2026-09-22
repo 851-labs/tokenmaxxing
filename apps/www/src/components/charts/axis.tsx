@@ -1,4 +1,4 @@
-import { CHART_AXIS, CHART_TICKS, CHART_WIDTH } from "./scale";
+import { CHART_AXIS, CHART_TICKS, CHART_WIDTH, slotX, type BarLayout } from "./scale";
 
 /**
  * Horizontal gridlines + right-aligned value labels shared by the bar charts.
@@ -49,4 +49,19 @@ function ChartGrid({
   );
 }
 
-export { ChartGrid };
+/** Invisible hover target spanning the full height of column `index`. */
+function ColumnHitArea({
+  height,
+  index,
+  layout,
+}: {
+  height: number;
+  index: number;
+  layout: BarLayout;
+}) {
+  return (
+    <rect fill="transparent" height={height} width={layout.slot} x={slotX(layout, index)} y={0} />
+  );
+}
+
+export { ChartGrid, ColumnHitArea };

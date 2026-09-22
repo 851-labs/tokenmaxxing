@@ -1,21 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { SITE_ORIGIN } from "../lib/og";
+import { textResponse } from "../lib/http";
+import { siteUrl } from "../lib/site";
 
 const ROBOTS_CACHE_CONTROL = "public, max-age=3600";
 
 function buildRobotsTxt(): string {
-  const sitemapUrl = new URL("/sitemap.xml", SITE_ORIGIN).toString();
-  return ["User-agent: *", "Allow: /", "", `Sitemap: ${sitemapUrl}`, ""].join("\n");
+  return ["User-agent: *", "Allow: /", "", `Sitemap: ${siteUrl("/sitemap.xml")}`, ""].join("\n");
 }
 
 function handleRobotsTxtRequest(): Response {
-  return new Response(buildRobotsTxt(), {
-    headers: {
-      "cache-control": ROBOTS_CACHE_CONTROL,
-      "content-type": "text/plain; charset=utf-8",
-    },
-  });
+  return textResponse(buildRobotsTxt(), { cacheControl: ROBOTS_CACHE_CONTROL });
 }
 
 const Route = createFileRoute("/robots.txt")({

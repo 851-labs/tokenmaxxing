@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ProfileDailyResponse, ProfileDailyRow } from "@tokenmaxxing/api-contract";
 
-import { deriveCharts } from "./$user";
+import { deriveProfileCharts, type DailyRange, type DailyRow } from "./profile-charts";
 
-type DailyRange = (typeof ProfileDailyResponse.Type)["range"];
-type DailyRow = typeof ProfileDailyRow.Type;
-
-describe("deriveCharts", () => {
+describe("deriveProfileCharts", () => {
   it("fills sparse usage rows across the server-provided chart range", () => {
     const range: DailyRange = {
       first: "2026-06-19",
@@ -22,18 +18,18 @@ describe("deriveCharts", () => {
       },
     ];
 
-    const derived = deriveCharts(rows, range);
+    const derived = deriveProfileCharts(rows, range);
 
     expect(derived.heatmap).toEqual({
       first: "2026-01-01",
       last: "2026-12-31",
     });
-    expect(derived.spendDays.map((day) => [day.date, day.total])).toEqual([
+    expect(derived.spend.days.map((day) => [day.date, day.total])).toEqual([
       ["2026-06-19", 12],
       ["2026-06-20", 0],
       ["2026-06-21", 0],
     ]);
-    expect(derived.tokenDays.map((day) => [day.date, day.total])).toEqual([
+    expect(derived.tokens.days.map((day) => [day.date, day.total])).toEqual([
       ["2026-06-19", 300],
       ["2026-06-20", 0],
       ["2026-06-21", 0],
@@ -47,14 +43,14 @@ describe("deriveCharts", () => {
       last: "2026-06-21",
     };
 
-    const derived = deriveCharts([], range);
+    const derived = deriveProfileCharts([], range);
 
     expect(derived.heatmap).toEqual({
       first: "2026-01-01",
       last: "2026-12-31",
     });
-    expect(derived.spendDays.at(0)?.date).toBe("2026-01-01");
-    expect(derived.spendDays.at(-1)?.date).toBe("2026-06-21");
+    expect(derived.spend.days.at(0)?.date).toBe("2026-01-01");
+    expect(derived.spend.days.at(-1)?.date).toBe("2026-06-21");
   });
 
   it("renders every month from range start through range end", () => {
@@ -63,7 +59,7 @@ describe("deriveCharts", () => {
       last: "2026-06-21",
     };
 
-    const derived = deriveCharts([], range);
+    const derived = deriveProfileCharts([], range);
 
     expect(derived.months.map((month) => month.month)).toEqual([
       "2026-01",
@@ -85,14 +81,14 @@ describe("deriveCharts", () => {
       dailyRow({ costUsd: 10, key: "claude-opus-4-7", totalTokens: 100 }),
     ];
 
-    const derived = deriveCharts(rows, range);
+    const derived = deriveProfileCharts(rows, range);
 
-    expect(derived.spendLegend.map((entry) => entry.series)).toEqual([
+    expect(derived.spend.legend.map((entry) => entry.series)).toEqual([
       "claude-opus-4-8",
       "claude-opus-4-7",
     ]);
     expect(
-      derived.spendDays[0]?.segments
+      derived.spend.days[0]?.segments
         .filter((segment) => segment.value > 0)
         .map((segment) => [segment.series, segment.value]),
     ).toEqual([
@@ -114,9 +110,9 @@ describe("deriveCharts", () => {
       }),
     );
 
-    const derived = deriveCharts(rows, range);
+    const derived = deriveProfileCharts(rows, range);
 
-    expect(derived.spendLegend.map((entry) => entry.series)).toEqual([
+    expect(derived.spend.legend.map((entry) => entry.series)).toEqual([
       "model-01",
       "model-02",
       "model-03",
@@ -129,8 +125,31 @@ describe("deriveCharts", () => {
       "Other",
     ]);
     expect(
-      derived.spendDays[0]?.segments.find((segment) => segment.series === "Other")?.value,
+      derived.spend.days[0]?.segments.find((segment) => segment.series === "Other")?.value,
     ).toBe(3);
+  });
+
+  it("buckets spend by Monday-first weekday from the opaque date key", () => {
+    const range: DailyRange = { first: "2026-06-15", last: "2026-06-21" };
+    const rows: DailyRow[] = [
+      { ...dailyRow({ costUsd: 5, key: "a", totalTokens: 1 }), date: "2026-06-15" }, // Monday
+      { ...dailyRow({ costUsd: 7, key: "a", totalTokens: 1 }), date: "2026-06-21" }, // Sunday
+    ];
+
+    expect(deriveProfileCharts(rows, range).spendByWeekday).toEqual([5, 0, 0, 0, 0, 0, 7]);
+  });
+
+  it("builds heatmap tooltip segments only for days with usage", () => {
+    const range: DailyRange = { first: "2026-06-20", last: "2026-06-21" };
+    const rows = [dailyRow({ costUsd: 4, key: "claude-opus-4-8", totalTokens: 10 })];
+
+    const derived = deriveProfileCharts(rows, range);
+
+    expect([...derived.segmentsByDate.keys()]).toEqual(["2026-06-21"]);
+    expect(derived.segmentsByDate.get("2026-06-21")).toEqual([
+      { color: expect.any(String), series: "claude-opus-4-8", value: 4 },
+    ]);
+    expect(derived.spendByDate.get("2026-06-21")).toBe(4);
   });
 });
 
