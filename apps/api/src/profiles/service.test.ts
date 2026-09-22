@@ -152,7 +152,11 @@ describe("ProfilesService shadow-ban visibility", () => {
 
       await Effect.runPromise(service.getProfile("target", null));
 
-      expect(rankInput).toEqual({ since: "2026-05-14", userId: "user_target" });
+      expect(rankInput).toEqual({
+        since: "2026-05-14",
+        until: "2026-06-13",
+        userId: "user_target",
+      });
     } finally {
       vi.useRealTimers();
     }

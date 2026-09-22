@@ -1,3 +1,5 @@
+import { USAGE_SOURCES, type UsageSource } from "@tokenmaxxing/api-contract";
+
 /**
  * Per-source invocation strategy. Every supported agent maps to one focused
  * `ccusage <subcommand> daily` run; rows get tagged with `source` by the
@@ -9,18 +11,15 @@ interface CcusageSource {
   /** ccusage subcommand. */
   subcommand: string;
   /** The source tag stored server-side and shown on profiles. */
-  source: string;
+  source: UsageSource;
 }
 
-const CCUSAGE_SOURCES: readonly CcusageSource[] = [
-  { source: "claude", subcommand: "claude" },
-  { source: "codex", subcommand: "codex" },
-  { source: "opencode", subcommand: "opencode" },
-  { source: "gemini", subcommand: "gemini" },
-  { source: "copilot", subcommand: "copilot" },
-  { source: "hermes", subcommand: "hermes" },
-  { source: "pi", subcommand: "pi" },
-];
+// The canonical source list lives in the API contract so the server rejects
+// anything the CLI would never send; every source's subcommand is its name.
+const CCUSAGE_SOURCES: readonly CcusageSource[] = USAGE_SOURCES.map((source) => ({
+  source,
+  subcommand: source,
+}));
 
 const DEFAULT_SOURCE_NAMES = CCUSAGE_SOURCES.map((entry) => entry.source);
 
@@ -28,7 +27,9 @@ function resolveSources(names: readonly string[]): {
   invalid: string[];
   sources: CcusageSource[];
 } {
-  const bySource = new Map(CCUSAGE_SOURCES.map((entry) => [entry.source, entry]));
+  const bySource = new Map<string, CcusageSource>(
+    CCUSAGE_SOURCES.map((entry) => [entry.source, entry]),
+  );
   const sources: CcusageSource[] = [];
   const invalid: string[] = [];
   for (const name of names) {

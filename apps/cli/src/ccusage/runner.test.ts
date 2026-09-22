@@ -9,10 +9,11 @@ import {
   runCcusageDailyReport,
   sessionCcusageCommand,
 } from "./runner";
+import type { CcusageSource } from "./sources";
 
-const codex = { source: "codex", subcommand: "codex" };
-const hermes = { source: "hermes", subcommand: "hermes" };
-const pi = { source: "pi", subcommand: "pi" };
+const codex: CcusageSource = { source: "codex", subcommand: "codex" };
+const hermes: CcusageSource = { source: "hermes", subcommand: "hermes" };
+const pi: CcusageSource = { source: "pi", subcommand: "pi" };
 
 async function ccusageErrorFor<A>(effect: Effect.Effect<A, CcusageRunError>) {
   const exit = await Effect.runPromiseExit(effect);

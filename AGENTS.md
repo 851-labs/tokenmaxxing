@@ -17,5 +17,6 @@
 ## Conventions
 
 - Daily usage rows are keyed `(deviceId, date, source, model)` and upserted; sync must stay idempotent.
-- `date` columns are opaque `YYYY-MM-DD` strings (ccusage local-time buckets); never parse them into Date objects for bucketing.
+- `date` columns are opaque `YYYY-MM-DD` strings (ccusage local-time buckets); never parse them into Date objects for bucketing. Do day arithmetic with the day-number helpers in `packages/api-contract/src/date-key.ts`.
+- Published CLIs bundle a frozen contract. `packages/api-contract/fixtures/` (recorded CLI requests + the CLI endpoint OpenAPI slice) is a compatibility contract: review diffs there as breaking-change reviews, and add a `legacy/` fixture before changing a shape a released CLI sends.
 - CLI tokens (`tmx_` prefix) never expire; revocation (`revokedAt`) is the only kill switch.

@@ -7,6 +7,7 @@ import type {
   RawUsageReportInput,
   SourceUsageStatsInput,
   UsageDayInput,
+  UsageSource,
 } from "@tokenmaxxing/api-contract";
 
 import packageJson from "../../package.json";
@@ -152,10 +153,10 @@ interface SyncSourceIssue {
 }
 
 type SyncSourceResult =
-  | { source: string; status: "failed"; summary: null; issue: SyncSourceIssue }
-  | { source: string; status: "partial"; summary: SyncSourceSummary; issue: SyncSourceIssue }
-  | { source: string; status: "skipped"; summary: null; reason: "no_data" }
-  | { source: string; status: "synced"; summary: SyncSourceSummary };
+  | { source: UsageSource; status: "failed"; summary: null; issue: SyncSourceIssue }
+  | { source: UsageSource; status: "partial"; summary: SyncSourceSummary; issue: SyncSourceIssue }
+  | { source: UsageSource; status: "skipped"; summary: null; reason: "no_data" }
+  | { source: UsageSource; status: "synced"; summary: SyncSourceSummary };
 
 type SyncStatus = "error" | "ok" | "partial";
 

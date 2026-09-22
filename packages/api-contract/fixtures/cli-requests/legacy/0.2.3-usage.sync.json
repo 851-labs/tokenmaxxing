@@ -1,0 +1,47 @@
+{
+  "cli": "0.2.3",
+  "endpoint": "usage.sync",
+  "method": "POST",
+  "path": "/usage/sync",
+  "body": {
+    "days": [
+      {
+        "cacheCreationTokens": 6058989,
+        "cacheReadTokens": 652827808,
+        "costUsd": 851.14,
+        "date": "2026-06-10",
+        "inputTokens": 355038,
+        "model": "claude-opus-4-20250514",
+        "outputTokens": 1438433,
+        "source": "claude",
+        "totalTokens": 660680268
+      },
+      {
+        "cacheCreationTokens": 0,
+        "cacheReadTokens": 23162112,
+        "costUsd": 58.78,
+        "date": "2026-06-11",
+        "inputTokens": 1799323,
+        "model": "[codex] gpt-5",
+        "outputTokens": 79159,
+        "source": "codex",
+        "totalTokens": 25040594
+      },
+      {
+        "cacheCreationTokens": 0,
+        "cacheReadTokens": 0,
+        "costUsd": 0,
+        "date": "2026-06-12",
+        "inputTokens": 900,
+        "model": "unknown",
+        "outputTokens": 100,
+        "source": "opencode",
+        "totalTokens": 1000
+      }
+    ],
+    "device": {
+      "name": "fixture-host",
+      "platform": "linux"
+    }
+  }
+}

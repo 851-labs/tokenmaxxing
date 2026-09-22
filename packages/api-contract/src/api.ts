@@ -3,6 +3,7 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 
+import { DateKey } from "./date-key";
 import {
   AdminUserNotFound,
   CliUpgradeRequired,
@@ -206,8 +207,8 @@ class ProfilesGroup extends HttpApiGroup.make("profiles")
       },
       query: {
         groupBy: Schema.optional(ProfileDailyGroupBy),
-        since: Schema.optional(Schema.String),
-        until: Schema.optional(Schema.String),
+        since: Schema.optional(DateKey),
+        until: Schema.optional(DateKey),
       },
       success: ProfileDailyResponse,
       error: UserNotFound,

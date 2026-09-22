@@ -1,0 +1,177 @@
+{
+  "cli": "current",
+  "endpoint": "usage.ingest",
+  "method": "POST",
+  "path": "/usage/ingest",
+  "body": {
+    "device": {
+      "arch": "arm64",
+      "name": "fixture-host",
+      "platform": "darwin",
+      "version": "0.0.0-fixture"
+    },
+    "reports": [
+      {
+        "command": [
+          "ccusage@^20.0.19",
+          "claude",
+          "daily",
+          "--json",
+          "--breakdown",
+          "--mode",
+          "calculate"
+        ],
+        "payload": {
+          "daily": [
+            {
+              "cacheCreationTokens": 6058989,
+              "cacheReadTokens": 652827808,
+              "date": "2026-06-10",
+              "inputTokens": 355038,
+              "modelBreakdowns": [
+                {
+                  "cacheCreationTokens": 6000000,
+                  "cacheReadTokens": 650000000,
+                  "cost": 850.5,
+                  "inputTokens": 350000,
+                  "modelName": "claude-fable-5",
+                  "outputTokens": 1400000
+                },
+                {
+                  "cacheCreationTokens": 58989,
+                  "cacheReadTokens": 2827808,
+                  "cost": 0.64,
+                  "inputTokens": 5038,
+                  "modelName": "claude-haiku-4-5-20251001",
+                  "outputTokens": 38433
+                }
+              ],
+              "modelsUsed": [
+                "claude-fable-5",
+                "claude-haiku-4-5-20251001"
+              ],
+              "outputTokens": 1438433,
+              "totalCost": 851.14,
+              "totalTokens": 660680268
+            }
+          ]
+        },
+        "reportKind": "daily",
+        "source": "claude"
+      },
+      {
+        "command": [
+          "ccusage@^20.0.19",
+          "codex",
+          "daily",
+          "--json",
+          "--breakdown",
+          "--mode",
+          "calculate"
+        ],
+        "payload": {
+          "daily": [
+            {
+              "costUSD": 58.78,
+              "date": "2026-06-11",
+              "models": {
+                "gpt-5.6-sol": {
+                  "cacheReadTokens": 23162112,
+                  "inputTokens": 1799323,
+                  "outputTokens": 79159,
+                  "totalTokens": 25040594
+                }
+              }
+            }
+          ]
+        },
+        "reportKind": "daily",
+        "source": "codex"
+      },
+      {
+        "command": [
+          "ccusage@^20.0.19",
+          "opencode",
+          "daily",
+          "--json",
+          "--breakdown",
+          "--mode",
+          "calculate"
+        ],
+        "payload": {
+          "daily": [
+            {
+              "date": "2026-06-13",
+              "inputTokens": 900,
+              "modelsUsed": [
+                "kimi-k2"
+              ],
+              "outputTokens": 100,
+              "totalCost": 0.02,
+              "totalTokens": 1000
+            }
+          ]
+        },
+        "reportKind": "daily",
+        "source": "opencode"
+      },
+      {
+        "command": [
+          "ccusage@^20.0.19",
+          "hermes",
+          "daily",
+          "--json",
+          "--breakdown",
+          "--mode",
+          "calculate"
+        ],
+        "payload": {
+          "daily": [
+            {
+              "cacheCreationTokens": 20,
+              "cacheReadTokens": 50,
+              "date": "2026-06-12",
+              "inputTokens": 1200,
+              "modelBreakdowns": [
+                {
+                  "cacheCreationTokens": 20,
+                  "cacheReadTokens": 50,
+                  "cost": 0.34,
+                  "inputTokens": 1200,
+                  "modelName": "claude-sonnet-4-20250514",
+                  "outputTokens": 300
+                }
+              ],
+              "modelsUsed": [
+                "claude-sonnet-4-20250514"
+              ],
+              "outputTokens": 300,
+              "totalCost": 0.34,
+              "totalTokens": 1580
+            }
+          ]
+        },
+        "reportKind": "daily",
+        "source": "hermes"
+      }
+    ],
+    "sourceStats": [
+      {
+        "sessionCount": 0,
+        "source": "claude"
+      },
+      {
+        "sessionCount": 2,
+        "source": "codex"
+      },
+      {
+        "sessionCount": 0,
+        "source": "opencode"
+      },
+      {
+        "sessionCount": 0,
+        "source": "hermes"
+      }
+    ]
+  }
+}

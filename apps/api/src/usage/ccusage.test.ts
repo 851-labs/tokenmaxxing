@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { parseRawUsageReports } from "./ccusage";
 
+const options = { latestDate: "2026-09-23" };
+
 describe("parseRawUsageReports", () => {
   it("preserves Hermes reasoning tokens omitted from model breakdowns", async () => {
     const reports: RawUsageReportInput[] = [
@@ -47,7 +49,7 @@ describe("parseRawUsageReports", () => {
       },
     ];
 
-    const result = await Effect.runPromise(parseRawUsageReports(reports));
+    const result = await Effect.runPromise(parseRawUsageReports(reports, options));
 
     expect(result.rows).toEqual([
       {
@@ -97,7 +99,7 @@ describe("parseRawUsageReports", () => {
       },
     ];
 
-    const result = await Effect.runPromise(parseRawUsageReports(reports));
+    const result = await Effect.runPromise(parseRawUsageReports(reports, options));
 
     expect(result.coveredDays).toEqual([{ date: "2026-07-11", source: "codex" }]);
     expect(result.persistableReports).toEqual(reports);
@@ -113,35 +115,38 @@ describe("parseRawUsageReports", () => {
 
   it("normalizes daily reports and never marks legacy session reports for persistence", async () => {
     const result = await Effect.runPromise(
-      parseRawUsageReports([
-        {
-          command: ["ccusage@^20", "claude", "daily", "--json"],
-          payload: {
-            daily: [
-              {
-                date: "2026-07-22",
-                projectPath: "/Users/alex/secret-client",
-                totalTokens: 100,
-              },
-            ],
+      parseRawUsageReports(
+        [
+          {
+            command: ["ccusage@^20", "claude", "daily", "--json"],
+            payload: {
+              daily: [
+                {
+                  date: "2026-07-22",
+                  projectPath: "/Users/alex/secret-client",
+                  totalTokens: 100,
+                },
+              ],
+            },
+            reportKind: "daily",
+            source: "claude",
           },
-          reportKind: "daily",
-          source: "claude",
-        },
-        {
-          command: ["ccusage@^20", "claude", "session", "--json"],
-          payload: {
-            sessions: [
-              {
-                projectPath: "/Users/alex/secret-client",
-                sessionId: "-Users-alex-secret-client",
-              },
-            ],
+          {
+            command: ["ccusage@^20", "claude", "session", "--json"],
+            payload: {
+              sessions: [
+                {
+                  projectPath: "/Users/alex/secret-client",
+                  sessionId: "-Users-alex-secret-client",
+                },
+              ],
+            },
+            reportKind: "session",
+            source: "claude",
           },
-          reportKind: "session",
-          source: "claude",
-        },
-      ]),
+        ],
+        options,
+      ),
     );
 
     expect(result.persistableReports).toEqual([
@@ -159,14 +164,17 @@ describe("parseRawUsageReports", () => {
 
   it("drops invalid daily reports instead of persisting unknown payloads", async () => {
     const result = await Effect.runPromise(
-      parseRawUsageReports([
-        {
-          command: ["ccusage@^20", "codex", "daily", "--json"],
-          payload: { projectPath: "/Users/alex/secret-client" },
-          reportKind: "daily",
-          source: "codex",
-        },
-      ]),
+      parseRawUsageReports(
+        [
+          {
+            command: ["ccusage@^20", "codex", "daily", "--json"],
+            payload: { projectPath: "/Users/alex/secret-client" },
+            reportKind: "daily",
+            source: "codex",
+          },
+        ],
+        options,
+      ),
     );
 
     expect(result).toEqual({
@@ -175,5 +183,149 @@ describe("parseRawUsageReports", () => {
       rows: [],
       sourceStats: [],
     });
+  });
+  it("keeps only the last daily report per source instead of summing duplicates", async () => {
+    const report = (totalTokens: number, date = "2026-07-20"): RawUsageReportInput => ({
+      command: ["ccusage@^20", "claude", "daily", "--json"],
+      payload: { daily: [{ date, modelsUsed: ["claude-opus-4"], totalCost: 1, totalTokens }] },
+      reportKind: "daily",
+      source: "claude",
+    });
+
+    const result = await Effect.runPromise(
+      parseRawUsageReports(
+        [
+          report(100),
+          {
+            command: ["ccusage@^20", "codex", "daily", "--json"],
+            payload: { daily: [{ date: "2026-07-20", totalTokens: 7 }] },
+            reportKind: "daily",
+            source: "codex",
+          },
+          report(250, "2026-07-21"),
+        ],
+        options,
+      ),
+    );
+
+    expect(result.rows.map(({ date, source, totalTokens }) => [source, date, totalTokens])).toEqual(
+      [
+        ["codex", "2026-07-20", 7],
+        ["claude", "2026-07-21", 250],
+      ],
+    );
+    expect(result.coveredDays).toEqual([
+      { date: "2026-07-20", source: "codex" },
+      { date: "2026-07-21", source: "claude" },
+    ]);
+    expect(result.persistableReports.map((persisted) => persisted.source)).toEqual([
+      "codex",
+      "claude",
+    ]);
+  });
+
+  it("is idempotent when the same report is sent twice in one payload", async () => {
+    const report: RawUsageReportInput = {
+      command: ["ccusage@^20", "codex", "daily", "--json"],
+      payload: { daily: [{ costUSD: 2, date: "2026-07-20", totalTokens: 10 }] },
+      reportKind: "daily",
+      source: "codex",
+    };
+
+    const once = await Effect.runPromise(parseRawUsageReports([report], options));
+    const twice = await Effect.runPromise(parseRawUsageReports([report, report], options));
+
+    expect(twice).toEqual(once);
+  });
+
+  it("drops days after the ingest ceiling from rows, coverage, and persisted payloads", async () => {
+    const result = await Effect.runPromise(
+      parseRawUsageReports(
+        [
+          {
+            command: ["ccusage@^20", "codex", "daily", "--json"],
+            payload: {
+              daily: [
+                { date: "2026-09-23", totalTokens: 1 },
+                { date: "2026-09-24", totalTokens: 2 },
+                { date: "9999-12-31", totalTokens: 3 },
+              ],
+            },
+            reportKind: "daily",
+            source: "codex",
+          },
+        ],
+        options,
+      ),
+    );
+
+    expect(result.rows.map((row) => row.date)).toEqual(["2026-09-23"]);
+    expect(result.coveredDays).toEqual([{ date: "2026-09-23", source: "codex" }]);
+    expect(result.persistableReports[0]?.payload).toEqual({
+      daily: [{ date: "2026-09-23", totalTokens: 1 }],
+    });
+  });
+
+  it("drops malformed days individually and keeps the rest of the report", async () => {
+    const result = await Effect.runPromise(
+      parseRawUsageReports(
+        [
+          {
+            command: ["ccusage@^20", "claude", "daily", "--json"],
+            payload: {
+              daily: [
+                { date: "2026-07-20", totalTokens: 10 },
+                { date: "not-a-date", totalTokens: 10 },
+                { date: "2026-02-30", totalTokens: 10 },
+                { date: "2026-07-21", totalTokens: -5 },
+                { date: "2026-07-22", totalTokens: 1.5 },
+                { date: "2026-07-23", totalCost: -1 },
+                { date: "2026-07-24", totalCost: "NaN" },
+                { date: "2026-07-25", modelsUsed: ["m".repeat(257)] },
+                null,
+              ],
+            },
+            reportKind: "daily",
+            source: "claude",
+          },
+        ],
+        options,
+      ),
+    );
+
+    expect(result.rows.map((row) => row.date)).toEqual(["2026-07-20"]);
+    expect(result.coveredDays).toEqual([{ date: "2026-07-20", source: "claude" }]);
+  });
+
+  it("keeps day-level cost that exceeds fully priced model breakdowns", async () => {
+    const result = await Effect.runPromise(
+      parseRawUsageReports(
+        [
+          {
+            command: ["ccusage@^20", "hermes", "daily", "--json"],
+            payload: {
+              daily: [
+                {
+                  date: "2026-07-20",
+                  modelBreakdowns: [
+                    { cost: 1, inputTokens: 300, modelName: "model-a", outputTokens: 0 },
+                    { cost: 2, inputTokens: 100, modelName: "model-b", outputTokens: 0 },
+                  ],
+                  totalCost: 5,
+                },
+              ],
+            },
+            reportKind: "daily",
+            source: "hermes",
+          },
+        ],
+        options,
+      ),
+    );
+
+    const costs = Object.fromEntries(result.rows.map((row) => [row.model, row.costUsd]));
+    expect(costs["model-a"]).toBeCloseTo(1 + 2 * 0.75);
+    expect(costs["model-b"]).toBeCloseTo(2 + 2 * 0.25);
+    expect(result.rows.reduce((sum, row) => sum + row.costUsd, 0)).toBeCloseTo(5);
   });
 });

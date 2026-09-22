@@ -1,0 +1,6 @@
+{
+  "cli": "current",
+  "endpoint": "usage.logout",
+  "method": "POST",
+  "path": "/cli/logout"
+}
