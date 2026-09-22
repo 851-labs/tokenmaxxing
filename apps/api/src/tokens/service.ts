@@ -7,6 +7,7 @@ import type { CliIdentity, CliTokenSummary, DeviceSummary } from "@tokenmaxxing/
 
 import { CLI_TOKEN_PREFIX, hashCliToken } from "../auth/crypto";
 import type { DatabaseError } from "../database";
+import type { RawUsageStorageError } from "../usage/raw-store";
 
 /**
  * CLI token resolution and the settings surface (devices + tokens). Tokens
@@ -32,11 +33,13 @@ interface TokensRepositoryShape {
   ): Effect.Effect<Option.Option<typeof CliIdentity.Type>, DatabaseError, any>;
   listDevices(userId: string): Effect.Effect<(typeof DeviceSummary.Type)[], DatabaseError, any>;
   listTokens(userId: string): Effect.Effect<(typeof CliTokenSummary.Type)[], DatabaseError, any>;
+  /** Removes the device, its usage rows and raw reports (rows and stored
+   * objects), and revokes its tokens. */
   deleteDevice(
     userId: string,
     deviceId: string,
     now: Date,
-  ): Effect.Effect<boolean, DatabaseError, any>;
+  ): Effect.Effect<boolean, DatabaseError | RawUsageStorageError, any>;
   revokeToken(
     userId: string,
     tokenId: string,

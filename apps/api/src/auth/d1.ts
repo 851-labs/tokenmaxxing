@@ -4,6 +4,7 @@ import {
   devices,
   sessions,
   usageDays,
+  usageRawBatches,
   usageSourceStats,
   userAccounts,
   users,
@@ -226,6 +227,12 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
               .update(usageSourceStats)
               .set({ userId: targetUserId })
               .where(eq(usageSourceStats.userId, sourceUserId)),
+            // Raw report objects stay at their keys: the row's objectKey is
+            // the pointer, and the userId inside the key is provenance only.
+            db
+              .update(usageRawBatches)
+              .set({ userId: targetUserId })
+              .where(eq(usageRawBatches.userId, sourceUserId)),
             db
               .update(users)
               .set({

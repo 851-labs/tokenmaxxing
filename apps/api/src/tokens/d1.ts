@@ -1,14 +1,23 @@
-import { cliTokens, devices, usageDays, usageSourceStats, users } from "@tokenmaxxing/db";
+import {
+  cliTokens,
+  devices,
+  usageDays,
+  usageRawBatches,
+  usageSourceStats,
+  users,
+} from "@tokenmaxxing/db";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { Effect } from "effect";
 import { Layer } from "effect";
 import { Option } from "effect";
 
 import { Drizzle } from "../database";
+import { RawUsageObjectStore } from "../usage/raw-store";
 import { TokensRepository } from "./service";
 
 const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () {
   const database = yield* Drizzle;
+  const rawStore = yield* RawUsageObjectStore;
 
   return TokensRepository.of({
     findIdentityByHash: (tokenHash, now) =>
@@ -89,7 +98,19 @@ const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () 
       }),
     deleteDevice: (userId, deviceId, now) =>
       Effect.gen(function* () {
-        const [deletedDevices] = yield* database.use((db) =>
+        const rawBatchRows = yield* database.use((db) =>
+          db
+            .select({ objectKey: usageRawBatches.objectKey })
+            .from(usageRawBatches)
+            .where(and(eq(usageRawBatches.userId, userId), eq(usageRawBatches.deviceId, deviceId))),
+        );
+        const rawObjectKeys = new Set(rawBatchRows.map((row) => row.objectKey));
+        // Objects before rows: if the batch below fails, a retry finds the
+        // rows again and re-deleting missing objects is a no-op. The reverse
+        // order would strand objects with no row left to find them by.
+        yield* rawStore.deleteObjects([...rawObjectKeys]);
+
+        const [deletedDevices, , , , deletedRawBatches] = yield* database.use((db) =>
           db.batch([
             db
               .delete(devices)
@@ -113,7 +134,19 @@ const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () 
                   isNull(cliTokens.revokedAt),
                 ),
               ),
+            db
+              .delete(usageRawBatches)
+              .where(
+                and(eq(usageRawBatches.userId, userId), eq(usageRawBatches.deviceId, deviceId)),
+              )
+              .returning({ objectKey: usageRawBatches.objectKey }),
           ]),
+        );
+        // An ingest that landed between the lookup and the batch.
+        yield* rawStore.deleteObjects(
+          deletedRawBatches
+            .map((row) => row.objectKey)
+            .filter((objectKey) => !rawObjectKeys.has(objectKey)),
         );
 
         return deletedDevices.length > 0;

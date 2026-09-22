@@ -1,181 +1,379 @@
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { Effect, Layer } from "effect";
+import type { UsageDayInput } from "@tokenmaxxing/api-contract";
+import { Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { Drizzle } from "../database";
+import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
+import { buildService, runTest } from "../testing/effect";
+import { makeMemoryBucket, type MemoryBucket } from "../testing/r2";
+import { seedUsage } from "../testing/seed";
 import { UsageRepositoryLive } from "./d1";
-import { RawUsageObjectStore } from "./raw-store";
-import { UsageRepository } from "./service";
+import { type StoredRawUsageReport, UsageRepository } from "./service";
 
-describe("D1 usage replacement", () => {
-  let sqlite: DatabaseSync;
+describe("D1 usage repository", () => {
+  let database: TestDatabase;
+  let bucket: MemoryBucket;
 
   beforeEach(() => {
-    sqlite = new DatabaseSync(":memory:");
-    sqlite.exec(`
-      create table usage_days (
-        device_id text not null,
-        user_id text not null,
-        date text not null,
-        source text not null,
-        model text not null,
-        input_tokens integer not null default 0,
-        output_tokens integer not null default 0,
-        cache_creation_tokens integer not null default 0,
-        cache_read_tokens integer not null default 0,
-        total_tokens integer not null default 0,
-        cost_usd real not null default 0,
-        synced_at integer not null,
-        primary key (device_id, date, source, model)
+    database = makeTestDatabase();
+    bucket = makeMemoryBucket();
+  });
+
+  afterEach(() => database.close());
+
+  function makeRepository() {
+    return buildService(
+      UsageRepository,
+      UsageRepositoryLive.pipe(Layer.provide(Layer.merge(database.drizzleLayer, bucket.layer))),
+    );
+  }
+
+  function usageRows() {
+    return database.sqlite
+      .prepare(
+        `select device_id as deviceId, user_id as userId, date, source, model,
+          input_tokens as inputTokens, total_tokens as totalTokens, cost_usd as costUsd,
+          synced_at as syncedAt
+         from usage_days
+         order by device_id, date, source, model`,
+      )
+      .all();
+  }
+
+  describe("pruneChunk", () => {
+    it("prunes only older models omitted from covered device/day/source slices", async () => {
+      const seed = (deviceId: string, date: string, source: string, model: string, at: number) =>
+        seedUsage(database.sqlite, { date, deviceId, model, source, syncedAt: at, userId: "user" });
+      seed("device", "2026-07-21", "codex", "keep", 500);
+      seed("device", "2026-07-21", "codex", "stale", 500);
+      seed("device", "2026-07-21", "codex", "newer", 1_500);
+      seed("device", "2026-07-21", "claude", "other-source", 500);
+      seed("device", "2026-07-20", "codex", "other-date", 500);
+      seed("other-device", "2026-07-21", "codex", "other-device", 500);
+
+      const repository = await makeRepository();
+      await runTest(
+        repository.pruneChunk(
+          "device",
+          [{ date: "2026-07-21", models: ["keep"], source: "codex" }],
+          new Date(1_000),
+        ),
       );
-    `);
+
+      expect(
+        database.sqlite
+          .prepare(
+            `select device_id, date, source, model
+             from usage_days
+             order by device_id, date, source, model`,
+          )
+          .all(),
+      ).toEqual([
+        { date: "2026-07-20", device_id: "device", model: "other-date", source: "codex" },
+        { date: "2026-07-21", device_id: "device", model: "other-source", source: "claude" },
+        { date: "2026-07-21", device_id: "device", model: "keep", source: "codex" },
+        { date: "2026-07-21", device_id: "device", model: "newer", source: "codex" },
+        {
+          date: "2026-07-21",
+          device_id: "other-device",
+          model: "other-device",
+          source: "codex",
+        },
+      ]);
+    });
+
+    it("removes all older rows when a covered slice contains no models", async () => {
+      seedUsage(database.sqlite, {
+        date: "2026-07-21",
+        deviceId: "device",
+        model: "stale-a",
+        syncedAt: 500,
+        userId: "user",
+      });
+      seedUsage(database.sqlite, {
+        date: "2026-07-21",
+        deviceId: "device",
+        model: "stale-b",
+        syncedAt: 500,
+        userId: "user",
+      });
+
+      const repository = await makeRepository();
+      await runTest(
+        repository.pruneChunk(
+          "device",
+          [{ date: "2026-07-21", models: [], source: "codex" }],
+          new Date(1_000),
+        ),
+      );
+
+      expect(database.sqlite.prepare("select model from usage_days").all()).toEqual([]);
+    });
   });
 
-  afterEach(() => sqlite.close());
+  describe("upsertChunk", () => {
+    const rows: UsageDayInput[] = [
+      usageDay({ costUsd: 1.5, date: "2026-07-20", model: "gpt-5", totalTokens: 100 }),
+      usageDay({ costUsd: 2.5, date: "2026-07-21", model: "gpt-5", totalTokens: 200 }),
+      usageDay({ costUsd: 0.5, date: "2026-07-21", model: "o3", totalTokens: 50 }),
+    ];
 
-  it("prunes only older models omitted from covered device/day/source slices", async () => {
-    const insertUsage = sqlite.prepare(
-      `insert into usage_days (
-        device_id, user_id, date, source, model, synced_at
-      ) values (?, 'user', ?, ?, ?, ?)`,
-    );
-    insertUsage.run("device", "2026-07-21", "codex", "keep", 500);
-    insertUsage.run("device", "2026-07-21", "codex", "stale", 500);
-    insertUsage.run("device", "2026-07-21", "codex", "newer", 1_500);
-    insertUsage.run("device", "2026-07-21", "claude", "other-source", 500);
-    insertUsage.run("device", "2026-07-20", "codex", "other-date", 500);
-    insertUsage.run("other-device", "2026-07-21", "codex", "other-device", 500);
+    it("is idempotent: syncing the same chunk twice leaves the same totals", async () => {
+      const repository = await makeRepository();
 
-    const repository = await makeRepository(sqlite);
-    await run(
-      repository.pruneChunk(
-        "device",
-        [{ date: "2026-07-21", models: ["keep"], source: "codex" }],
-        new Date(1_000),
-      ),
-    );
+      await runTest(repository.upsertChunk("user", "device", rows, new Date(1_000)));
+      const first = totals();
+      await runTest(repository.upsertChunk("user", "device", rows, new Date(2_000)));
 
-    expect(
-      sqlite
-        .prepare(
-          `select device_id, date, source, model
-           from usage_days
-           order by device_id, date, source, model`,
-        )
-        .all(),
-    ).toEqual([
-      {
-        date: "2026-07-20",
-        device_id: "device",
-        model: "other-date",
-        source: "codex",
-      },
-      {
-        date: "2026-07-21",
-        device_id: "device",
-        model: "other-source",
-        source: "claude",
-      },
-      {
-        date: "2026-07-21",
-        device_id: "device",
-        model: "keep",
-        source: "codex",
-      },
-      {
-        date: "2026-07-21",
-        device_id: "device",
-        model: "newer",
-        source: "codex",
-      },
-      {
-        date: "2026-07-21",
-        device_id: "other-device",
-        model: "other-device",
-        source: "codex",
-      },
-    ]);
+      expect(totals()).toEqual(first);
+      expect(first).toEqual({ costUsd: 4.5, rowCount: 3, totalTokens: 350 });
+      expect(usageRows().map((row) => row.syncedAt)).toEqual([2_000, 2_000, 2_000]);
+    });
+
+    it("replaces a key's values with the latest sync (last write wins)", async () => {
+      const repository = await makeRepository();
+
+      await runTest(repository.upsertChunk("user", "device", rows, new Date(1_000)));
+      await runTest(
+        repository.upsertChunk(
+          "user",
+          "device",
+          [usageDay({ costUsd: 9, date: "2026-07-21", model: "o3", totalTokens: 900 })],
+          new Date(2_000),
+        ),
+      );
+
+      expect(totals()).toEqual({ costUsd: 13, rowCount: 3, totalTokens: 1_200 });
+    });
+
+    it("reassigns the row to the uploading user on conflict", async () => {
+      const repository = await makeRepository();
+
+      await runTest(repository.upsertChunk("old-owner", "device", rows, new Date(1_000)));
+      await runTest(repository.upsertChunk("new-owner", "device", rows, new Date(2_000)));
+
+      expect(usageRows().map((row) => row.userId)).toEqual(["new-owner", "new-owner", "new-owner"]);
+    });
+
+    it("keys rows by device so two devices never overwrite each other", async () => {
+      const repository = await makeRepository();
+
+      await runTest(repository.upsertChunk("user", "device-a", rows, new Date(1_000)));
+      await runTest(repository.upsertChunk("user", "device-b", rows, new Date(1_000)));
+
+      expect(totals()).toEqual({ costUsd: 9, rowCount: 6, totalTokens: 700 });
+    });
+
+    it("does nothing for an empty chunk", async () => {
+      const repository = await makeRepository();
+
+      await runTest(repository.upsertChunk("user", "device", [], new Date(1_000)));
+
+      expect(totals().rowCount).toBe(0);
+    });
   });
 
-  it("removes all older rows when a covered slice contains no models", async () => {
-    sqlite.exec(`
-      insert into usage_days (
-        device_id, user_id, date, source, model, synced_at
-      ) values
-        ('device', 'user', '2026-07-21', 'codex', 'stale-a', 500),
-        ('device', 'user', '2026-07-21', 'codex', 'stale-b', 500);
-    `);
+  describe("upsertSourceStats", () => {
+    it("upserts per (device, source), replacing counts and owner", async () => {
+      const repository = await makeRepository();
 
-    const repository = await makeRepository(sqlite);
-    await run(
-      repository.pruneChunk(
-        "device",
-        [{ date: "2026-07-21", models: [], source: "codex" }],
-        new Date(1_000),
-      ),
-    );
+      await runTest(
+        repository.upsertSourceStats(
+          "old-owner",
+          "device",
+          [
+            { sessionCount: 3, source: "codex" },
+            { sessionCount: 5, source: "claude" },
+          ],
+          new Date(1_000),
+        ),
+      );
+      await runTest(
+        repository.upsertSourceStats(
+          "new-owner",
+          "device",
+          [{ sessionCount: 4, source: "codex" }],
+          new Date(2_000),
+        ),
+      );
+      await runTest(
+        repository.upsertSourceStats(
+          "new-owner",
+          "other-device",
+          [{ sessionCount: 7, source: "codex" }],
+          new Date(2_000),
+        ),
+      );
 
-    expect(sqlite.prepare("select model from usage_days").all()).toEqual([]);
+      expect(
+        database.sqlite
+          .prepare(
+            `select device_id as deviceId, user_id as userId, source,
+              session_count as sessionCount, synced_at as syncedAt
+             from usage_source_stats order by device_id, source`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          deviceId: "device",
+          sessionCount: 5,
+          source: "claude",
+          syncedAt: 1_000,
+          userId: "old-owner",
+        },
+        {
+          deviceId: "device",
+          sessionCount: 4,
+          source: "codex",
+          syncedAt: 2_000,
+          userId: "new-owner",
+        },
+        {
+          deviceId: "other-device",
+          sessionCount: 7,
+          source: "codex",
+          syncedAt: 2_000,
+          userId: "new-owner",
+        },
+      ]);
+    });
   });
+
+  describe("upsertRawReports", () => {
+    it("stores the payload in R2 and indexes it in D1", async () => {
+      const repository = await makeRepository();
+      const report = rawReport("hash-a", "users/user/devices/device/ccusage/codex/daily/a.json");
+
+      await runTest(repository.upsertRawReports("user", "device", [report], new Date(1_000)));
+
+      expect(bucket.objects.get(report.objectKey)).toEqual({
+        customMetadata: { payloadBytes: String(report.payloadBytes), payloadHash: "hash-a" },
+        value: report.payloadJson,
+      });
+      expect(rawRows()).toEqual([
+        {
+          capturedAt: 1_000,
+          deviceId: "device",
+          id: "device:hash-a",
+          objectKey: report.objectKey,
+          userId: "user",
+        },
+      ]);
+    });
+
+    it("dedupes a re-ingested payload to one row and one object", async () => {
+      const repository = await makeRepository();
+      const report = rawReport("hash-a", "users/user/devices/device/ccusage/codex/daily/a.json");
+
+      await runTest(repository.upsertRawReports("user", "device", [report], new Date(1_000)));
+      await runTest(repository.upsertRawReports("user", "device", [report], new Date(2_000)));
+
+      expect(bucket.puts).toEqual([report.objectKey]);
+      expect([...bucket.objects.keys()]).toEqual([report.objectKey]);
+      expect(rawRows()).toEqual([
+        {
+          capturedAt: 2_000,
+          deviceId: "device",
+          id: "device:hash-a",
+          objectKey: report.objectKey,
+          userId: "user",
+        },
+      ]);
+    });
+
+    it("keeps the original object when a re-homed device re-ingests a payload", async () => {
+      const repository = await makeRepository();
+      const firstKey = "users/old-owner/devices/device/ccusage/codex/daily/a.json";
+      const secondKey = "users/new-owner/devices/device/ccusage/codex/daily/a.json";
+
+      await runTest(
+        repository.upsertRawReports(
+          "old-owner",
+          "device",
+          [rawReport("hash-a", firstKey)],
+          new Date(1_000),
+        ),
+      );
+      await runTest(
+        repository.upsertRawReports(
+          "new-owner",
+          "device",
+          [rawReport("hash-a", secondKey)],
+          new Date(2_000),
+        ),
+      );
+
+      expect([...bucket.objects.keys()]).toEqual([firstKey]);
+      expect(rawRows()).toEqual([
+        {
+          capturedAt: 2_000,
+          deviceId: "device",
+          id: "device:hash-a",
+          objectKey: firstKey,
+          userId: "new-owner",
+        },
+      ]);
+    });
+
+    it("looks up existing reports across D1's bound-parameter limit", async () => {
+      const repository = await makeRepository();
+      const reports = Array.from({ length: 95 }, (_, index) =>
+        rawReport(`hash-${index}`, `objects/${index}.json`),
+      );
+
+      await runTest(repository.upsertRawReports("user", "device", reports, new Date(1_000)));
+      await runTest(repository.upsertRawReports("user", "device", reports, new Date(2_000)));
+
+      expect(bucket.puts).toHaveLength(95);
+      expect(rawRows()).toHaveLength(95);
+    });
+  });
+
+  function totals() {
+    return database.sqlite
+      .prepare(
+        `select count(*) as rowCount, sum(total_tokens) as totalTokens, sum(cost_usd) as costUsd
+         from usage_days`,
+      )
+      .get() as { costUsd: number | null; rowCount: number; totalTokens: number | null };
+  }
+
+  function rawRows() {
+    return database.sqlite
+      .prepare(
+        `select id, user_id as userId, device_id as deviceId, object_key as objectKey,
+          captured_at as capturedAt
+         from usage_raw_batches order by id`,
+      )
+      .all();
+  }
 });
 
-async function makeRepository(sqlite: DatabaseSync) {
-  const drizzleLayer = Drizzle.layer({ raw: Effect.succeed(d1Database(sqlite)) });
-  const rawStoreLayer = Layer.succeed(
-    RawUsageObjectStore,
-    RawUsageObjectStore.of({
-      putObject: () => Effect.succeed(undefined),
-    }),
-  );
-
-  return Effect.runPromise(
-    Effect.gen(function* () {
-      return yield* UsageRepository;
-    }).pipe(
-      Effect.provide(
-        UsageRepositoryLive.pipe(Layer.provide(Layer.merge(drizzleLayer, rawStoreLayer))),
-      ),
-    ),
-  );
-}
-
-function run<A, E>(effect: Effect.Effect<A, E, any>): Promise<A> {
-  return Effect.runPromise(effect as Effect.Effect<A, E, never>);
-}
-
-function d1Database(sqlite: DatabaseSync): D1Database {
+function usageDay(
+  overrides: Pick<UsageDayInput, "costUsd" | "date" | "model" | "totalTokens">,
+): UsageDayInput {
   return {
-    batch: async (statements: D1PreparedStatement[]) => {
-      sqlite.exec("begin");
-      try {
-        const results = [];
-        for (const statement of statements) {
-          results.push(await statement.all());
-        }
-        sqlite.exec("commit");
-        return results;
-      } catch (error) {
-        sqlite.exec("rollback");
-        throw error;
-      }
-    },
-    prepare: (query: string) => d1Statement(sqlite, query),
-  } as unknown as D1Database;
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    inputTokens: overrides.totalTokens,
+    outputTokens: 0,
+    source: "codex",
+    ...overrides,
+  };
 }
 
-function d1Statement(
-  sqlite: DatabaseSync,
-  query: string,
-  parameters: SQLInputValue[] = [],
-): D1PreparedStatement {
+function rawReport(payloadHash: string, objectKey: string): StoredRawUsageReport {
+  const payloadJson = JSON.stringify({ daily: [], hash: payloadHash });
+
   return {
-    all: async () => ({ results: sqlite.prepare(query).all(...parameters) }),
-    bind: (...values: unknown[]) => d1Statement(sqlite, query, values as SQLInputValue[]),
-    raw: async () => {
-      const statement = sqlite.prepare(query);
-      statement.setReturnArrays(true);
-      return statement.all(...parameters);
-    },
-    run: async () => sqlite.prepare(query).run(...parameters),
-  } as unknown as D1PreparedStatement;
+    ccusageCommand: "ccusage codex daily --json",
+    id: `device:${payloadHash}`,
+    objectKey,
+    parserVersion: "test",
+    payloadBytes: payloadJson.length,
+    payloadHash,
+    payloadJson,
+    processedAt: new Date(1_000),
+    reportKind: "daily",
+    source: "codex",
+  };
 }

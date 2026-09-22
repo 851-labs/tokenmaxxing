@@ -1,37 +1,17 @@
-import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-const migration = readFileSync(
-  new URL("../migrations/0011_normalize_ccusage_model_labels.sql", import.meta.url),
-  "utf8",
-);
+import { applyMigration, applyMigrations, readMigration } from "./migrations";
+
+const MIGRATION_TAG = "0011_normalize_ccusage_model_labels";
 
 describe("normalize ccusage model labels migration", () => {
   let database: DatabaseSync;
 
   beforeEach(() => {
     database = new DatabaseSync(":memory:");
-    database.exec(`
-      CREATE TABLE usage_days (
-        device_id text NOT NULL,
-        user_id text NOT NULL,
-        date text NOT NULL,
-        source text NOT NULL,
-        model text NOT NULL,
-        input_tokens integer DEFAULT 0 NOT NULL,
-        output_tokens integer DEFAULT 0 NOT NULL,
-        cache_creation_tokens integer DEFAULT 0 NOT NULL,
-        cache_read_tokens integer DEFAULT 0 NOT NULL,
-        total_tokens integer DEFAULT 0 NOT NULL,
-        cost_usd real DEFAULT 0 NOT NULL,
-        synced_at integer NOT NULL,
-        PRIMARY KEY(device_id, date, source, model)
-      );
-      CREATE INDEX usage_days_user_date_idx ON usage_days (user_id, date);
-      CREATE INDEX usage_days_date_idx ON usage_days (date);
-    `);
+    applyMigrations(database, { before: MIGRATION_TAG });
   });
 
   afterEach(() => database.close());
@@ -157,8 +137,6 @@ describe("normalize ccusage model labels migration", () => {
   }
 
   function runMigration() {
-    for (const statement of migration.split("--> statement-breakpoint")) {
-      database.exec(statement);
-    }
+    applyMigration(database, readMigration(MIGRATION_TAG));
   }
 });
