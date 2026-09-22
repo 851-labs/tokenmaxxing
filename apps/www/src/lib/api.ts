@@ -6,6 +6,7 @@ import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import { createIsomorphicFn } from "@tanstack/react-start";
 import {
   AdminUserNotFound,
+  CliUpgradeRequired,
   DeviceMissing,
   DeviceNotFound,
   Forbidden,
@@ -34,6 +35,7 @@ type TokenmaxxingApiClient = HttpApiClient.ForApi<typeof TokenmaxxingApi>;
 /** Contract failures are deliberate 4xx answers; retrying cannot change them. */
 const CONTRACT_ERRORS = [
   AdminUserNotFound,
+  CliUpgradeRequired,
   DeviceMissing,
   DeviceNotFound,
   Forbidden,
