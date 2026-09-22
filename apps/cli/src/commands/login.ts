@@ -195,12 +195,20 @@ function browserLoginEffect(options: BrowserLoginOptions) {
           deviceName: hostname(),
           devicePlatform: process.platform,
           deviceVersion: packageJson.version,
+          flow: "device_code",
         },
       })
       .pipe(
-        Effect.tap((login) => Effect.sync(() => startSpinner.stop(`Code: ${login.code}`))),
-        Effect.tapError(() => Effect.sync(() => startSpinner.error("Failed to start CLI login"))),
         Effect.mapError((cause) => new StartCliLoginError({ cause })),
+        // The deviceCode is the only credential poll accepts; never proceed
+        // (or fall back to polling by the user code) without it.
+        Effect.flatMap(({ deviceCode, ...login }) =>
+          deviceCode === undefined
+            ? Effect.fail(new StartCliLoginError({ cause: "missing deviceCode" }))
+            : Effect.succeed({ ...login, deviceCode }),
+        ),
+        Effect.tap((login) => Effect.sync(() => startSpinner.stop(`Code: ${login.userCode}`))),
+        Effect.tapError(() => Effect.sync(() => startSpinner.error("Failed to start CLI login"))),
       );
 
     if (canOpenBrowser) {
@@ -239,7 +247,7 @@ function browserLoginEffect(options: BrowserLoginOptions) {
 
     for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
       const poll = yield* client.cliLogin
-        .poll({ payload: { code: start.code } })
+        .poll({ payload: { deviceCode: start.deviceCode } })
         .pipe(Effect.mapError((cause) => new PollCliLoginError({ cause })));
 
       if (poll.status === "complete") {

@@ -45,6 +45,13 @@ class LoginCodeExpired extends Schema.TaggedError<LoginCodeExpired>()(
   { httpApiStatus: 410 },
 ) {}
 
+/** Pre-device-code CLI after the legacy login sunset: it must upgrade. */
+class CliUpgradeRequired extends Schema.TaggedError<CliUpgradeRequired>()(
+  "CliUpgradeRequired",
+  { message: Schema.String },
+  { httpApiStatus: 426 },
+) {}
+
 class TokenNotFound extends Schema.TaggedError<TokenNotFound>()(
   "TokenNotFound",
   { id: Schema.String },
@@ -65,6 +72,7 @@ class DeviceMissing extends Schema.TaggedError<DeviceMissing>()(
 
 export {
   AdminUserNotFound,
+  CliUpgradeRequired,
   DeviceNotFound,
   DeviceMissing,
   Forbidden,

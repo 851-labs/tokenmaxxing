@@ -49,6 +49,8 @@ interface TestState {
   errors: string[];
   logs: string[];
   madeClients: Array<{ baseUrl: string; token?: string | undefined }>;
+  pollPayloads: unknown[];
+  startPayloads: unknown[];
   writtenTokens: string[];
 }
 
@@ -81,6 +83,8 @@ function makeTestLayer(options: TestLayerOptions) {
     errors: [],
     logs: [],
     madeClients: [],
+    pollPayloads: [],
+    startPayloads: [],
     writtenTokens: [],
   };
 
@@ -91,13 +95,22 @@ function makeTestLayer(options: TestLayerOptions) {
 
         return Effect.succeed({
           cliLogin: {
-            poll: () => Effect.succeed({ status: "complete" as const, token: "tmx_new", user }),
-            start: () =>
-              Effect.succeed({
-                code: "ABC123",
-                expiresAt: "2026-06-13T20:00:00.000Z",
-                intervalSeconds: 0,
-                verificationUri: "https://tokenmaxxing.example/login/cli?code=ABC123",
+            poll: (request: { payload: unknown }) =>
+              Effect.sync(() => {
+                state.pollPayloads.push(request.payload);
+                return { status: "complete" as const, token: "tmx_new", user };
+              }),
+            start: (request: { payload: unknown }) =>
+              Effect.sync(() => {
+                state.startPayloads.push(request.payload);
+                return {
+                  code: "ABC123",
+                  deviceCode: "device-secret",
+                  expiresAt: "2026-06-13T20:00:00.000Z",
+                  intervalSeconds: 0,
+                  userCode: "ABC123",
+                  verificationUri: "https://tokenmaxxing.example/login/cli?code=ABC123",
+                };
               }),
           },
           me: {
@@ -843,6 +856,9 @@ describe("resolveSyncAuth", () => {
       expect(auth.user.login).toBe("alex");
       expect(state.browserUrls).toEqual(["https://tokenmaxxing.example/login/cli?code=ABC123"]);
       expect(state.writtenTokens).toEqual(["tmx_new"]);
+      expect(state.startPayloads).toEqual([expect.objectContaining({ flow: "device_code" })]);
+      // Poll presents the secret deviceCode, never the user code from the URL.
+      expect(state.pollPayloads).toEqual([{ deviceCode: "device-secret" }]);
       expect(state.madeClients).toEqual([
         { baseUrl: "https://api.tokenmaxxing.example" },
         { baseUrl: "https://api.tokenmaxxing.example", token: "tmx_new" },

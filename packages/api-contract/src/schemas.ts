@@ -66,28 +66,53 @@ const CliTokenSummary = Schema.Struct({
   revokedAt: Schema.NullOr(Schema.String),
 });
 
+/**
+ * Device-code CLI login (RFC 8628 shaped). Current CLIs send
+ * `flow: "device_code"` and poll with the secret `deviceCode`; the short
+ * `userCode` only ever travels to the browser for approval. Requests started
+ * without `flow` are legacy (pre-device-code CLIs): they get no deviceCode
+ * and may poll by `code` until the legacy sunset.
+ */
+const CliLoginFlow = Schema.Literal("device_code");
+
 const CliLoginStartInput = Schema.Struct({
   deviceArch: Schema.optional(Schema.String),
   deviceId: Schema.String,
   deviceName: Schema.String,
   devicePlatform: Schema.String,
   deviceVersion: Schema.optional(Schema.String),
+  flow: Schema.optional(CliLoginFlow),
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
 
 const CliLoginStartResponse = Schema.Struct({
+  /** Legacy alias of `userCode`, kept for pre-device-code CLIs. */
   code: Schema.String,
+  /** Present only for `flow: "device_code"` starts; never shown to users. */
+  deviceCode: Schema.optional(Schema.String),
   expiresAt: Schema.String,
   intervalSeconds: Schema.Number,
+  userCode: Schema.String,
   verificationUri: Schema.String,
 });
 
-const CliLoginPollInput = Schema.Struct({
+const CliLoginDeviceCodePollInput = Schema.Struct({
+  deviceCode: Schema.String,
+}).annotate({
+  parseOptions: { onExcessProperty: "error" },
+});
+
+/** Pre-device-code CLIs poll with the user code; see the legacy sunset. */
+const CliLoginLegacyPollInput = Schema.Struct({
   code: Schema.String,
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
+
+const CliLoginPollInput = Schema.Union([CliLoginDeviceCodePollInput, CliLoginLegacyPollInput]);
+
+type CliLoginPollInput = typeof CliLoginPollInput.Type;
 
 const CliLoginPollResponse = Schema.Union([
   Schema.Struct({ status: Schema.Literal("pending") }),
@@ -97,6 +122,21 @@ const CliLoginPollResponse = Schema.Union([
     user: AuthUser,
   }),
 ]);
+
+/** What the approval page shows so the user knows which device they admit. */
+const CliLoginRequestSummary = Schema.Struct({
+  code: Schema.String,
+  createdAt: Schema.String,
+  deviceArch: Schema.NullOr(Schema.String),
+  deviceName: Schema.String,
+  devicePlatform: Schema.String,
+  deviceVersion: Schema.NullOr(Schema.String),
+  expiresAt: Schema.String,
+  legacyClient: Schema.Boolean,
+  status: Schema.Literals(["pending", "approved"]),
+});
+
+type CliLoginRequestSummary = typeof CliLoginRequestSummary.Type;
 
 const CliLoginApproveInput = Schema.Struct({
   code: Schema.String,
@@ -599,6 +639,7 @@ export {
   CliLoginApproveResponse,
   CliLoginPollInput,
   CliLoginPollResponse,
+  CliLoginRequestSummary,
   CliLoginStartInput,
   CliLoginStartResponse,
   CliTokenSummary,

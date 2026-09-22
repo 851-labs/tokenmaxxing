@@ -1,12 +1,5 @@
-import {
-  cliLoginRequests,
-  cliTokens,
-  devices,
-  usageDays,
-  usageSourceStats,
-  users,
-} from "@tokenmaxxing/db";
-import { eq } from "drizzle-orm";
+import { cliLoginRequests, cliTokens, devices, users } from "@tokenmaxxing/db";
+import { and, eq, gt, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { Layer } from "effect";
 import { Option } from "effect";
@@ -17,6 +10,11 @@ import { CliLoginRepository } from "./service";
 const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function* () {
   const database = yield* Drizzle;
 
+  const findRequestWhere = (where: ReturnType<typeof eq>) =>
+    database
+      .use((db) => db.select().from(cliLoginRequests).where(where).limit(1))
+      .pipe(Effect.map((rows) => Option.fromNullishOr(rows[0])));
+
   return CliLoginRepository.of({
     insertRequest: (input) =>
       Effect.gen(function* () {
@@ -24,6 +22,7 @@ const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function*
           db.insert(cliLoginRequests).values({
             id: input.id,
             code: input.code,
+            deviceCodeHash: input.deviceCodeHash,
             status: "pending",
             deviceArch: input.deviceArch ?? null,
             deviceId: input.deviceId,
@@ -31,23 +30,58 @@ const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function*
             devicePlatform: input.devicePlatform,
             deviceVersion: input.deviceVersion ?? null,
             expiresAt: input.expiresAt,
-            createdAt: new Date(),
+            createdAt: input.createdAt,
           }),
         );
       }),
-    findRequest: (code) =>
-      Effect.gen(function* () {
-        const rows = yield* database.use((db) =>
-          db.select().from(cliLoginRequests).where(eq(cliLoginRequests.code, code)).limit(1),
-        );
-        const row = rows[0];
-
-        return row === undefined ? Option.none() : Option.some(row);
-      }),
+    findRequestByCode: (code) => findRequestWhere(eq(cliLoginRequests.code, code)),
+    findRequestByDeviceCodeHash: (deviceCodeHash) =>
+      findRequestWhere(eq(cliLoginRequests.deviceCodeHash, deviceCodeHash)),
+    approveRequest: ({ now, requestId, userId }) =>
+      database
+        .use((db) =>
+          db
+            .update(cliLoginRequests)
+            .set({ status: "approved", userId })
+            .where(
+              and(
+                eq(cliLoginRequests.id, requestId),
+                eq(cliLoginRequests.status, "pending"),
+                gt(cliLoginRequests.expiresAt, now),
+              ),
+            )
+            .returning(),
+        )
+        .pipe(Effect.map((rows) => Option.fromNullishOr(rows[0]))),
+    claimApprovedRequest: ({ now, requestId }) =>
+      database
+        .use((db) =>
+          db
+            .delete(cliLoginRequests)
+            .where(
+              and(
+                eq(cliLoginRequests.id, requestId),
+                eq(cliLoginRequests.status, "approved"),
+                gt(cliLoginRequests.expiresAt, now),
+              ),
+            )
+            .returning(),
+        )
+        .pipe(Effect.map((rows) => Option.fromNullishOr(rows[0]))),
     deleteRequest: (id) =>
       Effect.gen(function* () {
         yield* database.use((db) => db.delete(cliLoginRequests).where(eq(cliLoginRequests.id, id)));
       }),
+    findDeviceOwner: (deviceId) =>
+      database
+        .use((db) =>
+          db
+            .select({ userId: devices.userId })
+            .from(devices)
+            .where(eq(devices.id, deviceId))
+            .limit(1),
+        )
+        .pipe(Effect.map((rows) => Option.fromNullishOr(rows[0]?.userId))),
     findRequestUser: (userId) =>
       Effect.gen(function* () {
         const rows = yield* database.use((db) =>
@@ -59,10 +93,9 @@ const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function*
           ? Option.none()
           : Option.some({ avatarUrl: row.avatarUrl, id: row.id, login: row.login, name: row.name });
       }),
-    approveRequest: (input) =>
+    issueCliToken: (input) =>
       Effect.gen(function* () {
-        const now = new Date();
-        yield* database.use((db) =>
+        const [, inserted] = yield* database.use((db) =>
           db.batch([
             db
               .insert(devices)
@@ -73,42 +106,45 @@ const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function*
                 name: input.deviceName,
                 platform: input.devicePlatform,
                 version: input.deviceVersion,
-                createdAt: now,
+                createdAt: input.now,
               })
               .onConflictDoUpdate({
                 target: devices.id,
                 set: {
                   arch: input.deviceArch,
-                  userId: input.userId,
                   name: input.deviceName,
                   platform: input.devicePlatform,
                   version: input.deviceVersion,
                 },
+                // Never re-home a device (and its usage history) that
+                // belongs to someone else.
+                setWhere: eq(devices.userId, input.userId),
               }),
-            // Account switch on a shared machine: history follows the
-            // device so the totals never double-count across users.
+            // Guarded insert: only mint when the device is the user's, so a
+            // racing claim on the same device id cannot bind this token to
+            // another account's device.
             db
-              .update(usageDays)
-              .set({ userId: input.userId })
-              .where(eq(usageDays.deviceId, input.deviceId)),
-            db
-              .update(usageSourceStats)
-              .set({ userId: input.userId })
-              .where(eq(usageSourceStats.deviceId, input.deviceId)),
-            db.insert(cliTokens).values({
-              id: input.tokenId,
-              tokenHash: input.tokenHash,
-              userId: input.userId,
-              deviceId: input.deviceId,
-              name: input.deviceName,
-              createdAt: now,
-            }),
-            db
-              .update(cliLoginRequests)
-              .set({ status: "approved", token: input.rawToken, userId: input.userId })
-              .where(eq(cliLoginRequests.id, input.requestId)),
+              .insert(cliTokens)
+              .select(
+                db
+                  .select({
+                    id: sql<string>`${input.tokenId}`.as("id"),
+                    tokenHash: sql<string>`${input.tokenHash}`.as("token_hash"),
+                    userId: devices.userId,
+                    deviceId: devices.id,
+                    name: sql<string>`${input.deviceName}`.as("name"),
+                    createdAt: sql<number>`${input.now.getTime()}`.as("created_at"),
+                    lastUsedAt: sql<null>`null`.as("last_used_at"),
+                    revokedAt: sql<null>`null`.as("revoked_at"),
+                  })
+                  .from(devices)
+                  .where(and(eq(devices.id, input.deviceId), eq(devices.userId, input.userId))),
+              )
+              .returning({ id: cliTokens.id }),
           ]),
         );
+
+        return inserted.length > 0;
       }),
   });
 });

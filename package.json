@@ -29,6 +29,7 @@
       "drizzle-kit": "0.31.11",
       "drizzle-orm": "0.45.3",
       "effect": "4.0.0-rc.117",
+      "happy-dom": "20.14.5",
       "lefthook": "2.1.14",
       "react": "19.3.0",
       "react-dom": "19.3.0",
