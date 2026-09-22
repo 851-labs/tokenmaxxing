@@ -16,7 +16,7 @@ import {
   type ServiceRunnerTarget,
 } from "../src/service-runner-targets";
 
-interface BuildServiceRunnerOptions {
+interface BuildNativePackageOptions {
   clean?: boolean | undefined;
   outDir: string;
   single?: boolean | undefined;
@@ -26,11 +26,11 @@ interface BuildServiceRunnerOptions {
 const cliDir = fileURLToPath(new URL("..", import.meta.url));
 const repoDir = resolve(cliDir, "../..");
 
-async function buildServiceRunners(options: BuildServiceRunnerOptions): Promise<void> {
+async function buildNativePackages(options: BuildNativePackageOptions): Promise<void> {
   assertSafeOutputDir(options.outDir);
   const targets = selectedTargets(options);
   if (targets.length === 0) {
-    throw new Error("no service runner targets selected");
+    throw new Error("no native package targets selected");
   }
 
   if (options.clean !== false) {
@@ -89,7 +89,7 @@ async function buildServiceRunners(options: BuildServiceRunnerOptions): Promise<
   }
 }
 
-function selectedTargets(options: BuildServiceRunnerOptions): readonly ServiceRunnerTarget[] {
+function selectedTargets(options: BuildNativePackageOptions): readonly ServiceRunnerTarget[] {
   if (options.targets !== undefined) {
     return options.targets;
   }
@@ -102,7 +102,7 @@ function selectedTargets(options: BuildServiceRunnerOptions): readonly ServiceRu
   return serviceRunnerTargets;
 }
 
-function parseBuildServiceRunnerArgs(argv: readonly string[]): BuildServiceRunnerOptions {
+function parseBuildNativePackageArgs(argv: readonly string[]): BuildNativePackageOptions {
   let outDir = join(cliDir, "dist", "service-runners");
   let single = false;
   const targets: ServiceRunnerTarget[] = [];
@@ -128,7 +128,7 @@ function parseBuildServiceRunnerArgs(argv: readonly string[]): BuildServiceRunne
         throw new Error("--target requires a value");
       }
       if (!serviceRunnerTargets.includes(value as ServiceRunnerTarget)) {
-        throw new Error(`unsupported service runner target ${value}`);
+        throw new Error(`unsupported native package target ${value}`);
       }
       targets.push(value as ServiceRunnerTarget);
       index += 1;
@@ -154,12 +154,12 @@ function assertSafeOutputDir(outDir: string): void {
 }
 
 async function main(): Promise<void> {
-  await buildServiceRunners(parseBuildServiceRunnerArgs(process.argv.slice(2)));
+  await buildNativePackages(parseBuildNativePackageArgs(process.argv.slice(2)));
 }
 
 if (import.meta.main) {
   await main();
 }
 
-export { assertSafeOutputDir, buildServiceRunners, parseBuildServiceRunnerArgs, selectedTargets };
-export type { BuildServiceRunnerOptions };
+export { assertSafeOutputDir, buildNativePackages, parseBuildNativePackageArgs, selectedTargets };
+export type { BuildNativePackageOptions };

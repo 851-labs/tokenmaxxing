@@ -31,7 +31,7 @@
     "prepack": "bun run build",
     "cli": "TOKENMAXXING_ENV=development bun src/index.ts",
     "build": "bun build src/index.ts --target node --outfile dist/index.js && chmod +x dist/index.js",
-    "build:native-packages": "bun script/build-service-runners.ts",
+    "build:native-packages": "bun script/build-native-packages.ts",
     "publish:release": "bun script/publish.ts"
   },
   "devDependencies": {
