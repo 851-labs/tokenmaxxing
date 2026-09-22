@@ -4,14 +4,16 @@ import { Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import {
-  cookie,
+  cookieOptions,
   cookieScopeFor,
+  type CookieScope,
+  PKCE_COOKIE,
   readCookie,
   SESSION_COOKIE,
   sessionTokenFrom,
   STATE_COOKIE,
 } from "../../auth/cookies";
-import { generateToken } from "../../auth/crypto";
+import { generateToken, pkceChallenge } from "../../auth/crypto";
 import {
   AuthService,
   type AuthServiceShape,
@@ -28,7 +30,17 @@ import { buildGoogleAuthorizeUrl, GoogleClient } from "../../google/client";
  * (302 redirects + Set-Cookie). They register as raw router routes and share
  * the router's global middleware (CORS, request ids) with the contract
  * endpoints.
+ *
+ * The round trip is bound to the browser by two short-lived cookies: the
+ * `state` (CSRF) and the PKCE code verifier. Both are cleared on every
+ * callback outcome. Callback failures redirect back to www's /login with an
+ * `error` code instead of stranding the user on a raw JSON body.
  */
+
+type OAuthCallbackError = "oauth_account_conflict" | "oauth_failed" | "oauth_state_mismatch";
+
+const OAUTH_ROUNDTRIP_MAX_AGE_SECONDS = 600;
+const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
 const githubOAuthStartRoute = oauthStartRoute("github");
 const googleOAuthStartRoute = oauthStartRoute("google");
@@ -46,17 +58,25 @@ function oauthStartRoute(provider: OAuthProviderId) {
       const url = new URL(request.url, "http://localhost");
       const redirectPath = sanitizeOAuthRedirectPath(url.searchParams.get("redirect"));
       const state = encodeOAuthState(generateToken(), redirectPath);
+      const codeVerifier = generateToken();
+      const codeChallenge = yield* pkceChallenge(codeVerifier);
+      const roundtrip = cookieOptions(scope, OAUTH_ROUNDTRIP_MAX_AGE_SECONDS);
 
       return HttpServerResponse.empty({ status: 302 }).pipe(
-        HttpServerResponse.setHeaders({
-          location: buildProviderAuthorizeUrl(
+        HttpServerResponse.setHeader(
+          "location",
+          buildProviderAuthorizeUrl(
             provider,
             config,
             `${scope.apiOrigin}/auth/${provider}/callback`,
             state,
+            codeChallenge,
           ),
-          "set-cookie": cookie(scope, STATE_COOKIE, state, 600),
-        }),
+        ),
+        HttpServerResponse.setCookiesUnsafe([
+          [STATE_COOKIE, state, roundtrip],
+          [PKCE_COOKIE, codeVerifier, roundtrip],
+        ]),
       );
     }),
   );
@@ -73,21 +93,30 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
       const expectedState = readCookie(request, STATE_COOKIE);
-      if (code === null || state === null || expectedState === null || state !== expectedState) {
-        return HttpServerResponse.jsonUnsafe(
-          { error: { code: "oauth_state_mismatch", message: "Sign-in expired; try again." } },
-          { status: 400 },
-        );
+      const codeVerifier = readCookie(request, PKCE_COOKIE);
+      // Only trust the redirect embedded in OUR cookie copy of the state.
+      const redirectPath =
+        expectedState === null ? null : redirectPathFromOAuthState(expectedState);
+      if (
+        code === null ||
+        state === null ||
+        expectedState === null ||
+        codeVerifier === null ||
+        state !== expectedState
+      ) {
+        return oauthErrorRedirect(scope, "oauth_state_mismatch", provider, redirectPath);
       }
-      const redirectPath = redirectPathFromOAuthState(state);
 
       const auth = yield* AuthService;
+      // Browser round trip: only the cookie session counts (never a bearer).
+      const priorSessionToken = readCookie(request, SESSION_COOKIE);
       const result = yield* Effect.gen(function* () {
-        const currentUser = yield* currentUserFromRequest(request, auth);
+        const currentUser = yield* currentUserFromSessionToken(priorSessionToken, auth);
         const profile = yield* fetchProviderProfile(
           provider,
           code,
           `${scope.apiOrigin}/auth/${provider}/callback`,
+          codeVerifier,
         ).pipe(Effect.orDie);
         // Provider access tokens are dropped here on purpose — identity is all
         // this product needs after sign-in/linking.
@@ -99,44 +128,77 @@ function oauthCallbackRoute(provider: OAuthProviderId) {
           Effect.succeed({ _tag: "conflict" as const, provider }),
         ),
         Effect.catchCause((cause) =>
-          Effect.sync(() => {
-            console.error(`${provider} oauth callback failed`, String(cause).slice(0, 500));
-            return { _tag: "failed" as const };
-          }),
+          Effect.logError(`${provider} oauth callback failed`, cause).pipe(
+            Effect.as({ _tag: "failed" as const }),
+          ),
         ),
       );
 
       switch (result._tag) {
         case "conflict":
-          return HttpServerResponse.jsonUnsafe(
-            {
-              error: {
-                code: "oauth_account_conflict",
-                message: `That ${providerLabel(provider)} account is already connected to another tokenmaxxing profile.`,
-              },
-            },
-            { status: 409 },
-          );
+          return oauthErrorRedirect(scope, "oauth_account_conflict", provider, redirectPath);
         case "failed":
-          return HttpServerResponse.jsonUnsafe(
-            {
-              error: {
-                code: "oauth_failed",
-                message: `${providerLabel(provider)} sign-in failed; try again.`,
-              },
-            },
-            { status: 502 },
-          );
-        case "success":
+          return oauthErrorRedirect(scope, "oauth_failed", provider, redirectPath);
+        case "success": {
+          // Signing in again replaces the browser's session: drop the old row
+          // so it cannot outlive the cookie it was issued for.
+          if (priorSessionToken !== null && priorSessionToken !== result.token) {
+            yield* auth.signOut(priorSessionToken).pipe(Effect.ignore);
+          }
+
           return HttpServerResponse.empty({ status: 302 }).pipe(
-            HttpServerResponse.setHeaders({
-              location: `${scope.wwwOrigin}${redirectPath ?? defaultOAuthRedirectPath(result.user.login)}`,
-              "set-cookie": cookie(scope, SESSION_COOKIE, result.token, 30 * 24 * 60 * 60),
-            }),
+            HttpServerResponse.setHeader(
+              "location",
+              `${scope.wwwOrigin}${redirectPath ?? defaultOAuthRedirectPath(result.user.login)}`,
+            ),
+            HttpServerResponse.setCookiesUnsafe([
+              ...clearedRoundtripCookies(scope),
+              [SESSION_COOKIE, result.token, cookieOptions(scope, SESSION_MAX_AGE_SECONDS)],
+            ]),
           );
+        }
       }
     }),
   );
+}
+
+function oauthErrorRedirect(
+  scope: CookieScope,
+  error: OAuthCallbackError,
+  provider: OAuthProviderId,
+  redirectPath: string | null,
+) {
+  return HttpServerResponse.empty({ status: 302 }).pipe(
+    HttpServerResponse.setHeader(
+      "location",
+      oauthErrorLocation(scope.wwwOrigin, error, provider, redirectPath),
+    ),
+    HttpServerResponse.setCookiesUnsafe(clearedRoundtripCookies(scope)),
+  );
+}
+
+function oauthErrorLocation(
+  wwwOrigin: string,
+  error: OAuthCallbackError,
+  provider: OAuthProviderId,
+  redirectPath: string | null,
+): string {
+  const url = new URL("/login", wwwOrigin);
+  url.searchParams.set("error", error);
+  url.searchParams.set("provider", provider);
+  if (redirectPath !== null) {
+    url.searchParams.set("redirect", redirectPath);
+  }
+
+  return url.toString();
+}
+
+function clearedRoundtripCookies(scope: CookieScope) {
+  const expired = cookieOptions(scope, 0);
+  return [
+    [STATE_COOKIE, "", expired],
+    [PKCE_COOKIE, "", expired],
+  ] as const;
 }
 
 // Clears the cookie even for expired sessions, so it stays outside the
@@ -154,7 +216,7 @@ const signoutRoute = HttpRouter.add(
     }
 
     return HttpServerResponse.jsonUnsafe({ ok: true }).pipe(
-      HttpServerResponse.setHeader("set-cookie", cookie(scope, SESSION_COOKIE, "", 0)),
+      HttpServerResponse.setCookiesUnsafe([[SESSION_COOKIE, "", cookieOptions(scope, 0)]]),
     );
   }),
 );
@@ -172,12 +234,13 @@ function buildProviderAuthorizeUrl(
   config: AppConfigShape,
   redirectUri: string,
   state: string,
+  codeChallenge: string,
 ): string {
   switch (provider) {
     case "github":
-      return buildAuthorizeUrl(config.github, redirectUri, state);
+      return buildAuthorizeUrl(config.github, redirectUri, state, codeChallenge);
     case "google":
-      return buildGoogleAuthorizeUrl(config.google, redirectUri, state);
+      return buildGoogleAuthorizeUrl(config.google, redirectUri, state, codeChallenge);
   }
 }
 
@@ -185,28 +248,28 @@ function fetchProviderProfile(
   provider: OAuthProviderId,
   code: string,
   redirectUri: string,
+  codeVerifier: string,
 ): Effect.Effect<OAuthProfile, unknown, GitHubClient | GoogleClient> {
   switch (provider) {
     case "github":
       return Effect.gen(function* () {
         const github = yield* GitHubClient;
-        const accessToken = yield* github.exchangeCode(code, redirectUri);
+        const accessToken = yield* github.exchangeCode(code, redirectUri, codeVerifier);
         return yield* github.fetchUser(accessToken);
       });
     case "google":
       return Effect.gen(function* () {
         const google = yield* GoogleClient;
-        const accessToken = yield* google.exchangeCode(code, redirectUri);
+        const accessToken = yield* google.exchangeCode(code, redirectUri, codeVerifier);
         return yield* google.fetchUser(accessToken);
       });
   }
 }
 
-function currentUserFromRequest(
-  request: HttpServerRequest.HttpServerRequest,
+function currentUserFromSessionToken(
+  token: string | null,
   auth: AuthServiceShape,
 ): Effect.Effect<CurrentUser | null, never, any> {
-  const token = sessionTokenFrom(request);
   if (token === null) {
     return Effect.succeed(null);
   }
@@ -215,15 +278,6 @@ function currentUserFromRequest(
     Effect.map((user) => (Option.isSome(user) ? user.value : null)),
     Effect.catchCause(() => Effect.succeed(null)),
   );
-}
-
-function providerLabel(provider: OAuthProviderId): string {
-  switch (provider) {
-    case "github":
-      return "GitHub";
-    case "google":
-      return "Google";
-  }
 }
 
 function sanitizeOAuthRedirectPath(value: string | null): string | null {
@@ -242,7 +296,15 @@ function sanitizeOAuthRedirectPath(value: string | null): string | null {
       return null;
     }
 
-    return `${url.pathname}${url.search}${url.hash}`;
+    // Dot-segment normalisation can collapse "/.//evil.com" or
+    // "/a/..//evil.com" into "//evil.com" — protocol-relative once a browser
+    // or router resolves it. Judge the normalised output, not the input.
+    const path = `${url.pathname}${url.search}${url.hash}`;
+    if (path.startsWith("//")) {
+      return null;
+    }
+
+    return path;
   } catch {
     return null;
   }
@@ -301,6 +363,7 @@ function base64UrlDecode(value: string): string | null {
 export {
   encodeOAuthState,
   defaultOAuthRedirectPath,
+  oauthErrorLocation,
   oauthRoutesLayer,
   redirectPathFromOAuthState,
   sanitizeOAuthRedirectPath,

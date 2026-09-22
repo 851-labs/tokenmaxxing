@@ -28,6 +28,15 @@ function sha256Hex(value: string): Effect.Effect<string> {
   });
 }
 
+/** RFC 7636 S256 code challenge: base64url(sha-256(verifier)). */
+function pkceChallenge(verifier: string): Effect.Effect<string> {
+  return Effect.promise(async () => {
+    const digest = await crypto.subtle.digest("SHA-256", encoder.encode(verifier));
+
+    return toBase64Url(new Uint8Array(digest));
+  });
+}
+
 /** cli_tokens.tokenHash format: a labeled sha-256 of the raw `tmx_` token. */
 function hashCliToken(token: string): Effect.Effect<string> {
   return sha256Hex(token).pipe(Effect.map((hex) => `sha256:${hex}`));
@@ -67,5 +76,6 @@ export {
   generateToken,
   hashCliToken,
   normalizeLoginCode,
+  pkceChallenge,
   sha256Hex,
 };

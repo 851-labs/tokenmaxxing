@@ -22,6 +22,7 @@ interface OgRouteDeps {
 
 const VERSIONED_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const PREVIEW_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=3600";
+const TRANSIENT_CACHE_CONTROL = "public, max-age=60";
 const OG_CACHE_PREFIX = "og";
 const FALLBACK_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -35,7 +36,18 @@ const defaultDeps: OgRouteDeps = {
 function makeOgImageHandler(deps: OgRouteDeps = defaultDeps) {
   return async function handleOgImageRequest({ context, params, request }: OgRouteContext) {
     const url = new URL(request.url);
-    const data = await deps.loadProfileOgData(params.login);
+    let data: ProfileOgData | null;
+    try {
+      data = await deps.loadProfileOgData(params.login);
+    } catch (error) {
+      // Upstream API failure: we cannot tell whether the profile is still
+      // public, so never serve a prior cached card — only the neutral
+      // fallback, briefly cached so crawlers retry soon.
+      return pngResponse(fallbackPngBytes(), TRANSIENT_CACHE_CONTROL, {
+        error,
+        source: "fallback",
+      });
+    }
     if (data === null) {
       return new Response("Not found", {
         headers: {
@@ -45,8 +57,11 @@ function makeOgImageHandler(deps: OgRouteDeps = defaultDeps) {
       });
     }
 
-    const isVersioned = url.searchParams.has("v");
-    const fingerprint = url.searchParams.get("v") ?? profileOgVersion(data.profile);
+    // The fingerprint always comes from the profile itself. `?v=` is honoured
+    // (immutable caching) only when it matches; any other value is ignored so
+    // arbitrary `v`s cannot mint new R2 keys or Browser Run screenshots.
+    const fingerprint = profileOgVersion(data.profile);
+    const isVersioned = url.searchParams.get("v") === fingerprint;
     const cacheControl = isVersioned ? VERSIONED_CACHE_CONTROL : PREVIEW_CACHE_CONTROL;
     const login = data.profile.user.login;
     const cacheKey = ogCacheKey(login, fingerprint);
@@ -217,6 +232,7 @@ export {
   ogCacheKey,
   PREVIEW_CACHE_CONTROL,
   Route,
+  TRANSIENT_CACHE_CONTROL,
   VERSIONED_CACHE_CONTROL,
 };
 

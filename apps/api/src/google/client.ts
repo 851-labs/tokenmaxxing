@@ -10,7 +10,11 @@ class GoogleApiError extends Data.TaggedError("GoogleApiError")<{
 }> {}
 
 interface GoogleClientShape {
-  exchangeCode(code: string, redirectUri: string): Effect.Effect<string, GoogleApiError>;
+  exchangeCode(
+    code: string,
+    redirectUri: string,
+    codeVerifier: string,
+  ): Effect.Effect<string, GoogleApiError>;
   fetchUser(accessToken: string): Effect.Effect<OAuthProfile, GoogleApiError>;
 }
 
@@ -40,28 +44,31 @@ const makeGoogleClient = Effect.fn("makeGoogleClient")(function* () {
   });
 
   return GoogleClient.of({
-    exchangeCode: Effect.fn("GoogleClient.exchangeCode")(function* (code, redirectUri) {
-      const payload = (yield* requestJson(
-        HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
-          HttpClientRequest.bodyUrlParams({
-            client_id: config.google.clientId,
-            client_secret: config.google.clientSecret,
-            code,
-            grant_type: "authorization_code",
-            redirect_uri: redirectUri,
-          }),
-        ),
-      )) as { access_token?: string; error?: string };
-      if (typeof payload.access_token !== "string") {
-        return yield* Effect.fail(
-          new GoogleApiError({
-            cause: new Error(`Google token exchange rejected: ${payload.error ?? "no token"}`),
-          }),
-        );
-      }
+    exchangeCode: Effect.fn("GoogleClient.exchangeCode")(
+      function* (code, redirectUri, codeVerifier) {
+        const payload = (yield* requestJson(
+          HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
+            HttpClientRequest.bodyUrlParams({
+              client_id: config.google.clientId,
+              client_secret: config.google.clientSecret,
+              code,
+              code_verifier: codeVerifier,
+              grant_type: "authorization_code",
+              redirect_uri: redirectUri,
+            }),
+          ),
+        )) as { access_token?: string; error?: string };
+        if (typeof payload.access_token !== "string") {
+          return yield* Effect.fail(
+            new GoogleApiError({
+              cause: new Error(`Google token exchange rejected: ${payload.error ?? "no token"}`),
+            }),
+          );
+        }
 
-      return payload.access_token;
-    }),
+        return payload.access_token;
+      },
+    ),
     fetchUser: Effect.fn("GoogleClient.fetchUser")(function* (accessToken) {
       const payload = (yield* requestJson(
         HttpClientRequest.get("https://openidconnect.googleapis.com/v1/userinfo", {
@@ -92,9 +99,12 @@ function buildGoogleAuthorizeUrl(
   config: GoogleOAuthConfig,
   redirectUri: string,
   state: string,
+  codeChallenge: string,
 ): string {
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.searchParams.set("client_id", config.clientId);
+  url.searchParams.set("code_challenge", codeChallenge);
+  url.searchParams.set("code_challenge_method", "S256");
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", "openid email profile");

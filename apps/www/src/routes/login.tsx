@@ -15,7 +15,25 @@ const loginRedirectSchema = z.preprocess(
   z.string().optional(),
 );
 
+/** Codes the API's OAuth callback redirects back with (apps/api/src/http/routes/oauth.ts). */
+const LOGIN_ERROR_CODES = [
+  "oauth_account_conflict",
+  "oauth_failed",
+  "oauth_state_mismatch",
+] as const;
+
+type LoginErrorCode = (typeof LOGIN_ERROR_CODES)[number];
+
+const LOGIN_PROVIDER_LABELS = { github: "GitHub", google: "Google" } as const;
+
+type LoginProvider = keyof typeof LOGIN_PROVIDER_LABELS;
+
 const loginSearchSchema = z.object({
+  error: z.enum(LOGIN_ERROR_CODES).optional().catch(undefined),
+  provider: z
+    .enum(["github", "google"] satisfies LoginProvider[])
+    .optional()
+    .catch(undefined),
   redirect: loginRedirectSchema,
 });
 
@@ -35,13 +53,18 @@ const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { redirect } = Route.useSearch();
+  const { error, provider, redirect } = Route.useSearch();
 
   return (
     <div className="flex min-h-[calc(100vh-12rem)] items-center px-4 py-8">
       <Card className="mx-auto flex w-full max-w-sm flex-col items-center p-8 text-center">
         <h1 className="text-xl font-semibold tracking-tight">Welcome to tokenmaxxing.sh</h1>
         <p className="mt-2 text-sm text-muted-foreground">The best place to track token usage.</p>
+        {error === undefined ? null : (
+          <p className="mt-4 text-sm text-red-500" role="alert">
+            {loginErrorMessage(error, provider)}
+          </p>
+        )}
         <OAuthProviderButtons
           className="mt-6"
           providers={LOGIN_OAUTH_PROVIDERS}
@@ -50,6 +73,18 @@ function LoginPage() {
       </Card>
     </div>
   );
+}
+
+function loginErrorMessage(error: LoginErrorCode, provider?: LoginProvider): string {
+  const label = provider === undefined ? null : LOGIN_PROVIDER_LABELS[provider];
+  switch (error) {
+    case "oauth_account_conflict":
+      return `That ${label ?? "provider"} account is already connected to another tokenmaxxing profile.`;
+    case "oauth_failed":
+      return `${label ?? "Provider"} sign-in failed; try again.`;
+    case "oauth_state_mismatch":
+      return "Sign-in expired; try again.";
+  }
 }
 
 function sanitizeLoginRedirectPath(value: string): string | undefined {
@@ -64,10 +99,12 @@ function sanitizeLoginRedirectPath(value: string): string | undefined {
       return undefined;
     }
 
-    return `${url.pathname}${url.search}${url.hash}`;
+    // Dot segments can normalise "/.//evil.com" to "//evil.com"; judge the output.
+    const path = `${url.pathname}${url.search}${url.hash}`;
+    return path.startsWith("//") ? undefined : path;
   } catch {
     return undefined;
   }
 }
 
-export { Route };
+export { loginErrorMessage, loginSearchSchema, Route, sanitizeLoginRedirectPath };

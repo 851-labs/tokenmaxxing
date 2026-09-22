@@ -1,4 +1,4 @@
-import { devices, usageDays, usageSourceStats, users } from "@tokenmaxxing/db";
+import { usageDays, usageSourceStats, users } from "@tokenmaxxing/db";
 import { and, asc, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { Effect } from "effect";
 import { Layer } from "effect";
@@ -167,12 +167,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
       }),
     daily: (userId, query) =>
       Effect.gen(function* () {
-        const key =
-          query.groupBy === "model"
-            ? usageDays.model
-            : query.groupBy === "source"
-              ? usageDays.source
-              : sql<string>`coalesce(${devices.name}, ${usageDays.deviceId})`;
+        const key = query.groupBy === "source" ? usageDays.source : usageDays.model;
 
         const conditions: SQL[] = [eq(usageDays.userId, userId)];
         if (query.since !== undefined) {
@@ -182,8 +177,8 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
           conditions.push(lte(usageDays.date, query.until));
         }
 
-        const rows = yield* database.use((db) => {
-          const base = db
+        const rows = yield* database.use((db) =>
+          db
             .select({
               costUsd: sql<number>`sum(${usageDays.costUsd})`,
               date: usageDays.date,
@@ -191,17 +186,11 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
               outputTokens: sql<number>`sum(${usageDays.outputTokens})`,
               totalTokens: sql<number>`sum(${usageDays.totalTokens})`,
             })
-            .from(usageDays);
-
-          return (
-            query.groupBy === "device"
-              ? base.leftJoin(devices, eq(usageDays.deviceId, devices.id))
-              : base
-          )
+            .from(usageDays)
             .where(and(...conditions))
             .groupBy(usageDays.date, sql`group_key`)
-            .orderBy(asc(usageDays.date), asc(sql`group_key`));
-        });
+            .orderBy(asc(usageDays.date), asc(sql`group_key`)),
+        );
 
         return rows;
       }),

@@ -18,7 +18,7 @@ import { windowStart } from "../leaderboard/service";
 
 /**
  * Public profile dashboards: lifetime stats for the header cards plus the
- * per-day series the charts consume, grouped by model, source, or device.
+ * per-day series the charts consume, grouped by model or source.
  */
 
 const PROFILE_CHART_START = "2026-01-01";

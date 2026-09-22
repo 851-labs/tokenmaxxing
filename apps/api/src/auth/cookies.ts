@@ -1,4 +1,5 @@
-import type { HttpServerRequest } from "effect/unstable/http";
+import { Duration } from "effect";
+import type { Cookies, HttpServerRequest } from "effect/unstable/http";
 
 /**
  * Session/state cookie plumbing for the browser auth flow. Cookie attributes
@@ -9,6 +10,8 @@ import type { HttpServerRequest } from "effect/unstable/http";
 
 const SESSION_COOKIE = "tmx_session";
 const STATE_COOKIE = "tmx_oauth_state";
+/** PKCE code verifier for the in-flight OAuth round trip; paired with STATE_COOKIE. */
+const PKCE_COOKIE = "tmx_oauth_pkce";
 
 interface CookieScope {
   apiOrigin: string;
@@ -43,20 +46,18 @@ function cookieScopeFor(host: string): CookieScope {
   };
 }
 
-function cookie(scope: CookieScope, name: string, value: string, maxAgeSeconds: number): string {
-  const parts = [
-    `${name}=${value}`,
-    `Domain=${scope.domain}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-    `Max-Age=${maxAgeSeconds}`,
-  ];
-  if (scope.secure) {
-    parts.push("Secure");
-  }
+type CookieOptions = NonNullable<Cookies.Cookie["options"]>;
 
-  return parts.join("; ");
+/** Attributes for every auth cookie; `maxAgeSeconds: 0` clears it. */
+function cookieOptions(scope: CookieScope, maxAgeSeconds: number): CookieOptions {
+  return {
+    domain: scope.domain,
+    httpOnly: true,
+    maxAge: Duration.seconds(maxAgeSeconds),
+    path: "/",
+    sameSite: "lax",
+    secure: scope.secure,
+  };
 }
 
 function readCookie(request: HttpServerRequest.HttpServerRequest, name: string): string | null {
@@ -73,4 +74,14 @@ function sessionTokenFrom(request: HttpServerRequest.HttpServerRequest): string 
   return readCookie(request, SESSION_COOKIE);
 }
 
-export { cookie, cookieScopeFor, readCookie, SESSION_COOKIE, sessionTokenFrom, STATE_COOKIE };
+export {
+  cookieOptions,
+  cookieScopeFor,
+  PKCE_COOKIE,
+  readCookie,
+  SESSION_COOKIE,
+  sessionTokenFrom,
+  STATE_COOKIE,
+};
+
+export type { CookieOptions, CookieScope };
