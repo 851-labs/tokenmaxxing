@@ -15,7 +15,7 @@ import {
   TokenNotFound,
   UserNotFound,
 } from "./errors";
-import { AllowCliToken, Authorization, CliAuth } from "./middleware";
+import { AllowCliToken, Authorization, CliAuth, ErrorBoundary } from "./middleware";
 import {
   AdminUsersResponse,
   CliLoginApproveInput,
@@ -53,7 +53,8 @@ import {
 /**
  * The whole HTTP contract, one group per domain. Authorization guards the
  * session-cookie surface (www), CliAuth guards the bearer-token surface
- * (CLI), and leaderboard/profiles stay public. The OAuth browser flow
+ * (CLI), and leaderboard/profiles stay public. ErrorBoundary wraps every
+ * endpoint (added last, so it is outermost). The OAuth browser flow
  * (redirects + Set-Cookie) lives in raw router routes, not here.
  */
 
@@ -253,7 +254,8 @@ class TokenmaxxingApi extends HttpApi.make("tokenmaxxing")
   .add(LeaderboardGroup)
   .add(StatsGroup)
   .add(ProfilesGroup)
-  .add(AdminGroup) {}
+  .add(AdminGroup)
+  .middleware(ErrorBoundary) {}
 
 export {
   AdminGroup,

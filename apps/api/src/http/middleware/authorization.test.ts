@@ -72,6 +72,7 @@ describe("Authorization middleware through the HTTP stack", () => {
     headers: Record<string, string>,
     options: {
       method?: string;
+      resolveCliToken?: TokensServiceShape["resolveCliToken"];
       resolveSession?: AuthServiceShape["resolveSession"];
     } = {},
   ) {
@@ -80,16 +81,18 @@ describe("Authorization middleware through the HTTP stack", () => {
         ((token: string) =>
           Effect.succeed(token === SESSION_TOKEN ? Option.some(USER) : Option.none())),
     );
-    const resolveCliToken = vi.fn((token: string) =>
-      Effect.succeed(
-        token === CLI_TOKEN
-          ? Option.some({
-              deviceId: DeviceId.make("device"),
-              tokenId: TokenId.make("token"),
-              user: cliUser,
-            })
-          : Option.none(),
-      ),
+    const resolveCliToken = vi.fn(
+      options.resolveCliToken ??
+        ((token: string) =>
+          Effect.succeed(
+            token === CLI_TOKEN
+              ? Option.some({
+                  deviceId: DeviceId.make("device"),
+                  tokenId: TokenId.make("token"),
+                  user: cliUser,
+                })
+              : Option.none(),
+          )),
     );
     app = await makeTestApp({
       auth: { resolveSession },
@@ -104,6 +107,7 @@ describe("Authorization middleware through the HTTP stack", () => {
 
     return {
       body: await response.json(),
+      logs: app.logs,
       resolveCliToken,
       resolveSession,
       status: response.status,
@@ -170,15 +174,31 @@ describe("Authorization middleware through the HTTP stack", () => {
     expect(revokedToken.status).toBe(401);
   });
 
-  it("treats a failing session lookup as signed out, not a 500", async () => {
-    const { status } = await request(
-      "/me",
-      { cookie: `tmx_session=${SESSION_TOKEN}` },
-      { resolveSession: () => Effect.die(new Error("D1 down")) },
-    );
+  it.each([
+    ["session", { cookie: `tmx_session=${SESSION_TOKEN}` }],
+    ["CLI token (whoami)", { authorization: `Bearer ${CLI_TOKEN}` }],
+  ])(
+    "answers a failing %s lookup with 503, never 401 (clients keep the credential)",
+    async (_credential, headers) => {
+      const { body, logs, status } = await request("/me", headers, {
+        resolveCliToken: () => Effect.die(new Error("D1 down")),
+        resolveSession: () => Effect.die(new Error("D1 down")),
+      });
 
-    expect(status).toBe(401);
-  });
+      expect(status).toBe(503);
+      expect(body).toEqual({
+        _tag: "ServiceUnavailable",
+        message: "Could not verify your credentials; try again shortly.",
+      });
+      expect(logs.entries).toEqual([
+        expect.objectContaining({
+          args: [new Error("D1 down")],
+          level: "Error",
+          message: "credential lookup failed",
+        }),
+      ]);
+    },
+  );
 });
 
 async function authorize(

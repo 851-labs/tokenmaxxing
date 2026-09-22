@@ -1,7 +1,7 @@
 import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import { OAuthProviderId } from "@tokenmaxxing/api-contract";
+import { Forbidden, OAuthProviderId } from "@tokenmaxxing/api-contract";
 
 import {
   cookieOptions,
@@ -13,7 +13,7 @@ import {
 } from "../../auth/cookies";
 import { generateToken, pkceChallenge, toBase64Url } from "../../auth/crypto";
 import { AuthService, SESSION_TTL_MS } from "../../auth/service";
-import { type Deployment, deploymentForHost } from "../../config";
+import { AppConfig, type Deployment, deploymentForHost } from "../../config";
 import { OAuthProviders } from "../../oauth/registry";
 import { resolveViewer } from "../viewer";
 
@@ -36,7 +36,7 @@ const OAUTH_ROUNDTRIP_MAX_AGE_SECONDS = 600;
 function oauthStartRoute(providerId: OAuthProviderId) {
   return HttpRouter.add(
     "GET",
-    `/auth/${providerId}/start`,
+    oauthStartPath(providerId),
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const provider = (yield* OAuthProviders)[providerId];
@@ -65,7 +65,7 @@ function oauthStartRoute(providerId: OAuthProviderId) {
 function oauthCallbackRoute(providerId: OAuthProviderId) {
   return HttpRouter.add(
     "GET",
-    `/auth/${providerId}/callback`,
+    oauthCallbackPath(providerId),
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const provider = (yield* OAuthProviders)[providerId];
@@ -181,14 +181,33 @@ function clearedRoundtripCookies(deployment: Deployment) {
   ] as const;
 }
 
-// Clears the cookie even for expired sessions, so it stays outside the
-// Authorization middleware.
+const SIGNOUT_PATH = "/auth/signout";
+
+/**
+ * Clears the cookie even for expired sessions, so it stays outside the
+ * Authorization middleware.
+ *
+ * CSRF: a cross-site page can POST here without a preflight (a form post or
+ * a no-cors fetch is a CORS "simple request"), and the response's cookie
+ * clear applies even when the Lax session cookie was not sent. Browsers send
+ * `Origin` on every cross-origin POST, so only www (and the API itself) may
+ * sign out; www's `fetch(..., { credentials: "include" })` qualifies as is.
+ */
 const signoutRoute = HttpRouter.add(
   "POST",
-  "/auth/signout",
+  SIGNOUT_PATH,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const deployment = deploymentForHost(request.headers["host"] ?? "");
+    const config = yield* AppConfig;
+    if (isCrossSiteRequest(request, [...config.corsOrigins, deployment.apiOrigin])) {
+      const error = new Forbidden({ message: "Cross-site sign-out is not allowed." });
+      return HttpServerResponse.jsonUnsafe(
+        { _tag: error._tag, message: error.message },
+        { status: 403 },
+      );
+    }
+
     const token = sessionTokenFrom(request);
     if (token !== null) {
       const auth = yield* AuthService;
@@ -203,6 +222,23 @@ const signoutRoute = HttpRouter.add(
   }),
 );
 
+/**
+ * A browser request from a page outside `trustedOrigins`. Without `Origin`,
+ * fall back to Fetch Metadata; a request carrying neither did not come from
+ * a browser page, so there is no ambient session to forge.
+ */
+function isCrossSiteRequest(
+  request: HttpServerRequest.HttpServerRequest,
+  trustedOrigins: ReadonlyArray<string>,
+): boolean {
+  const origin = request.headers["origin"];
+  if (origin !== undefined) {
+    return !trustedOrigins.includes(origin);
+  }
+
+  return request.headers["sec-fetch-site"] === "cross-site";
+}
+
 const OAuthRoutesLive = Layer.mergeAll(
   signoutRoute,
   ...OAuthProviderId.literals.flatMap((providerId) => [
@@ -211,8 +247,25 @@ const OAuthRoutesLive = Layer.mergeAll(
   ]),
 );
 
+/** Every route above, for the router's 405 table (see layer.ts). */
+const OAUTH_ROUTES = [
+  { method: "POST", path: SIGNOUT_PATH },
+  ...OAuthProviderId.literals.flatMap((providerId) => [
+    { method: "GET", path: oauthStartPath(providerId) },
+    { method: "GET", path: oauthCallbackPath(providerId) },
+  ]),
+];
+
+function oauthStartPath(providerId: OAuthProviderId) {
+  return `/auth/${providerId}/start` as const;
+}
+
+function oauthCallbackPath(providerId: OAuthProviderId) {
+  return `/auth/${providerId}/callback` as const;
+}
+
 function callbackUrl(deployment: Deployment, providerId: OAuthProviderId): string {
-  return `${deployment.apiOrigin}/auth/${providerId}/callback`;
+  return `${deployment.apiOrigin}${oauthCallbackPath(providerId)}`;
 }
 
 function sanitizeOAuthRedirectPath(value: string | null): string | null {
@@ -289,6 +342,7 @@ export {
   encodeOAuthState,
   defaultOAuthRedirectPath,
   oauthErrorLocation,
+  OAUTH_ROUTES,
   OAuthRoutesLive,
   redirectPathFromOAuthState,
   sanitizeOAuthRedirectPath,

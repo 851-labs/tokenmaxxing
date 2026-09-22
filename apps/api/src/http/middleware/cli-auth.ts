@@ -5,11 +5,13 @@ import { CliAuth, CurrentCliIdentity, Unauthorized } from "@tokenmaxxing/api-con
 
 import { bearerToken } from "../../auth/cookies";
 import { TokensService } from "../../tokens/service";
+import { credentialLookupUnavailable } from "../viewer";
 
 /**
  * Bearer-only authentication for the CLI surface: a raw `tmx_` token
  * resolved against cli_tokens (hashed, revocation-checked). No cookies —
- * browsers have no business on these endpoints.
+ * browsers have no business on these endpoints. A lookup that fails is a
+ * 503, not a 401: the CLI discards its token on Unauthorized.
  */
 
 const CliAuthLive = Layer.effect(
@@ -26,7 +28,7 @@ const CliAuthLive = Layer.effect(
             ? Option.none()
             : yield* tokens
                 .resolveCliToken(rawToken)
-                .pipe(Effect.catchCause(() => Effect.succeedNone));
+                .pipe(Effect.catchDefect(credentialLookupUnavailable));
         if (Option.isNone(identity)) {
           return yield* Effect.fail(
             new Unauthorized({ message: "Run `tokenmaxxing login` first." }),
