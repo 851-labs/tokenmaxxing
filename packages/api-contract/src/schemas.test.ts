@@ -5,6 +5,7 @@ import {
   AdminUsersResponse,
   CliLoginStartInput,
   IngestUsageInput,
+  ProfileDailyGroupBy,
   ProfileDailyResponse,
   ProfileIdentityResponse,
   StatsResponse,
@@ -362,5 +363,18 @@ describe("admin fleet responses", () => {
     await expect(Schema.decodeUnknownPromise(AdminUsersResponse)(response)).resolves.toEqual(
       response,
     );
+  });
+});
+
+describe("public profile daily grouping", () => {
+  it("accepts model and source groupings", async () => {
+    await expect(Schema.decodeUnknownPromise(ProfileDailyGroupBy)("model")).resolves.toBe("model");
+    await expect(Schema.decodeUnknownPromise(ProfileDailyGroupBy)("source")).resolves.toBe(
+      "source",
+    );
+  });
+
+  it("rejects device grouping so hostnames never reach anonymous viewers", async () => {
+    await expect(Schema.decodeUnknownPromise(ProfileDailyGroupBy)("device")).rejects.toThrow();
   });
 });
