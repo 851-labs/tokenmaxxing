@@ -70,6 +70,12 @@ const meHandlers = HttpApiBuilder.group(TokenmaxxingApi, "me", (handlers) =>
         return { accounts: yield* auth.listAccounts(user.id).pipe(Effect.orDie) };
       }),
     )
+    .handle("describeCliLogin", ({ query }) =>
+      Effect.gen(function* () {
+        const cliLogin = yield* CliLoginService;
+        return yield* cliLogin.describe(query.code);
+      }),
+    )
     .handle("approveCliLogin", ({ payload }) =>
       Effect.gen(function* () {
         const user = yield* CurrentUser;
@@ -123,7 +129,7 @@ const cliLoginHandlers = HttpApiBuilder.group(TokenmaxxingApi, "cliLogin", (hand
     .handle("poll", ({ payload }) =>
       Effect.gen(function* () {
         const cliLogin = yield* CliLoginService;
-        return yield* cliLogin.poll(payload.code);
+        return yield* cliLogin.poll(payload);
       }),
     ),
 );

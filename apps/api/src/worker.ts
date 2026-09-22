@@ -9,6 +9,8 @@ import { AdminService, makeAdminService } from "./admin/service";
 import { AuthRepositoryLive } from "./auth/d1";
 import { AuthService, makeAuthService } from "./auth/service";
 import { Bucket } from "./cloudflare/bucket";
+import { CleanupRepositoryLive } from "./cleanup/d1";
+import { makeCleanupService } from "./cleanup/service";
 import { Database } from "./cloudflare/database";
 import { CliLoginRepositoryLive } from "./clilogin/d1";
 import { CliLoginService, makeCliLoginService } from "./clilogin/service";
@@ -30,6 +32,8 @@ import { TokensRepositoryLive } from "./tokens/d1";
 import { RawUsageObjectStore } from "./usage/raw-store";
 import { makeUsageService, UsageService } from "./usage/service";
 import { UsageRepositoryLive } from "./usage/d1";
+
+const CLEANUP_CRON = "17 * * * *";
 
 const ApiWorker = Cloudflare.Worker(
   "api",
@@ -94,6 +98,14 @@ const ApiWorker = Cloudflare.Worker(
     const stats = yield* makeStatsService().pipe(
       Effect.provide(StatsRepositoryLive.pipe(Layer.provide(drizzleLayer))),
     );
+    const cleanup = yield* makeCleanupService().pipe(
+      Effect.provide(CleanupRepositoryLive.pipe(Layer.provide(drizzleLayer))),
+    );
+
+    // Hourly purge of expired sessions and CLI login requests.
+    yield* Cloudflare.Workers.cron(CLEANUP_CRON, (controller) =>
+      cleanup.purgeExpired(new Date(controller.scheduledTime)),
+    );
 
     // Handlers and raw routes (OAuth) resolve these services at request
     // time, not layer-build time — this context rides along with every
@@ -128,7 +140,11 @@ const ApiWorker = Cloudflare.Worker(
       }).pipe(Effect.map((apiHttpEffect) => apiHttpEffect.pipe(Effect.provide(rawRouteServices)))),
     };
   }).pipe(
-    Effect.provide([Cloudflare.D1.QueryDatabaseBinding, Cloudflare.R2.ReadWriteBucketBinding]),
+    Effect.provide([
+      Cloudflare.D1.QueryDatabaseBinding,
+      Cloudflare.R2.ReadWriteBucketBinding,
+      Cloudflare.Workers.CronEventSourceLive,
+    ]),
   ),
 );
 

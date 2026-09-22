@@ -5,6 +5,7 @@ import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 
 import {
   AdminUserNotFound,
+  CliUpgradeRequired,
   DeviceNotFound,
   DeviceMissing,
   Forbidden,
@@ -20,6 +21,7 @@ import {
   CliLoginApproveResponse,
   CliLoginPollInput,
   CliLoginPollResponse,
+  CliLoginRequestSummary,
   CliLoginStartInput,
   CliLoginStartResponse,
   CliTokenSummary,
@@ -70,6 +72,15 @@ class MeGroup extends HttpApiGroup.make("me")
     }),
   )
   .add(
+    HttpApiEndpoint.get("describeCliLogin", "/cli/login/request", {
+      query: {
+        code: Schema.String,
+      },
+      success: CliLoginRequestSummary,
+      error: [LoginCodeNotFound, LoginCodeExpired],
+    }),
+  )
+  .add(
     HttpApiEndpoint.post("approveCliLogin", "/cli/login/approve", {
       payload: CliLoginApproveInput,
       success: CliLoginApproveResponse,
@@ -111,6 +122,7 @@ class CliLoginGroup extends HttpApiGroup.make("cliLogin")
     HttpApiEndpoint.post("start", "/cli/login/start", {
       payload: CliLoginStartInput,
       success: CliLoginStartResponse,
+      error: CliUpgradeRequired,
     }),
   )
   .add(

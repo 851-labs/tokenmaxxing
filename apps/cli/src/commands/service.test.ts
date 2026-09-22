@@ -152,7 +152,9 @@ function makeTestLayer(options: TestLayerOptions) {
             start: () =>
               Effect.succeed({
                 code: "ABC123",
+                deviceCode: "device-secret",
                 expiresAt: "2026-06-13T20:00:00.000Z",
+                userCode: "ABC123",
                 intervalSeconds: 0,
                 verificationUri: "https://tokenmaxxing.example/login/cli?code=ABC123",
               }),

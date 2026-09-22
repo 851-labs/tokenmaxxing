@@ -61,6 +61,15 @@ function profileQueryOptions(login: string) {
   });
 }
 
+/** The pending CLI login a user is about to approve (device details). */
+function cliLoginRequestQueryOptions(code: string) {
+  return queryOptions({
+    queryKey: ["me", "cliLogin", code],
+    queryFn: () => runApi((client) => client.me.describeCliLogin({ query: { code } })),
+    retry: false,
+  });
+}
+
 function profileDailyQueryOptions(login: string) {
   return queryOptions({
     queryKey: ["profile", login, "daily"],
@@ -73,6 +82,7 @@ function profileDailyQueryOptions(login: string) {
 export {
   adminUsersQueryOptions,
   accountsQueryOptions,
+  cliLoginRequestQueryOptions,
   devicesQueryOptions,
   leaderboardQueryOptions,
   meQueryOptions,

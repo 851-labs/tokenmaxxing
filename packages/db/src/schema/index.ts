@@ -53,30 +53,41 @@ const sessions = sqliteTable(
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
-  (table) => [index("sessions_user_idx").on(table.userId)],
+  (table) => [
+    index("sessions_user_idx").on(table.userId),
+    index("sessions_expires_at_idx").on(table.expiresAt),
+  ],
 );
 
 /**
- * Device-code login flow. The raw CLI token is parked on the row between
- * approve and poll; the row is deleted when poll delivers it (exactly once)
- * and rows expire 10 minutes after start regardless.
+ * Device-code login flow (RFC 8628 shaped). `code` is the short user code
+ * shown in the browser; `deviceCodeHash` is the sha-256 of the high-entropy
+ * secret only the CLI holds, and poll requires it. Rows with a null
+ * `deviceCodeHash` were started by pre-device-code CLIs and may be polled by
+ * `code` until the legacy sunset. No token is ever stored here: approve only
+ * flips `status`, and the CLI token is minted when poll atomically deletes
+ * the approved row. Rows expire 10 minutes after start; a cron purges them.
  */
-const cliLoginRequests = sqliteTable("cli_login_requests", {
-  id: text("id").primaryKey(),
-  code: text("code").notNull().unique("cli_login_requests_code_unique"),
-  status: text("status", { enum: ["pending", "approved"] })
-    .notNull()
-    .default("pending"),
-  userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
-  token: text("token"),
-  deviceId: text("device_id").notNull(),
-  deviceName: text("device_name").notNull(),
-  devicePlatform: text("device_platform").notNull(),
-  deviceArch: text("device_arch"),
-  deviceVersion: text("device_version"),
-  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-});
+const cliLoginRequests = sqliteTable(
+  "cli_login_requests",
+  {
+    id: text("id").primaryKey(),
+    code: text("code").notNull().unique("cli_login_requests_code_unique"),
+    deviceCodeHash: text("device_code_hash").unique("cli_login_requests_device_code_hash_unique"),
+    status: text("status", { enum: ["pending", "approved"] })
+      .notNull()
+      .default("pending"),
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+    deviceId: text("device_id").notNull(),
+    deviceName: text("device_name").notNull(),
+    devicePlatform: text("device_platform").notNull(),
+    deviceArch: text("device_arch"),
+    deviceVersion: text("device_version"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("cli_login_requests_expires_at_idx").on(table.expiresAt)],
+);
 
 /** Never expires by design; revokedAt is the only kill switch. */
 const cliTokens = sqliteTable(
