@@ -27,11 +27,15 @@ const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () 
         }
 
         // Freshness bookkeeping only; failures here must not fail auth.
-        yield* database
-          .use((db) =>
-            db.update(cliTokens).set({ lastUsedAt: now }).where(eq(cliTokens.id, row.token.id)),
-          )
-          .pipe(Effect.ignore);
+        // Hour granularity is plenty, and skips a D1 write on almost every
+        // CLI request.
+        if (isLastUsedStale(row.token.lastUsedAt, now)) {
+          yield* database
+            .use((db) =>
+              db.update(cliTokens).set({ lastUsedAt: now }).where(eq(cliTokens.id, row.token.id)),
+            )
+            .pipe(Effect.ignore);
+        }
 
         return Option.some({
           deviceId: row.token.deviceId,
@@ -137,4 +141,10 @@ const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () 
 
 const TokensRepositoryLive = Layer.effect(TokensRepository, makeD1TokensRepository());
 
-export { TokensRepositoryLive };
+const LAST_USED_REFRESH_MS = 60 * 60 * 1000;
+
+function isLastUsedStale(lastUsedAt: Date | null, now: Date): boolean {
+  return lastUsedAt === null || now.getTime() - lastUsedAt.getTime() >= LAST_USED_REFRESH_MS;
+}
+
+export { isLastUsedStale, TokensRepositoryLive };

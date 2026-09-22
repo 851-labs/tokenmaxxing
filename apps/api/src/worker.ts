@@ -2,7 +2,10 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import { Context } from "effect";
 import { Effect } from "effect";
 import { Layer } from "effect";
+import { Schema } from "effect";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+
+import { StatsResponse } from "@tokenmaxxing/api-contract";
 
 import { AdminRepositoryLive } from "./admin/d1";
 import { AdminService, makeAdminService } from "./admin/service";
@@ -12,6 +15,7 @@ import { Bucket } from "./cloudflare/bucket";
 import { CleanupRepositoryLive } from "./cleanup/d1";
 import { makeCleanupService } from "./cleanup/service";
 import { Database } from "./cloudflare/database";
+import { makeEdgeJsonCache } from "./cloudflare/edge-cache";
 import { CliLoginRepositoryLive } from "./clilogin/d1";
 import { CliLoginService, makeCliLoginService } from "./clilogin/service";
 import { AppConfig } from "./config";
@@ -23,10 +27,10 @@ import { LeaderboardService, makeLeaderboardService } from "./leaderboard/servic
 import { makeProfilesService, ProfilesService } from "./profiles/service";
 import { ProfilesRepositoryLive } from "./profiles/d1";
 import { StatsRepositoryLive } from "./stats/d1";
-import { makeStatsService, StatsService } from "./stats/service";
+import { makeStatsService, STATS_CACHE_TTL_SECONDS, StatsService } from "./stats/service";
 import { AuthorizationLive } from "./http/middleware/authorization";
 import { CliAuthLive } from "./http/middleware/cli-auth";
-import { makeApiHttpEffect } from "./http/layer";
+import { makeApiFetch } from "./http/layer";
 import { makeTokensService, TokensService } from "./tokens/service";
 import { TokensRepositoryLive } from "./tokens/d1";
 import { RawUsageObjectStore } from "./usage/raw-store";
@@ -95,9 +99,13 @@ const ApiWorker = Cloudflare.Worker(
     const profiles = yield* makeProfilesService().pipe(
       Effect.provide(ProfilesRepositoryLive.pipe(Layer.provide(drizzleLayer))),
     );
-    const stats = yield* makeStatsService().pipe(
-      Effect.provide(StatsRepositoryLive.pipe(Layer.provide(drizzleLayer))),
-    );
+    const stats = yield* makeStatsService({
+      cache: makeEdgeJsonCache({
+        decode: Schema.decodeUnknownOption(StatsResponse),
+        key: `${config.urls.apiUrl}/__cache/stats`,
+        ttlSeconds: STATS_CACHE_TTL_SECONDS,
+      }),
+    }).pipe(Effect.provide(StatsRepositoryLive.pipe(Layer.provide(drizzleLayer))));
     const cleanup = yield* makeCleanupService().pipe(
       Effect.provide(CleanupRepositoryLive.pipe(Layer.provide(drizzleLayer))),
     );
@@ -124,8 +132,11 @@ const ApiWorker = Cloudflare.Worker(
       Context.add(UsageService, usage),
     );
 
-    return {
-      fetch: makeApiHttpEffect({
+    // Built once per isolate. `fetch` must be the HttpEffect itself: an
+    // Effect-valued `fetch` is re-run by alchemy on every request, which
+    // rebuilt every handler, middleware, CORS and the OpenAPI spec per hit.
+    const fetch = yield* makeApiFetch(
+      {
         adminServiceLayer: Layer.succeed(AdminService, admin),
         appConfigLayer,
         authServiceLayer: Layer.succeed(AuthService, auth),
@@ -137,8 +148,11 @@ const ApiWorker = Cloudflare.Worker(
         middlewareLayer: Layer.mergeAll(AuthorizationLive, CliAuthLive),
         tokensServiceLayer: Layer.succeed(TokensService, tokens),
         usageServiceLayer: Layer.succeed(UsageService, usage),
-      }).pipe(Effect.map((apiHttpEffect) => apiHttpEffect.pipe(Effect.provide(rawRouteServices)))),
-    };
+      },
+      rawRouteServices,
+    );
+
+    return { fetch };
   }).pipe(
     Effect.provide([
       Cloudflare.D1.QueryDatabaseBinding,

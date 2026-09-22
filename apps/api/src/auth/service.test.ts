@@ -34,6 +34,19 @@ describe("AuthService provider linking", () => {
     expect(result.user.login).toBe("alex-2");
   });
 
+  it("takes the lowest free suffix from one lookup of taken logins", async () => {
+    const { service, store } = await makeTestAuth();
+    for (const login of ["alex", "alex-2", "alex-3", "alex-5", "alexa-4"]) {
+      store.users.set(login, currentUser({ id: login, login }));
+    }
+
+    const result = await runAuth(
+      service.signInWithProvider(googleProfile({ email: "alex@example.com" })),
+    );
+
+    expect(result.user.login).toBe("alex-4");
+  });
+
   it("auto-links a verified email when it belongs to exactly one existing user", async () => {
     const { service, store } = await makeTestAuth();
     const user = currentUser({ id: "user_github", login: "alex" });
@@ -226,8 +239,12 @@ async function makeTestAuth() {
       Effect.sync(() => {
         store.sessions.push({ id, userId });
       }),
-    isLoginTaken: (login) =>
-      Effect.sync(() => [...store.users.values()].some((user) => user.login === login)),
+    listLoginsLike: (base) =>
+      Effect.sync(() =>
+        [...store.users.values()]
+          .map((user) => user.login)
+          .filter((login) => login === base || login.startsWith(`${base}-`)),
+      ),
     linkAccount: (userId, profile) =>
       Effect.sync(() => {
         const user = store.users.get(userId);

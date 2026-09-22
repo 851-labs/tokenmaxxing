@@ -1,8 +1,11 @@
+import { Context } from "effect";
 import { Effect } from "effect";
 import { Layer } from "effect";
 import { Option } from "effect";
+import { Scope } from "effect";
 import * as Path from "effect/Path";
 import {
+  HttpEffect,
   HttpMiddleware,
   HttpRouter,
   HttpServerRequest,
@@ -31,7 +34,7 @@ import { CliLoginService } from "../clilogin/service";
 import type { Drizzle } from "../database";
 import { LeaderboardService } from "../leaderboard/service";
 import { ProfilesService } from "../profiles/service";
-import { StatsService } from "../stats/service";
+import { STATS_CACHE_TTL_SECONDS, StatsService } from "../stats/service";
 import { TokensService } from "../tokens/service";
 import { UsageService } from "../usage/service";
 import { oauthRoutesLayer } from "./routes/oauth";
@@ -182,7 +185,9 @@ const leaderboardHandlers = HttpApiBuilder.group(TokenmaxxingApi, "leaderboard",
       const metric = query.metric ?? DEFAULT_LEADERBOARD_METRIC;
       const window = query.window ?? DEFAULT_LEADERBOARD_WINDOW;
 
-      return { entries: yield* leaderboard.list(metric, window), metric, window };
+      const entries = yield* leaderboard.list(metric, window);
+      yield* cacheControl(PUBLIC_READ_CACHE_CONTROL);
+      return { entries, metric, window };
     }),
   ),
 );
@@ -192,19 +197,23 @@ const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (hand
     .handle("identity", ({ params }) =>
       Effect.gen(function* () {
         const profiles = yield* ProfilesService;
-        return yield* profiles.getIdentity(params.login);
+        const identity = yield* profiles.getIdentity(params.login);
+        yield* cacheControl(PUBLIC_READ_CACHE_CONTROL);
+        return identity;
       }),
     )
     .handle("get", ({ params }) =>
       Effect.gen(function* () {
         const profiles = yield* ProfilesService;
-        return yield* profiles.getProfile(params.login, yield* optionalCurrentUserId());
+        const profile = yield* profiles.getProfile(params.login, yield* optionalCurrentUserId());
+        yield* cacheControl(yield* viewerCacheControl());
+        return profile;
       }),
     )
     .handle("daily", ({ params, query }) =>
       Effect.gen(function* () {
         const profiles = yield* ProfilesService;
-        return yield* profiles.getDaily(
+        const daily = yield* profiles.getDaily(
           params.login,
           {
             groupBy: query.groupBy ?? "model",
@@ -213,6 +222,8 @@ const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (hand
           },
           yield* optionalCurrentUserId(),
         );
+        yield* cacheControl(yield* viewerCacheControl());
+        return daily;
       }),
     ),
 );
@@ -233,11 +244,44 @@ function optionalCurrentUserId() {
   });
 }
 
+/**
+ * Cache policy for public reads. `s-maxage` only addresses shared caches
+ * (browsers ignore it) and stale-while-revalidate lets them refresh in the
+ * background. Registered after the handler succeeded, and applied to 200s
+ * only, so failures (404 for unknown or hidden profiles) are never cached.
+ */
+const PUBLIC_READ_CACHE_CONTROL = "public, s-maxage=60, stale-while-revalidate=300";
+const STATS_CACHE_CONTROL = `public, s-maxage=${STATS_CACHE_TTL_SECONDS}, stale-while-revalidate=600`;
+const PRIVATE_CACHE_CONTROL = "private, no-store";
+
+function cacheControl(value: string) {
+  return HttpEffect.appendPreResponseHandler((_request, response) =>
+    Effect.succeed(
+      response.status === 200
+        ? HttpServerResponse.setHeader(response, "cache-control", value)
+        : response,
+    ),
+  );
+}
+
+/**
+ * Profile reads resolve the viewer (a shadow-banned owner still sees their
+ * own profile), so a request carrying credentials must never be shared.
+ */
+function viewerCacheControl() {
+  return Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    return sessionTokenFrom(request) === null ? PUBLIC_READ_CACHE_CONTROL : PRIVATE_CACHE_CONTROL;
+  });
+}
+
 const statsHandlers = HttpApiBuilder.group(TokenmaxxingApi, "stats", (handlers) =>
   handlers.handle("get", () =>
     Effect.gen(function* () {
       const stats = yield* StatsService;
-      return yield* stats.getStats();
+      const response = yield* stats.getStats();
+      yield* cacheControl(STATS_CACHE_CONTROL);
+      return response;
     }),
   ),
 );
@@ -325,6 +369,26 @@ function makeApiHttpEffect(options: ApiLayerOptions) {
 }
 
 /**
+ * Builds the router, handlers, middleware, CORS and OpenAPI spec exactly
+ * once and returns the per-request handler. The worker's `fetch` must be the
+ * returned HttpEffect itself, never an Effect that builds one: alchemy
+ * re-runs an Effect-valued `fetch` on every request, which would rebuild the
+ * whole layer graph per request.
+ *
+ * The built layer lives in its own scope that is never closed — the router
+ * must outlive the init closure (whose scope we cannot name in types) and
+ * every request, and workerd has no isolate-teardown hook anyway. Nothing in
+ * the graph registers finalizers that matter at shutdown.
+ */
+function makeApiFetch<R>(options: ApiLayerOptions, requestServices: Context.Context<R>) {
+  return Effect.gen(function* () {
+    const routerScope = yield* Scope.make();
+    const httpEffect = yield* makeApiHttpEffect(options).pipe(Scope.provide(routerScope));
+    return httpEffect.pipe(Effect.provideContext(requestServices));
+  });
+}
+
+/**
  * Schema decode failures respond with their own 400; every other defect
  * (store/decode faults died at the service boundary, bugs) is logged and
  * answered with an opaque 500 — internals never reach the wire.
@@ -389,4 +453,4 @@ const HttpPlatformStub = Layer.succeed(HttpPlatform.HttpPlatform, {
   fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
 });
 
-export { makeApiHttpEffect };
+export { makeApiFetch, makeApiHttpEffect };

@@ -137,7 +137,10 @@ interface AdminServiceShape {
 }
 
 interface AdminRepositoryShape {
-  hasVerifiedEmail(userId: string, email: string): Effect.Effect<boolean, DatabaseError, any>;
+  hasAnyVerifiedEmail(
+    userId: string,
+    emails: readonly string[],
+  ): Effect.Effect<boolean, DatabaseError, any>;
   listUserSnapshots(): Effect.Effect<AdminUserSnapshot[], DatabaseError, any>;
   setShadowBan(input: {
     at: Date | null;
@@ -252,16 +255,7 @@ function isInternalAdmin(
   repository: AdminRepositoryShape,
   userId: string,
 ): Effect.Effect<boolean, never, any> {
-  return Effect.gen(function* () {
-    for (const email of ADMIN_EMAILS) {
-      const allowed = yield* repository.hasVerifiedEmail(userId, email).pipe(Effect.orDie);
-      if (allowed) {
-        return true;
-      }
-    }
-
-    return false;
-  });
+  return repository.hasAnyVerifiedEmail(userId, ADMIN_EMAILS).pipe(Effect.orDie);
 }
 
 function adminUserDebugRow(
@@ -317,23 +311,47 @@ function adminDeviceDebugRows(
   now: Date,
 ): (typeof AdminDeviceDebugRow.Type)[] {
   return snapshots
-    .flatMap((snapshot) =>
-      snapshot.devices.map((device) =>
-        adminDeviceDebugRow(snapshot, device, latestCliRelease, now),
-      ),
-    )
+    .flatMap((snapshot) => {
+      // Index once per user instead of scanning tokens/usage per device.
+      const tokensByDevice = new Map<string | null, AdminTokenSnapshot[]>();
+      for (const token of snapshot.tokens) {
+        const tokens = tokensByDevice.get(token.deviceId);
+        if (tokens === undefined) {
+          tokensByDevice.set(token.deviceId, [token]);
+        } else {
+          tokens.push(token);
+        }
+      }
+      const usageByDevice = new Map<string, AdminDeviceUsageSnapshot>();
+      for (const usage of snapshot.deviceUsage) {
+        if (!usageByDevice.has(usage.deviceId)) {
+          usageByDevice.set(usage.deviceId, usage);
+        }
+      }
+
+      return snapshot.devices.map((device) =>
+        adminDeviceDebugRow(
+          snapshot,
+          device,
+          tokensByDevice.get(device.id) ?? [],
+          usageByDevice.get(device.id),
+          latestCliRelease,
+          now,
+        ),
+      );
+    })
     .sort(compareDeviceDebugRows);
 }
 
 function adminDeviceDebugRow(
   snapshot: AdminUserSnapshot,
   device: AdminDeviceSnapshot,
+  tokens: readonly AdminTokenSnapshot[],
+  usage: AdminDeviceUsageSnapshot | undefined,
   latestCliRelease: LatestCliRelease,
   now: Date,
 ): typeof AdminDeviceDebugRow.Type {
-  const tokens = snapshot.tokens.filter((token) => token.deviceId === device.id);
   const activeTokenCount = tokens.filter((token) => token.revokedAt === null).length;
-  const usage = snapshot.deviceUsage.find((row) => row.deviceId === device.id);
   const updateStatus = adminDeviceUpdateStatus(device, latestCliRelease);
 
   return {

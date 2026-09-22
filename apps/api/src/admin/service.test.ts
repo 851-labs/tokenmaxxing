@@ -136,7 +136,8 @@ function makeRepository(options: {
   const allowedEmails = new Set(options.allowedEmails ?? []);
 
   return {
-    hasVerifiedEmail: (_userId, email) => Effect.succeed(allowedEmails.has(email)),
+    hasAnyVerifiedEmail: (_userId, emails) =>
+      Effect.succeed(emails.some((email) => allowedEmails.has(email))),
     listUserSnapshots: () => Effect.succeed(options.snapshots ?? [snapshot()]),
     setShadowBan: (input) => Effect.succeed(options.onSetShadowBan?.(input) ?? true),
   };

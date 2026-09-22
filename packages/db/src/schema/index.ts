@@ -86,7 +86,11 @@ const cliLoginRequests = sqliteTable(
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
-  (table) => [index("cli_login_requests_expires_at_idx").on(table.expiresAt)],
+  (table) => [
+    index("cli_login_requests_expires_at_idx").on(table.expiresAt),
+    // Account merges re-point rows by user_id, and deleting a user cascades here.
+    index("cli_login_requests_user_idx").on(table.userId),
+  ],
 );
 
 /** Never expires by design; revokedAt is the only kill switch. */
@@ -180,7 +184,16 @@ const usageDays = sqliteTable(
   },
   (table) => [
     primaryKey({ columns: [table.deviceId, table.date, table.source, table.model] }),
-    index("usage_days_user_date_idx").on(table.userId, table.date),
+    // Covers the per-user scans: leaderboard and rank windows (grouped by
+    // user, summing cost/tokens) and profile reads run index-only. Leading
+    // with user_id lets SQLite skip-scan the date window per user and get
+    // GROUP BY user_id order for free; a date-leading index is never picked.
+    index("usage_days_user_date_cost_tokens_idx").on(
+      table.userId,
+      table.date,
+      table.costUsd,
+      table.totalTokens,
+    ),
     index("usage_days_date_idx").on(table.date),
   ],
 );
@@ -227,13 +240,13 @@ const usageRawBatches = sqliteTable(
     parserVersion: text("parser_version").notNull(),
   },
   (table) => [
+    // Also serves device-scoped lookups via its device_id prefix, so no
+    // separate device index.
     uniqueIndex("usage_raw_batches_device_payload_hash_unique").on(
       table.deviceId,
       table.payloadHash,
     ),
     index("usage_raw_batches_user_idx").on(table.userId),
-    index("usage_raw_batches_device_idx").on(table.deviceId),
-    index("usage_raw_batches_source_idx").on(table.source),
   ],
 );
 
