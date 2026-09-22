@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeSitemapHandler } from "../routes/sitemap[.]xml";
-import { buildRobotsTxt } from "../routes/robots[.]txt";
-import { buildSitemapXml } from "./sitemap";
+import { makeSitemapHandler } from "./sitemap[.]xml";
+import { buildRobotsTxt } from "./robots[.]txt";
+import { buildSitemapXml } from "./-sitemap";
 
 describe("sitemap", () => {
   it("renders absolute, escaped URLs with optional lastmod", () => {

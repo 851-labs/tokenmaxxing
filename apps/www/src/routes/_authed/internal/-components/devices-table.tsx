@@ -9,7 +9,7 @@ import {
   repairReasonLabel,
   serviceStatusTitle,
   updateBlockedReasonLabel,
-} from "../../../../lib/device-status";
+} from "../-lib/device-status";
 import { Avatar } from "../../../../components/ui/avatar";
 import { Badge } from "../../../../components/ui/badge";
 

@@ -3,12 +3,12 @@ import { createFileRoute, stripSearchParams, useNavigate } from "@tanstack/react
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { StackedChartPanel, type StackedBarsMode } from "../components/charts/stacked-bars";
-import { StatCard } from "../components/stat-card";
-import { SegmentedControl, type SegmentedOption } from "../components/ui/segmented-control";
-import { formatInteger, formatPercent, formatTokens, formatUsd, percentOf } from "../lib/format";
-import { statsQueryOptions } from "../lib/queries";
-import { pageHead } from "../lib/seo";
+import { StackedChartPanel, type StackedBarsMode } from "../../components/charts/stacked-bars";
+import { StatCard } from "../../components/stat-card";
+import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
+import { formatInteger, formatPercent, formatTokens, formatUsd, percentOf } from "../../lib/format";
+import { statsQueryOptions } from "../../lib/queries";
+import { pageHead } from "../../lib/seo";
 import {
   deriveAggregateCharts,
   formatUsageRange,
@@ -17,7 +17,7 @@ import {
   type StatsRankedMetric,
   type StatsWindow,
   type StatsWindowView,
-} from "../lib/stats-view";
+} from "./-lib/stats-view";
 
 const statsSearchSchema = z.object({
   window: z.enum(STATS_WINDOWS).default("30d").catch("30d"),

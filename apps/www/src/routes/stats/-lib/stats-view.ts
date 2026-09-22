@@ -4,8 +4,8 @@ import {
   buildStackedSeriesChart,
   seriesColors,
   type StackedSeriesChart,
-} from "../components/charts/series";
-import { addDays, enumerateDays } from "./dates";
+} from "../../../components/charts/series";
+import { addDays, enumerateDays } from "../../../lib/dates";
 
 /** Pure view-model for the /stats page: window selection and chart series. */
 

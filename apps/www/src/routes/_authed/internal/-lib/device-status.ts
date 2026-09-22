@@ -1,6 +1,6 @@
 import type { AdminUsersResponse, ServiceRepairReasonValue } from "@tokenmaxxing/api-contract";
 
-import { formatInteger } from "./format";
+import { formatInteger } from "../../../../lib/format";
 
 /** Pure labelling for the internal fleet view: versions, service health, timing. */
 

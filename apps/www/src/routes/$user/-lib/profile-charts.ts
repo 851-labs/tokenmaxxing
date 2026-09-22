@@ -1,6 +1,6 @@
 import type { ProfileDailyResponse } from "@tokenmaxxing/api-contract";
 
-import type { MonthPoint } from "../components/charts/month-bars";
+import type { MonthPoint } from "../../../components/charts/month-bars";
 import {
   bucketSeries,
   buildSegments,
@@ -8,14 +8,14 @@ import {
   seriesColors,
   type ChartSegment,
   type StackedSeriesChart,
-} from "../components/charts/series";
+} from "../../../components/charts/series";
 import {
   calendarYearEnd,
   calendarYearStart,
   enumerateDays,
   enumerateMonths,
   weekdayMondayFirst,
-} from "./dates";
+} from "../../../lib/dates";
 
 /** Pure view-model for the profile dashboard's charts. */
 

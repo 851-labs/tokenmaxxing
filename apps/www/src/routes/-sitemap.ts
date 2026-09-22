@@ -1,4 +1,4 @@
-import { siteUrl } from "./site";
+import { siteUrl } from "../lib/site";
 
 /** Public, indexable pages. Signed-in, internal, and OG-card routes stay out. */
 const STATIC_SITEMAP_PATHS = ["/", "/stats", "/privacy", "/terms"] as const;

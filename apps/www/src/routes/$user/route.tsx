@@ -4,19 +4,19 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import type { ProfileResponse } from "@tokenmaxxing/api-contract";
 
-import { Heatmap } from "../components/charts/heatmap";
-import { MonthBars } from "../components/charts/month-bars";
-import { StackedChartPanel } from "../components/charts/stacked-bars";
-import { WeekdayBars } from "../components/charts/weekday-bars";
-import { StatCard } from "../components/stat-card";
-import { Avatar } from "../components/ui/avatar";
-import { Button } from "../components/ui/button";
-import { Card } from "../components/ui/card";
-import { Code } from "../components/ui/code";
-import { useCopyToClipboard } from "../hooks/use-copy-to-clipboard";
-import { isApiError } from "../lib/api";
-import { formatInteger, formatTokens, formatUsd } from "../lib/format";
-import { breadcrumbSchema, profilePageSchema } from "../lib/jsonld";
+import { Heatmap } from "../../components/charts/heatmap";
+import { MonthBars } from "../../components/charts/month-bars";
+import { StackedChartPanel } from "../../components/charts/stacked-bars";
+import { WeekdayBars } from "../../components/charts/weekday-bars";
+import { StatCard } from "../../components/stat-card";
+import { Avatar } from "../../components/ui/avatar";
+import { Button } from "../../components/ui/button";
+import { Card } from "../../components/ui/card";
+import { Code } from "../../components/ui/code";
+import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
+import { isApiError } from "../../lib/api";
+import { formatInteger, formatTokens, formatUsd } from "../../lib/format";
+import { breadcrumbSchema, profilePageSchema } from "../../lib/jsonld";
 import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_WIDTH,
@@ -24,10 +24,10 @@ import {
   profileOgImageUrl,
   profileOgTitle,
   profileUrl,
-} from "../lib/og";
-import { deriveProfileCharts, type DailyRange, type DailyRow } from "../lib/profile-charts";
-import { profileDailyQueryOptions, profileQueryOptions } from "../lib/queries";
-import { pageHead } from "../lib/seo";
+} from "../../lib/og";
+import { deriveProfileCharts, type DailyRange, type DailyRow } from "./-lib/profile-charts";
+import { profileDailyQueryOptions, profileQueryOptions } from "../../lib/queries";
+import { pageHead } from "../../lib/seo";
 
 type ProfileStats = (typeof ProfileResponse.Type)["stats"];
 

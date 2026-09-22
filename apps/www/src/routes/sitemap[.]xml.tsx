@@ -3,7 +3,7 @@ import { LeaderboardResponse } from "@tokenmaxxing/api-contract";
 
 import { textResponse } from "../lib/http";
 import { fetchPublicJson } from "../lib/public-api";
-import { buildSitemapXml, STATIC_SITEMAP_PATHS, type SitemapEntry } from "../lib/sitemap";
+import { buildSitemapXml, STATIC_SITEMAP_PATHS, type SitemapEntry } from "./-sitemap";
 
 type Leaderboard = typeof LeaderboardResponse.Type;
 
