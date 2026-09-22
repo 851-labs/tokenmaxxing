@@ -91,4 +91,4 @@ const makeTokensService = Effect.fn("makeTokensService")(function* () {
 
 export { makeTokensService, TokensRepository, TokensService };
 
-export type { TokensRepositoryShape };
+export type { TokensRepositoryShape, TokensServiceShape };

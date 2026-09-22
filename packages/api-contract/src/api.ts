@@ -13,7 +13,7 @@ import {
   TokenNotFound,
   UserNotFound,
 } from "./errors";
-import { Authorization, CliAuth } from "./middleware";
+import { AllowCliToken, Authorization, CliAuth } from "./middleware";
 import {
   AdminUsersResponse,
   CliLoginApproveInput,
@@ -59,9 +59,10 @@ class HealthGroup extends HttpApiGroup.make("health").add(
 
 class MeGroup extends HttpApiGroup.make("me")
   .add(
+    // The CLI's whoami/auth check; the only session endpoint a CLI token may call.
     HttpApiEndpoint.get("me", "/me", {
       success: MeResponse,
-    }),
+    }).annotate(AllowCliToken, true),
   )
   .add(
     HttpApiEndpoint.get("listAccounts", "/me/accounts", {
