@@ -1,16 +1,25 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { formatDateRange, formatRangeDate } from "../../lib/chart-range";
 import { ChartGrid } from "./axis";
-import { barLayout, CHART_AXIS, CHART_WIDTH, formatDay, linearScale, niceMax } from "./scale";
+import {
+  CHART_AXIS,
+  CHART_WIDTH,
+  formatDay,
+  linearScale,
+  niceMax,
+  stackedBarLayout,
+} from "./scale";
 import { anchorBesideBar, ChartTooltip } from "./tooltip";
 
 /**
- * Daily metric, one bar per day stacked by model. Hover reveals the
+ * Metric totals, one bar per time bucket stacked by model. Hover reveals the
  * per-series breakdown.
  */
 
 interface StackedDay {
   date: string;
+  endDate?: string;
   /** series -> metric value, series pre-sorted by overall rank. */
   segments: { color: string; series: string; value: number }[];
   total: number;
@@ -38,19 +47,33 @@ function StackedBars({
   valueFormatter: ValueFormatter;
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [renderedWidth, setRenderedWidth] = useState(CHART_WIDTH);
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (svg === null) return;
+    const measure = () => setRenderedWidth(svg.getBoundingClientRect().width);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(svg);
+    return () => observer.disconnect();
+  }, []);
 
   const max = useMemo(
     () => (mode === "share" ? PERCENT_MAX : niceMax(Math.max(...days.map((day) => day.total), 0))),
     [days, mode],
   );
   const y = linearScale(max, PLOT_HEIGHT);
-  const { barWidth, slot } = barLayout(days.length, 0.72, 16, 1.25);
+  const { barWidth, slot } = stackedBarLayout(days.length, renderedWidth);
   const axisFormatter = mode === "share" ? formatPercentAxis : valueFormatter;
 
   const monthStarts = useMemo(
     () =>
       days.flatMap((day, index) =>
-        day.date.endsWith("-01") || index === 0 ? [{ date: day.date, index }] : [],
+        day.date.slice(0, 7) !== days[index - 1]?.date.slice(0, 7)
+          ? [{ date: day.date, index }]
+          : [],
       ),
     [days],
   );
@@ -74,6 +97,7 @@ function StackedBars({
         aria-label={ariaLabel}
         className="block w-full select-none"
         onPointerLeave={() => setHovered(null)}
+        ref={svgRef}
         role="img"
         viewBox={`0 0 ${CHART_WIDTH} ${HEIGHT + 24}`}
       >
@@ -119,18 +143,35 @@ function StackedBars({
           );
         })}
 
-        {monthStarts.map(({ date, index }) => (
-          <text
-            className="fill-current opacity-45"
-            fontSize={10}
-            key={date}
-            textAnchor="middle"
-            x={CHART_AXIS + slot * index + slot / 2}
-            y={HEIGHT + 16}
-          >
-            {formatDay(date).split(" ")[1]}
-          </text>
-        ))}
+        {days[0]?.endDate !== undefined ? (
+          <>
+            <text className="fill-current opacity-45" fontSize={10} x={CHART_AXIS} y={HEIGHT + 16}>
+              {formatRangeDate(days[0].date)}
+            </text>
+            <text
+              className="fill-current opacity-45"
+              fontSize={10}
+              textAnchor="end"
+              x={CHART_WIDTH}
+              y={HEIGHT + 16}
+            >
+              {formatRangeDate(days.at(-1)!.endDate!)}
+            </text>
+          </>
+        ) : (
+          monthStarts.map(({ date, index }) => (
+            <text
+              className="fill-current opacity-45"
+              fontSize={10}
+              key={date}
+              textAnchor="middle"
+              x={CHART_AXIS + slot * index + slot / 2}
+              y={HEIGHT + 16}
+            >
+              {formatDay(date).split(" ")[1]}
+            </text>
+          ))
+        )}
       </svg>
 
       {active !== null && active !== undefined && activePosition !== null ? (
@@ -149,7 +190,11 @@ function StackedBars({
             }))}
           style={{ left: anchorBesideBar(activePosition.center, activePosition.edge), top: "50%" }}
           subtitle={`${valueFormatter(active.total)} total`}
-          title={formatDay(active.date)}
+          title={
+            active.endDate === undefined
+              ? formatDay(active.date)
+              : formatDateRange(active.date, active.endDate)
+          }
         />
       ) : null}
     </div>

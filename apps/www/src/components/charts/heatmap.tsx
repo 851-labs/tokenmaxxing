@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 
+import { weekdayIndex, type DateRange } from "../../lib/chart-range";
 import { enumerateDays, formatDay, formatUsd } from "./scale";
 import { ChartTooltip } from "./tooltip";
 
@@ -9,6 +10,7 @@ import { ChartTooltip } from "./tooltip";
  */
 
 interface HeatmapProps {
+  activeRange?: DateRange;
   /** date -> spend */
   byDate: Map<string, number>;
   first: string;
@@ -31,14 +33,14 @@ const TOP = 16;
 /** Fixed green tint; rendered at varying opacity by intensity. */
 const ACCENT = "#22c55e";
 
-function Heatmap({ byDate, first, last, segmentsByDate }: HeatmapProps) {
+function Heatmap({ activeRange, byDate, first, last, segmentsByDate }: HeatmapProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<HoveredCell | null>(null);
 
   const { cells, max, monthLabels, weeks } = useMemo(() => {
     const allDays = enumerateDays(first, last);
     // Pad so the first column starts on Sunday (UTC day-of-week).
-    const firstDow = new Date(`${first}T00:00:00Z`).getUTCDay();
+    const firstDow = (weekdayIndex(first) + 1) % 7;
     const padded: (string | null)[] = [...Array.from({ length: firstDow }, () => null), ...allDays];
     const weekCount = Math.ceil(padded.length / 7);
     const grid = Array.from({ length: weekCount }, (_, week) =>
@@ -119,6 +121,8 @@ function Heatmap({ byDate, first, last, segmentsByDate }: HeatmapProps) {
                 return null;
               }
               const value = byDate.get(day) ?? 0;
+              const outsideRange =
+                activeRange !== undefined && (day < activeRange.first || day > activeRange.last);
               const level = intensity(value);
               const cx = LEFT + week * (CELL + GAP);
               const cy = TOP + dow * (CELL + GAP);
@@ -128,6 +132,10 @@ function Heatmap({ byDate, first, last, segmentsByDate }: HeatmapProps) {
                   height={CELL}
                   key={day}
                   onPointerEnter={(event) => {
+                    if (outsideRange) {
+                      setHovered(null);
+                      return;
+                    }
                     const rootRect = rootRef.current?.getBoundingClientRect();
                     if (rootRect === undefined) {
                       return;
@@ -140,7 +148,7 @@ function Heatmap({ byDate, first, last, segmentsByDate }: HeatmapProps) {
                       value,
                     });
                   }}
-                  opacity={level === 0 ? 0.08 : opacities[level]}
+                  opacity={outsideRange ? 0.025 : level === 0 ? 0.08 : opacities[level]}
                   width={CELL}
                   x={cx}
                   y={cy}

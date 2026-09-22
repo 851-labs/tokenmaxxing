@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { selectModelSeries } from "./scale";
+import { CHART_WIDTH, selectModelSeries, stackedBarLayout } from "./scale";
+
+describe("stackedBarLayout", () => {
+  it.each([320, 720, 1100])("keeps a 2–3px gutter at a rendered width of %i", (width) => {
+    for (const count of [14, 30, 46, 54, 60, 61]) {
+      const { barWidth, slot } = stackedBarLayout(count, width);
+      const gapPixels = ((slot - barWidth) * width) / CHART_WIDTH;
+      expect(gapPixels).toBeGreaterThanOrEqual(2 - 1e-10);
+      expect(gapPixels).toBeLessThan(3);
+    }
+  });
+
+  it("fills large slots without the old width cap and fits crowded charts", () => {
+    expect(stackedBarLayout(9, 940).barWidth).toBeGreaterThan(64);
+    const crowded = stackedBarLayout(365, 320);
+    expect(crowded.barWidth).toBeGreaterThan(0);
+    expect(crowded.barWidth).toBeLessThanOrEqual(crowded.slot);
+  });
+});
 
 describe("selectModelSeries", () => {
   it("keeps raw model names when they fit within the limit", () => {

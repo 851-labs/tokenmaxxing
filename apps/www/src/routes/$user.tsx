@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, notFound } from "@tanstack/react-router";
+import { createFileRoute, notFound, stripSearchParams } from "@tanstack/react-router";
 import type { ProfileDailyResponse, ProfileDailyRow } from "@tokenmaxxing/api-contract";
+import { z } from "zod";
 
 type DailyRow = typeof ProfileDailyRow.Type;
 type DailyRange = (typeof ProfileDailyResponse.Type)["range"];
@@ -19,11 +20,21 @@ import {
 import { Legend, StackedBars, type StackedDay } from "../components/charts/stacked-bars";
 import { WeekdayBars } from "../components/charts/weekday-bars";
 import { StatCard } from "../components/stat-card";
+import { TimeRangeSelect } from "../components/time-range-select";
 import { Avatar } from "../components/ui/avatar";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Code } from "../components/ui/code";
 import { isApiError } from "../lib/api";
+import {
+  chartBuckets,
+  chartRange,
+  formatDateRange,
+  TIME_RANGE_VALUES,
+  weekdayIndex,
+  type DateRange,
+  type TimeRange,
+} from "../lib/chart-range";
 import { breadcrumbSchema, profilePageSchema } from "../lib/jsonld";
 import {
   OG_IMAGE_HEIGHT,
@@ -35,7 +46,15 @@ import {
 } from "../lib/og";
 import { profileDailyQueryOptions, profileQueryOptions } from "../lib/queries";
 
+const profileSearchSchema = z.object({
+  range: z.enum(TIME_RANGE_VALUES).default("3m").catch("3m"),
+});
+
 const Route = createFileRoute("/$user")({
+  validateSearch: profileSearchSchema,
+  search: {
+    middlewares: [stripSearchParams({ range: "3m" })],
+  },
   loader: async ({ context, params }) => {
     try {
       const [profile, daily] = await Promise.all([
@@ -100,6 +119,8 @@ function formatCount(value: number): string {
 
 function ProfilePage() {
   const { user } = Route.useParams();
+  const { range: timeRange } = Route.useSearch();
+  const navigate = Route.useNavigate();
   const { data: profile } = useSuspenseQuery(profileQueryOptions(user));
   const { data: daily } = useSuspenseQuery(profileDailyQueryOptions(user));
   const { stats } = profile;
@@ -122,7 +143,15 @@ function ProfilePage() {
           </Card>
         </div>
       ) : (
-        <ProfileDashboard range={daily.range} rows={daily.days} stats={stats} />
+        <ProfileDashboard
+          onRangeChange={(range) =>
+            void navigate({ search: { range }, resetScroll: false, replace: true })
+          }
+          range={daily.range}
+          rows={daily.days}
+          stats={stats}
+          timeRange={timeRange}
+        />
       )}
     </>
   );
@@ -175,15 +204,27 @@ interface DashboardStats {
 }
 
 function ProfileDashboard({
+  onRangeChange,
   range,
   rows,
   stats,
+  timeRange,
 }: {
+  onRangeChange: (value: TimeRange) => void;
   range: DailyRange;
   rows: readonly DailyRow[];
   stats: DashboardStats;
+  timeRange: TimeRange;
 }) {
-  const derived = useMemo(() => deriveCharts(rows, range), [range, rows]);
+  const selected = useMemo(
+    () => chartRange(timeRange, range.last, stats.firstDate),
+    [timeRange, range.last, stats.firstDate],
+  );
+  const derived = useMemo(
+    () => deriveCharts(rows, selected.range, selected.bucketDays),
+    [selected, rows],
+  );
+  const bucketLabel = selected.bucketDays === 1 ? "Daily" : `${selected.bucketDays}-day`;
   const [hoveredSpendSeries, setHoveredSpendSeries] = useState<string | null>(null);
   const [hoveredTokensSeries, setHoveredTokensSeries] = useState<string | null>(null);
 
@@ -206,14 +247,38 @@ function ProfileDashboard({
         />
       </div>
 
+      <section
+        aria-label="Chart time range"
+        className="flex flex-wrap items-center justify-between gap-3 bg-background px-5 py-4"
+      >
+        <div>
+          <h2 className="text-sm font-medium">Usage over time</h2>
+          <p aria-live="polite" className="mt-1 text-xs text-muted-foreground">
+            {formatDateRange(selected.range.first, selected.range.last)}
+            <span aria-hidden className="px-2">
+              ·
+            </span>
+            {bucketLabel} totals
+          </p>
+        </div>
+        <TimeRangeSelect onChange={onRangeChange} value={timeRange} />
+      </section>
+
+      {derived.spendLegend.length === 0 ? (
+        <p className="bg-background px-5 py-4 text-sm text-muted-foreground">
+          No usage in this period. Try a longer time range.
+        </p>
+      ) : null}
+
       <section className="bg-background p-5">
-        <h2 className="font-medium">Daily Spend</h2>
+        <h2 className="font-medium">Spend</h2>
         <div className="mt-4 flex flex-col gap-6 lg:flex-row lg:items-center">
           <div className="min-w-0 flex-1">
             <StackedBars
-              ariaLabel={`Daily spend by model across ${derived.spendDays.length} days`}
+              ariaLabel={`${bucketLabel} spend by model across ${derived.spendDays.length} buckets`}
               days={derived.spendDays}
               highlight={hoveredSpendSeries}
+              key={timeRange}
               valueFormatter={formatUsd}
             />
           </div>
@@ -222,13 +287,14 @@ function ProfileDashboard({
       </section>
 
       <section className="bg-background p-5">
-        <h2 className="font-medium">Daily Tokens</h2>
+        <h2 className="font-medium">Tokens</h2>
         <div className="mt-4 flex flex-col gap-6 lg:flex-row lg:items-center">
           <div className="min-w-0 flex-1">
             <StackedBars
-              ariaLabel={`Daily tokens by model across ${derived.tokenDays.length} days`}
+              ariaLabel={`${bucketLabel} tokens by model across ${derived.tokenDays.length} buckets`}
               days={derived.tokenDays}
               highlight={hoveredTokensSeries}
+              key={timeRange}
               valueFormatter={formatTokens}
             />
           </div>
@@ -241,6 +307,7 @@ function ProfileDashboard({
         <div className="mt-4">
           {derived.heatmap !== null ? (
             <Heatmap
+              activeRange={selected.range}
               byDate={derived.spendByDate}
               first={derived.heatmap.first}
               last={derived.heatmap.last}
@@ -267,8 +334,9 @@ function ProfileDashboard({
   );
 }
 
-function deriveCharts(rows: readonly DailyRow[], range: DailyRange) {
-  const colors = seriesColors(rows);
+function deriveCharts(allRows: readonly DailyRow[], range: DailyRange, bucketDays = 1) {
+  const rows = allRows.filter((row) => row.date >= range.first && row.date <= range.last);
+  const colors = seriesColors(allRows);
   const spendSelection = selectModelSeries(rows, (row) => row.costUsd);
   const tokenSelection = selectModelSeries(rows, (row) => row.totalTokens);
 
@@ -286,8 +354,7 @@ function deriveCharts(rows: readonly DailyRow[], range: DailyRange) {
     outputTokens += row.outputTokens;
     spendByDate.set(row.date, (spendByDate.get(row.date) ?? 0) + row.costUsd);
     tokenByDate.set(row.date, (tokenByDate.get(row.date) ?? 0) + row.totalTokens);
-    // getUTCDay() is Sunday-first; shift to Monday-first. UTC avoids tz drift.
-    const weekday = (new Date(`${row.date}T00:00:00Z`).getUTCDay() + 6) % 7;
+    const weekday = weekdayIndex(row.date);
     spendByWeekday[weekday] = (spendByWeekday[weekday] ?? 0) + row.costUsd;
     const spendModel = spendSelection.label(row.key);
     const spendSeries = spendSeriesByDate.get(row.date) ?? new Map<string, number>();
@@ -305,9 +372,9 @@ function deriveCharts(rows: readonly DailyRow[], range: DailyRange) {
     seriesByMonth.set(month, monthSeries);
   }
 
-  const allDays = enumerateDays(range.first, range.last);
+  const buckets = chartBuckets(range, bucketDays);
   const heatmapRange = {
-    first: calendarYearStart(range.last),
+    first: calendarYearStart(range.first),
     last: calendarYearEnd(range.last),
   };
 
@@ -322,16 +389,15 @@ function deriveCharts(rows: readonly DailyRow[], range: DailyRange) {
     ]),
   );
 
-  const chartedDays = allDays;
   const spendDays = buildStackedDays(
-    chartedDays,
+    buckets,
     spendSelection.order,
     colors,
     spendSeriesByDate,
     spendByDate,
   );
   const tokenDays = buildStackedDays(
-    chartedDays,
+    buckets,
     tokenSelection.order,
     colors,
     tokenSeriesByDate,
@@ -363,22 +429,30 @@ function deriveCharts(rows: readonly DailyRow[], range: DailyRange) {
 }
 
 function buildStackedDays(
-  days: readonly string[],
+  buckets: readonly DateRange[],
   seriesOrder: readonly string[],
   colors: ReadonlyMap<string, string>,
   seriesByDate: ReadonlyMap<string, ReadonlyMap<string, number>>,
   totalsByDate: ReadonlyMap<string, number>,
 ): StackedDay[] {
-  return days.map((date) => {
-    const seriesValues = seriesByDate.get(date);
+  return buckets.map(({ first, last }) => {
+    const seriesValues = new Map<string, number>();
+    let total = 0;
+    for (const date of enumerateDays(first, last)) {
+      total += totalsByDate.get(date) ?? 0;
+      for (const [series, value] of seriesByDate.get(date) ?? []) {
+        seriesValues.set(series, (seriesValues.get(series) ?? 0) + value);
+      }
+    }
     return {
-      date,
+      date: first,
+      endDate: last,
       segments: seriesOrder.map((series) => ({
         color: colors.get(series) ?? "#9ca3af",
         series,
         value: seriesValues?.get(series) ?? 0,
       })),
-      total: totalsByDate.get(date) ?? 0,
+      total,
     };
   });
 }
@@ -406,15 +480,7 @@ function buildLegend(days: readonly StackedDay[], colors: ReadonlyMap<string, st
 }
 
 function enumerateCalendarMonths(first: string, last: string): string[] {
-  const out: string[] = [];
-  const cursor = new Date(`${first.slice(0, 7)}-01T00:00:00Z`);
-  const end = new Date(`${last.slice(0, 7)}-01T00:00:00Z`);
-  while (cursor.getTime() <= end.getTime()) {
-    out.push(cursor.toISOString().slice(0, 7));
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-  }
-
-  return out;
+  return [...new Set(enumerateDays(first, last).map((date) => date.slice(0, 7)))];
 }
 
 function calendarYearStart(date: string): string {
