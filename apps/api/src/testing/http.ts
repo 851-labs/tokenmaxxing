@@ -13,11 +13,13 @@ import { ProfilesService } from "../profiles/service";
 import { StatsService } from "../stats/service";
 import { TokensService } from "../tokens/service";
 import { UsageService } from "../usage/service";
+import { makeTestLogger, type TestLogger } from "./logger";
 
 /**
  * The production HTTP stack (router, real middlewares, CORS, defect
  * recovery) over stub domain services. Methods a test does not stub die, so
- * an unexpected call surfaces as a 500 instead of silently passing.
+ * an unexpected call surfaces as a 500 instead of silently passing. Logs are
+ * captured in `logs` (and replayed if the test fails) instead of printed.
  */
 
 interface TestAppServices {
@@ -34,6 +36,7 @@ interface TestAppServices {
 interface TestApp {
   close(): Promise<void>;
   fetch(request: Request): Promise<Response>;
+  readonly logs: TestLogger;
 }
 
 const TEST_CORS_ORIGIN = "https://tokenmaxxing.sh";
@@ -73,6 +76,7 @@ async function makeTestApp(services: TestAppServices = {}): Promise<TestApp> {
     Context.add(UsageService, usage),
   );
 
+  const logs = makeTestLogger();
   const scope = Effect.runSync(Scope.make());
   const httpEffect = await Effect.runPromise(
     makeApiHttpEffect(Layer.succeedContext(context)).pipe(
@@ -94,8 +98,10 @@ async function makeTestApp(services: TestAppServices = {}): Promise<TestApp> {
           ),
           Effect.scoped,
           Effect.map((response) => HttpServerResponse.toWeb(response)),
+          Effect.provide(logs.layer),
         ) as Effect.Effect<Response>,
       ),
+    logs,
   };
 }
 

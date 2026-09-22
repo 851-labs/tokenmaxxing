@@ -165,15 +165,17 @@ describe("API HTTP responses", () => {
   });
 
   describe("defect recovery", () => {
-    it("answers an unexpected defect with an opaque 500", async () => {
-      app = await makeTestApp({
-        stats: { getStats: () => Effect.die(new Error("D1 exploded: secret-table")) },
-      });
+    it("answers an unexpected defect with an opaque 500 and logs it", async () => {
+      const defect = new Error("D1 exploded: secret-table");
+      app = await makeTestApp({ stats: { getStats: () => Effect.die(defect) } });
 
       const response = await app.fetch(new Request("https://api.tokenmaxxing.sh/stats"));
 
       expect(response.status).toBe(500);
       expect(await response.text()).toBe("");
+      expect(app.logs.entries).toEqual([
+        expect.objectContaining({ args: [defect], level: "Error", message: "request died" }),
+      ]);
     });
 
     it("keeps schema decode failures as 400s", async () => {
@@ -184,6 +186,7 @@ describe("API HTTP responses", () => {
       );
 
       expect(response.status).toBe(400);
+      expect(app.logs.entries).toEqual([]);
     });
   });
 
