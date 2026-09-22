@@ -1,7 +1,4 @@
-import { Context } from "effect";
-import { Effect } from "effect";
-import { Layer } from "effect";
-import { Option } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
 import { HttpServerRequest } from "effect/unstable/http";
 
 import {
@@ -11,10 +8,10 @@ import {
   Unauthorized,
 } from "@tokenmaxxing/api-contract";
 
-import { CLI_TOKEN_PREFIX } from "../../auth/crypto";
 import { sessionTokenFrom } from "../../auth/cookies";
-import { AuthService, type CurrentUser as AuthUser } from "../../auth/service";
-import { TokensService } from "../../tokens/service";
+import type { AuthService } from "../../auth/service";
+import type { TokensService } from "../../tokens/service";
+import { resolveViewer } from "../viewer";
 
 /**
  * Request authentication for the session-guarded contract groups: the
@@ -33,36 +30,14 @@ import { TokensService } from "../../tokens/service";
 const AuthorizationLive = Layer.effect(
   Authorization,
   Effect.gen(function* () {
-    const auth = yield* AuthService;
-    const tokens = yield* TokensService;
-
-    const resolve = Effect.fn("Authorization.resolve")(function* (
-      token: string,
-      allowCliToken: boolean,
-    ) {
-      if (token.startsWith(CLI_TOKEN_PREFIX)) {
-        if (!allowCliToken) {
-          return Option.none<AuthUser>();
-        }
-
-        const identity = yield* tokens.resolveCliToken(token);
-        return Option.map(identity, ({ user }) => user);
-      }
-
-      return yield* auth.resolveSession(token);
-    });
+    const services = yield* Effect.context<AuthService | TokensService>();
 
     return Authorization.of((httpEffect, { endpoint }) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const token = sessionTokenFrom(request);
-        const allowCliToken = Context.get(endpoint.annotations, AllowCliToken);
-        const user =
-          token === null
-            ? Option.none<AuthUser>()
-            : yield* resolve(token, allowCliToken).pipe(
-                Effect.catchCause(() => Effect.succeedNone),
-              );
+        const user = yield* resolveViewer(sessionTokenFrom(request), {
+          allowCliToken: Context.get(endpoint.annotations, AllowCliToken),
+        }).pipe(Effect.provideContext(services));
         if (Option.isNone(user)) {
           return yield* Effect.fail(new Unauthorized({ message: "Sign in required." }));
         }

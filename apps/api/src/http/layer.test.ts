@@ -2,25 +2,27 @@ import * as Http from "alchemy/Http";
 import { Context, Effect, Layer, Scope } from "effect";
 import * as FileSystem from "effect/FileSystem";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { UserNotFound } from "@tokenmaxxing/api-contract";
 
 import { AdminService } from "../admin/service";
 import { SESSION_COOKIE } from "../auth/cookies";
+import { sha256Hex } from "../auth/crypto";
 import { AuthService } from "../auth/service";
 import { CliLoginService } from "../clilogin/service";
 import { AppConfig, type AppConfigShape } from "../config";
-import { Drizzle } from "../database";
 import { LeaderboardService } from "../leaderboard/service";
+import { OAuthProviders } from "../oauth/registry";
 import { ProfilesService } from "../profiles/service";
+import { ServicesLive } from "../services";
 import { StatsService } from "../stats/service";
 import { makeTestApp, TEST_CORS_ORIGIN, type TestApp } from "../testing/http";
+import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
 import { TokensService } from "../tokens/service";
+import { RawUsageObjectStore } from "../usage/raw-store";
 import { UsageService } from "../usage/service";
 import { makeApiFetch, makeApiHttpEffect } from "./layer";
-import { AuthorizationLive } from "./middleware/authorization";
-import { CliAuthLive } from "./middleware/cli-auth";
 
 const config: AppConfigShape = {
   apiWorkerName: "tokenmaxxing-api",
@@ -28,17 +30,12 @@ const config: AppConfigShape = {
   github: { clientId: "github-id", clientSecret: "github-secret" },
   google: { clientId: "google-id", clientSecret: "google-secret" },
   productName: "Tokenmaxxing",
-  urls: {
-    apiUrl: "https://api.tokenmaxxing.sh",
-    sandbox: "production",
-    wwwUrl: "https://tokenmaxxing.sh",
-  },
 };
 
 describe("api router construction", () => {
   it("builds the layer graph once and reuses it across requests", async () => {
     const harness = makeHarness();
-    const fetch = await buildFetch(harness);
+    const fetch = await buildFetch(harness.services);
 
     expect(harness.builds()).toBe(1);
 
@@ -58,8 +55,7 @@ describe("api router construction", () => {
   it("documents the regression: an Effect-valued fetch rebuilds per request", async () => {
     const harness = makeHarness();
     // The previous worker wiring: alchemy re-runs this outer Effect per hit.
-    const fetch = makeApiHttpEffect(harness.options).pipe(
-      Effect.map((httpEffect) => httpEffect.pipe(Effect.provide(harness.requestServices))),
+    const fetch = makeApiHttpEffect(harness.services).pipe(
       Effect.provide(FileSystem.layerNoop({})),
     );
 
@@ -73,7 +69,7 @@ describe("api router construction", () => {
 
 describe("api cache headers", () => {
   it("marks viewer-independent public reads as shared-cacheable", async () => {
-    const fetch = await buildFetch(makeHarness());
+    const fetch = await buildFetch(makeHarness().services);
 
     const leaderboard = await serve(fetch, apiRequest("/leaderboard"));
     const identity = await serve(fetch, apiRequest("/profiles/visible/identity"));
@@ -89,7 +85,7 @@ describe("api cache headers", () => {
   });
 
   it("never marks failures or credentialed profile reads as shareable", async () => {
-    const fetch = await buildFetch(makeHarness());
+    const fetch = await buildFetch(makeHarness().services);
 
     const missing = await serve(fetch, apiRequest("/profiles/missing/identity"));
     const anonymous = await serve(fetch, apiRequest("/profiles/visible/daily"));
@@ -202,6 +198,95 @@ describe("API HTTP responses", () => {
   });
 });
 
+/**
+ * Wiring smoke test: the real ServicesLive over a migrated in-memory D1,
+ * served through the same build-once path the worker uses.
+ */
+describe("api wiring over real services", () => {
+  let database: TestDatabase;
+  let fetch: Effect.Effect<unknown, unknown, any>;
+
+  beforeEach(async () => {
+    database = makeTestDatabase();
+    database.sqlite.exec(
+      "insert into users (id, login, created_at, updated_at) values ('user_1', 'alex', 0, 0);",
+    );
+    fetch = await buildFetch(
+      ServicesLive.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            Layer.succeed(AppConfig, config),
+            database.drizzleLayer,
+            RawUsageObjectStore.layer({ delete: () => Effect.void, put: () => Effect.void }),
+          ),
+        ),
+      ),
+    );
+  });
+
+  afterEach(() => database.sqlite.close());
+
+  it("guards session endpoints and resolves the session cookie", async () => {
+    const anonymous = await serve(fetch, apiRequest("/me"));
+    expect(anonymous.status).toBe(401);
+
+    const token = "session-token";
+    database.sqlite
+      .prepare("insert into sessions (id, user_id, expires_at, created_at) values (?, ?, ?, 0)")
+      .run(await Effect.runPromise(sha256Hex(token)), "user_1", Date.now() + 60_000);
+
+    const signedIn = await serve(
+      fetch,
+      apiRequest("/me", { cookie: `${SESSION_COOKIE}=${token}` }),
+    );
+    expect(signedIn.status).toBe(200);
+    expect(await signedIn.json()).toEqual({
+      user: { avatarUrl: null, id: "user_1", login: "alex", name: null },
+    });
+  });
+
+  it("serves raw OAuth routes from the provider registry", async () => {
+    for (const [provider, host] of [
+      ["github", "github.com"],
+      ["google", "accounts.google.com"],
+    ] as const) {
+      const response = await serve(fetch, apiRequest(`/auth/${provider}/start?redirect=/settings`));
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get("location") ?? "");
+      expect(location.host).toBe(host);
+      expect(location.searchParams.get("client_id")).toBe(`${provider}-id`);
+      expect(location.searchParams.get("redirect_uri")).toBe(
+        `https://api.tokenmaxxing.sh/auth/${provider}/callback`,
+      );
+      expect(location.searchParams.get("code_challenge_method")).toBe("S256");
+    }
+  });
+
+  it("redirects OAuth callbacks whose state does not match to www login", async () => {
+    const response = await serve(fetch, apiRequest("/auth/github/callback?code=c&state=s"));
+    const location = new URL(response.headers.get("location") ?? "");
+
+    expect(response.status).toBe(302);
+    expect(location.pathname).toBe("/login");
+    expect(location.searchParams.get("error")).toBe("oauth_state_mismatch");
+  });
+
+  it("clears the session cookie on sign-out", async () => {
+    const response = await serve(
+      fetch,
+      new Request("https://api.tokenmaxxing.sh/auth/signout", {
+        headers: { cookie: `${SESSION_COOKIE}=unknown`, host: "api.tokenmaxxing.sh" },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toContain(`${SESSION_COOKIE}=;`);
+  });
+});
+
+/** Stub services; AppConfig counts how often the router graph is built. */
 function makeHarness() {
   let builds = 0;
   const appConfigLayer = Layer.effect(
@@ -211,11 +296,6 @@ function makeHarness() {
       return config;
     }),
   );
-  const auth = AuthService.of({
-    ...stub(AuthService),
-    resolveSession: () => Effect.succeedNone,
-  });
-  const leaderboard = LeaderboardService.of({ list: () => Effect.succeed([]) });
   const profiles = ProfilesService.of({
     getDaily: () =>
       Effect.succeed({ days: [], range: { first: "2026-01-01", last: "2026-09-22" } }),
@@ -225,36 +305,30 @@ function makeHarness() {
         : Effect.fail(new UserNotFound({ login })),
     getProfile: () => Effect.die("unused"),
   });
-  const tokens = stub(TokensService);
 
   return {
     builds: () => builds,
-    options: {
-      adminServiceLayer: Layer.succeed(AdminService, stub(AdminService)),
+    services: Layer.mergeAll(
       appConfigLayer,
-      authServiceLayer: Layer.succeed(AuthService, auth),
-      cliLoginServiceLayer: Layer.succeed(CliLoginService, stub(CliLoginService)),
-      drizzleLayer: Layer.succeed(Drizzle, stub(Drizzle)),
-      leaderboardServiceLayer: Layer.succeed(LeaderboardService, leaderboard),
-      middlewareLayer: Layer.mergeAll(AuthorizationLive, CliAuthLive),
-      profilesServiceLayer: Layer.succeed(ProfilesService, profiles),
-      statsServiceLayer: Layer.succeed(StatsService, stub(StatsService)),
-      tokensServiceLayer: Layer.succeed(TokensService, tokens),
-      usageServiceLayer: Layer.succeed(UsageService, stub(UsageService)),
-    },
-    requestServices: Context.empty().pipe(
-      Context.add(AppConfig, config),
-      Context.add(AuthService, auth),
-      Context.add(LeaderboardService, leaderboard),
-      Context.add(ProfilesService, profiles),
-      Context.add(TokensService, tokens),
+      Layer.succeed(AdminService, stub(AdminService)),
+      Layer.succeed(
+        AuthService,
+        AuthService.of({ ...stub(AuthService), resolveSession: () => Effect.succeedNone }),
+      ),
+      Layer.succeed(CliLoginService, stub(CliLoginService)),
+      Layer.succeed(LeaderboardService, LeaderboardService.of({ list: () => Effect.succeed([]) })),
+      Layer.succeed(OAuthProviders, stub(OAuthProviders)),
+      Layer.succeed(ProfilesService, profiles),
+      Layer.succeed(StatsService, stub(StatsService)),
+      Layer.succeed(TokensService, stub(TokensService)),
+      Layer.succeed(UsageService, stub(UsageService)),
     ),
   };
 }
 
-function buildFetch(harness: ReturnType<typeof makeHarness>) {
+function buildFetch(services: Parameters<typeof makeApiFetch>[0]) {
   return Effect.runPromise(
-    makeApiFetch(harness.options, harness.requestServices).pipe(
+    makeApiFetch(services).pipe(
       // Etag's layer wants a FileSystem; the worker gets one from alchemy's platform.
       Effect.provide(FileSystem.layerNoop({})),
     ),
@@ -262,7 +336,10 @@ function buildFetch(harness: ReturnType<typeof makeHarness>) {
 }
 
 function apiRequest(path: string, headers: Record<string, string> = {}): Request {
-  return new Request(`https://api.tokenmaxxing.sh${path}`, { headers });
+  return new Request(`https://api.tokenmaxxing.sh${path}`, {
+    headers: { host: "api.tokenmaxxing.sh", ...headers },
+    redirect: "manual",
+  });
 }
 
 /** Services (or methods) these requests never touch. */

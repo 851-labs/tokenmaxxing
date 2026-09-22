@@ -1,11 +1,10 @@
 import { devices, usageDays, usageRawBatches, usageSourceStats } from "@tokenmaxxing/db";
 import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
-import { Effect } from "effect";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 
 import { Drizzle } from "../database";
 import { RawUsageObjectStore } from "./raw-store";
-import { UsageRepository } from "./service";
+import { makeUsageService, UsageRepository, UsageService } from "./service";
 
 const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
   const database = yield* Drizzle;
@@ -256,6 +255,10 @@ const ID_LOOKUP_CHUNK_SIZE = 90;
 
 const UsageRepositoryLive = Layer.effect(UsageRepository, makeD1UsageRepository());
 
+const UsageServiceLive = Layer.effect(UsageService, makeUsageService()).pipe(
+  Layer.provide(UsageRepositoryLive),
+);
+
 function optionalDate(value: string | null | undefined): Date | null {
   if (value === undefined || value === null) {
     return null;
@@ -266,4 +269,4 @@ function optionalDate(value: string | null | undefined): Date | null {
   return Number.isFinite(date.getTime()) ? date : null;
 }
 
-export { UsageRepositoryLive };
+export { UsageRepositoryLive, UsageServiceLive };

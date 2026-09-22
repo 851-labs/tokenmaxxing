@@ -1,6 +1,4 @@
-import { Context } from "effect";
-import { Effect } from "effect";
-import { Option } from "effect";
+import { Context, Effect, Option } from "effect";
 
 import { DEFAULT_LEADERBOARD_WINDOW, UserNotFound } from "@tokenmaxxing/api-contract";
 import type {
@@ -31,16 +29,16 @@ interface DailyQuery {
 }
 
 interface ProfilesServiceShape {
-  getIdentity(login: string): Effect.Effect<typeof ProfileIdentityResponse.Type, UserNotFound, any>;
+  getIdentity(login: string): Effect.Effect<typeof ProfileIdentityResponse.Type, UserNotFound>;
   getProfile(
     login: string,
     viewerUserId: string | null,
-  ): Effect.Effect<typeof ProfileResponse.Type, UserNotFound, any>;
+  ): Effect.Effect<typeof ProfileResponse.Type, UserNotFound>;
   getDaily(
     login: string,
     query: DailyQuery,
     viewerUserId: string | null,
-  ): Effect.Effect<typeof ProfileDailyResponse.Type, UserNotFound, any>;
+  ): Effect.Effect<typeof ProfileDailyResponse.Type, UserNotFound>;
 }
 
 interface ProfileUser {
@@ -51,12 +49,12 @@ interface ProfileUser {
 type ProfileStatsWithoutRank = Omit<typeof ProfileStats.Type, "leaderboardRank">;
 
 interface ProfilesRepositoryShape {
-  findUserByLogin(login: string): Effect.Effect<Option.Option<ProfileUser>, DatabaseError, any>;
+  findUserByLogin(login: string): Effect.Effect<Option.Option<ProfileUser>, DatabaseError>;
   leaderboardRank(input: {
     since: string | null;
     until: string;
     userId: string;
-  }): Effect.Effect<number | null, DatabaseError, any>;
+  }): Effect.Effect<number | null, DatabaseError>;
   /**
    * Lifetime stats over days up to `until` (inclusive); `today` is the UTC
    * day key the current streak is measured against.
@@ -64,12 +62,12 @@ interface ProfilesRepositoryShape {
   stats(
     userId: string,
     window: { today: string; until: string },
-  ): Effect.Effect<ProfileStatsWithoutRank, DatabaseError, any>;
+  ): Effect.Effect<ProfileStatsWithoutRank, DatabaseError>;
   /** `query.until` is always set: the requested bound capped at the ingest ceiling. */
   daily(
     userId: string,
     query: DailyQuery & { until: string },
-  ): Effect.Effect<(typeof ProfileDailyRow.Type)[], DatabaseError, any>;
+  ): Effect.Effect<(typeof ProfileDailyRow.Type)[], DatabaseError>;
 }
 
 class ProfilesService extends Context.Service<ProfilesService, ProfilesServiceShape>()(

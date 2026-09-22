@@ -1,9 +1,9 @@
 import type { UsageDayInput } from "@tokenmaxxing/api-contract";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
-import { buildService, runTest } from "../testing/effect";
+import { buildService } from "../testing/effect";
 import { makeMemoryBucket, type MemoryBucket } from "../testing/r2";
 import { seedUsage } from "../testing/seed";
 import { UsageRepositoryLive } from "./d1";
@@ -51,7 +51,7 @@ describe("D1 usage repository", () => {
       seed("other-device", "2026-07-21", "codex", "other-device", 500);
 
       const repository = await makeRepository();
-      await runTest(
+      await Effect.runPromise(
         repository.pruneChunk(
           "device",
           [{ date: "2026-07-21", models: ["keep"], source: "codex" }],
@@ -98,7 +98,7 @@ describe("D1 usage repository", () => {
       });
 
       const repository = await makeRepository();
-      await runTest(
+      await Effect.runPromise(
         repository.pruneChunk(
           "device",
           [{ date: "2026-07-21", models: [], source: "codex" }],
@@ -120,9 +120,9 @@ describe("D1 usage repository", () => {
     it("is idempotent: syncing the same chunk twice leaves the same totals", async () => {
       const repository = await makeRepository();
 
-      await runTest(repository.upsertChunk("user", "device", rows, new Date(1_000)));
+      await Effect.runPromise(repository.upsertChunk("user", "device", rows, new Date(1_000)));
       const first = totals();
-      await runTest(repository.upsertChunk("user", "device", rows, new Date(2_000)));
+      await Effect.runPromise(repository.upsertChunk("user", "device", rows, new Date(2_000)));
 
       expect(totals()).toEqual(first);
       expect(first).toEqual({ costUsd: 4.5, rowCount: 3, totalTokens: 350 });
@@ -132,8 +132,8 @@ describe("D1 usage repository", () => {
     it("replaces a key's values with the latest sync (last write wins)", async () => {
       const repository = await makeRepository();
 
-      await runTest(repository.upsertChunk("user", "device", rows, new Date(1_000)));
-      await runTest(
+      await Effect.runPromise(repository.upsertChunk("user", "device", rows, new Date(1_000)));
+      await Effect.runPromise(
         repository.upsertChunk(
           "user",
           "device",
@@ -148,8 +148,8 @@ describe("D1 usage repository", () => {
     it("reassigns the row to the uploading user on conflict", async () => {
       const repository = await makeRepository();
 
-      await runTest(repository.upsertChunk("old-owner", "device", rows, new Date(1_000)));
-      await runTest(repository.upsertChunk("new-owner", "device", rows, new Date(2_000)));
+      await Effect.runPromise(repository.upsertChunk("old-owner", "device", rows, new Date(1_000)));
+      await Effect.runPromise(repository.upsertChunk("new-owner", "device", rows, new Date(2_000)));
 
       expect(usageRows().map((row) => row.userId)).toEqual(["new-owner", "new-owner", "new-owner"]);
     });
@@ -157,8 +157,8 @@ describe("D1 usage repository", () => {
     it("keys rows by device so two devices never overwrite each other", async () => {
       const repository = await makeRepository();
 
-      await runTest(repository.upsertChunk("user", "device-a", rows, new Date(1_000)));
-      await runTest(repository.upsertChunk("user", "device-b", rows, new Date(1_000)));
+      await Effect.runPromise(repository.upsertChunk("user", "device-a", rows, new Date(1_000)));
+      await Effect.runPromise(repository.upsertChunk("user", "device-b", rows, new Date(1_000)));
 
       expect(totals()).toEqual({ costUsd: 9, rowCount: 6, totalTokens: 700 });
     });
@@ -166,7 +166,7 @@ describe("D1 usage repository", () => {
     it("does nothing for an empty chunk", async () => {
       const repository = await makeRepository();
 
-      await runTest(repository.upsertChunk("user", "device", [], new Date(1_000)));
+      await Effect.runPromise(repository.upsertChunk("user", "device", [], new Date(1_000)));
 
       expect(totals().rowCount).toBe(0);
     });
@@ -176,7 +176,7 @@ describe("D1 usage repository", () => {
     it("upserts per (device, source), replacing counts and owner", async () => {
       const repository = await makeRepository();
 
-      await runTest(
+      await Effect.runPromise(
         repository.upsertSourceStats(
           "old-owner",
           "device",
@@ -187,7 +187,7 @@ describe("D1 usage repository", () => {
           new Date(1_000),
         ),
       );
-      await runTest(
+      await Effect.runPromise(
         repository.upsertSourceStats(
           "new-owner",
           "device",
@@ -195,7 +195,7 @@ describe("D1 usage repository", () => {
           new Date(2_000),
         ),
       );
-      await runTest(
+      await Effect.runPromise(
         repository.upsertSourceStats(
           "new-owner",
           "other-device",
@@ -243,7 +243,9 @@ describe("D1 usage repository", () => {
       const repository = await makeRepository();
       const report = rawReport("hash-a", "users/user/devices/device/ccusage/codex/daily/a.json");
 
-      await runTest(repository.upsertRawReports("user", "device", [report], new Date(1_000)));
+      await Effect.runPromise(
+        repository.upsertRawReports("user", "device", [report], new Date(1_000)),
+      );
 
       expect(bucket.objects.get(report.objectKey)).toEqual({
         customMetadata: { payloadBytes: String(report.payloadBytes), payloadHash: "hash-a" },
@@ -264,8 +266,12 @@ describe("D1 usage repository", () => {
       const repository = await makeRepository();
       const report = rawReport("hash-a", "users/user/devices/device/ccusage/codex/daily/a.json");
 
-      await runTest(repository.upsertRawReports("user", "device", [report], new Date(1_000)));
-      await runTest(repository.upsertRawReports("user", "device", [report], new Date(2_000)));
+      await Effect.runPromise(
+        repository.upsertRawReports("user", "device", [report], new Date(1_000)),
+      );
+      await Effect.runPromise(
+        repository.upsertRawReports("user", "device", [report], new Date(2_000)),
+      );
 
       expect(bucket.puts).toEqual([report.objectKey]);
       expect([...bucket.objects.keys()]).toEqual([report.objectKey]);
@@ -285,7 +291,7 @@ describe("D1 usage repository", () => {
       const firstKey = "users/old-owner/devices/device/ccusage/codex/daily/a.json";
       const secondKey = "users/new-owner/devices/device/ccusage/codex/daily/a.json";
 
-      await runTest(
+      await Effect.runPromise(
         repository.upsertRawReports(
           "old-owner",
           "device",
@@ -293,7 +299,7 @@ describe("D1 usage repository", () => {
           new Date(1_000),
         ),
       );
-      await runTest(
+      await Effect.runPromise(
         repository.upsertRawReports(
           "new-owner",
           "device",
@@ -320,8 +326,12 @@ describe("D1 usage repository", () => {
         rawReport(`hash-${index}`, `objects/${index}.json`),
       );
 
-      await runTest(repository.upsertRawReports("user", "device", reports, new Date(1_000)));
-      await runTest(repository.upsertRawReports("user", "device", reports, new Date(2_000)));
+      await Effect.runPromise(
+        repository.upsertRawReports("user", "device", reports, new Date(1_000)),
+      );
+      await Effect.runPromise(
+        repository.upsertRawReports("user", "device", reports, new Date(2_000)),
+      );
 
       expect(bucket.puts).toHaveLength(95);
       expect(rawRows()).toHaveLength(95);

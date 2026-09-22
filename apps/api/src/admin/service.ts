@@ -1,5 +1,4 @@
-import { Context } from "effect";
-import { Effect } from "effect";
+import { Context, Effect } from "effect";
 
 import {
   AdminUserNotFound,
@@ -125,28 +124,28 @@ interface AdminUserSnapshot {
 }
 
 interface AdminServiceShape {
-  listUsers(userId: string): Effect.Effect<typeof AdminUsersResponse.Type, Forbidden, any>;
+  listUsers(userId: string): Effect.Effect<typeof AdminUsersResponse.Type, Forbidden>;
   shadowBanUser(
     adminUserId: string,
     targetUserId: string,
-  ): Effect.Effect<{ shadowBan: ShadowBan; userId: string }, AdminUserNotFound | Forbidden, any>;
+  ): Effect.Effect<{ shadowBan: ShadowBan; userId: string }, AdminUserNotFound | Forbidden>;
   shadowUnbanUser(
     adminUserId: string,
     targetUserId: string,
-  ): Effect.Effect<{ shadowBan: null; userId: string }, AdminUserNotFound | Forbidden, any>;
+  ): Effect.Effect<{ shadowBan: null; userId: string }, AdminUserNotFound | Forbidden>;
 }
 
 interface AdminRepositoryShape {
   hasAnyVerifiedEmail(
     userId: string,
     emails: readonly string[],
-  ): Effect.Effect<boolean, DatabaseError, any>;
-  listUserSnapshots(): Effect.Effect<AdminUserSnapshot[], DatabaseError, any>;
+  ): Effect.Effect<boolean, DatabaseError>;
+  listUserSnapshots(): Effect.Effect<AdminUserSnapshot[], DatabaseError>;
   setShadowBan(input: {
     at: Date | null;
     byUserId: string | null;
     userId: string;
-  }): Effect.Effect<boolean, DatabaseError, any>;
+  }): Effect.Effect<boolean, DatabaseError>;
 }
 
 interface AdminServiceOptions {
@@ -242,7 +241,7 @@ function makeAdminService(options: AdminServiceOptions = {}) {
 function requireInternalAdmin(
   repository: AdminRepositoryShape,
   userId: string,
-): Effect.Effect<void, Forbidden, any> {
+): Effect.Effect<void, Forbidden> {
   return Effect.gen(function* () {
     const allowed = yield* isInternalAdmin(repository, userId);
     if (!allowed) {
@@ -251,10 +250,7 @@ function requireInternalAdmin(
   });
 }
 
-function isInternalAdmin(
-  repository: AdminRepositoryShape,
-  userId: string,
-): Effect.Effect<boolean, never, any> {
+function isInternalAdmin(repository: AdminRepositoryShape, userId: string): Effect.Effect<boolean> {
   return repository.hasAnyVerifiedEmail(userId, ADMIN_EMAILS).pipe(Effect.orDie);
 }
 

@@ -7,13 +7,12 @@ import {
   users,
 } from "@tokenmaxxing/db";
 import { and, desc, eq, isNull } from "drizzle-orm";
-import { Effect } from "effect";
-import { Layer } from "effect";
-import { Option } from "effect";
+import { Effect, Layer, Option } from "effect";
 
-import { Drizzle } from "../database";
+import { toAuthUser } from "../auth/d1";
+import { Drizzle, firstRow } from "../database";
 import { RawUsageObjectStore } from "../usage/raw-store";
-import { TokensRepository } from "./service";
+import { makeTokensService, TokensRepository, TokensService } from "./service";
 
 const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () {
   const database = yield* Drizzle;
@@ -30,31 +29,27 @@ const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () 
             .where(and(eq(cliTokens.tokenHash, tokenHash), isNull(cliTokens.revokedAt)))
             .limit(1),
         );
-        const row = rows[0];
-        if (row === undefined) {
+        const row = firstRow(rows);
+        if (Option.isNone(row)) {
           return Option.none();
         }
+        const { token, user } = row.value;
 
         // Freshness bookkeeping only; failures here must not fail auth.
         // Hour granularity is plenty, and skips a D1 write on almost every
         // CLI request.
-        if (isLastUsedStale(row.token.lastUsedAt, now)) {
+        if (isLastUsedStale(token.lastUsedAt, now)) {
           yield* database
             .use((db) =>
-              db.update(cliTokens).set({ lastUsedAt: now }).where(eq(cliTokens.id, row.token.id)),
+              db.update(cliTokens).set({ lastUsedAt: now }).where(eq(cliTokens.id, token.id)),
             )
             .pipe(Effect.ignore);
         }
 
         return Option.some({
-          deviceId: row.token.deviceId,
-          tokenId: row.token.id,
-          user: {
-            avatarUrl: row.user.avatarUrl,
-            id: row.user.id,
-            login: row.user.login,
-            name: row.user.name,
-          },
+          deviceId: token.deviceId,
+          tokenId: token.id,
+          user: toAuthUser(user),
         });
       }),
     listDevices: (userId) =>
@@ -180,4 +175,8 @@ function isLastUsedStale(lastUsedAt: Date | null, now: Date): boolean {
   return lastUsedAt === null || now.getTime() - lastUsedAt.getTime() >= LAST_USED_REFRESH_MS;
 }
 
-export { isLastUsedStale, TokensRepositoryLive };
+const TokensServiceLive = Layer.effect(TokensService, makeTokensService()).pipe(
+  Layer.provide(TokensRepositoryLive),
+);
+
+export { isLastUsedStale, TokensRepositoryLive, TokensServiceLive };

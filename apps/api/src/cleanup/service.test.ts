@@ -1,20 +1,20 @@
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeTestDatabase, type RunnableService } from "../testing/sqlite-d1";
+import { makeTestDatabase } from "../testing/sqlite-d1";
 import { CleanupRepositoryLive } from "./d1";
-import { CleanupService, makeCleanupService } from "./service";
+import { makeCleanupService } from "./service";
 
 const NOW = new Date("2026-09-22T12:00:00.000Z");
 
 describe("CleanupService.purgeExpired", () => {
   it("deletes expired sessions and CLI login requests and keeps live ones", async () => {
     const { drizzleLayer, sqlite } = makeTestDatabase();
-    const cleanup = (await Effect.runPromise(
+    const cleanup = await Effect.runPromise(
       makeCleanupService().pipe(
         Effect.provide(CleanupRepositoryLive.pipe(Layer.provide(drizzleLayer))),
       ),
-    )) as RunnableService<typeof CleanupService.Service>;
+    );
     sqlite
       .prepare("INSERT INTO users (id, login, created_at, updated_at) VALUES ('u', 'u', 0, 0)")
       .run();

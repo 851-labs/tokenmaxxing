@@ -2,11 +2,6 @@ import { Effect, Option } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { UserNotFound } from "@tokenmaxxing/api-contract";
-import type {
-  ProfileDailyResponse,
-  ProfileIdentityResponse,
-  ProfileResponse,
-} from "@tokenmaxxing/api-contract";
 
 import { makeProfilesService, profileDailyRange, ProfilesRepository } from "./service";
 
@@ -52,24 +47,11 @@ const profileStats = {
   totalTokens: 100,
 };
 
-interface TestProfilesService {
-  getIdentity(login: string): Effect.Effect<typeof ProfileIdentityResponse.Type, UserNotFound>;
-  getProfile(
-    login: string,
-    viewerUserId: string | null,
-  ): Effect.Effect<typeof ProfileResponse.Type, UserNotFound>;
-  getDaily(
-    login: string,
-    query: { groupBy: "model"; since?: string; until?: string },
-    viewerUserId: string | null,
-  ): Effect.Effect<typeof ProfileDailyResponse.Type, UserNotFound>;
-}
-
 async function makeProfileService(
   shadowBanned: boolean,
   onLeaderboardRank?: (input: { since: string | null; userId: string }) => void,
-): Promise<TestProfilesService> {
-  return (await Effect.runPromise(
+) {
+  return Effect.runPromise(
     makeProfilesService().pipe(
       Effect.provideService(ProfilesRepository, {
         daily: () =>
@@ -103,14 +85,14 @@ async function makeProfileService(
         stats: () => Effect.succeed(profileStats),
       }),
     ),
-  )) as unknown as TestProfilesService;
+  );
 }
 
 describe("ProfilesService shadow-ban visibility", () => {
   it("loads profile identity without calculating stats or rank", async () => {
     const stats = vi.fn(() => Effect.succeed(profileStats));
     const leaderboardRank = vi.fn(() => Effect.succeed(7));
-    const service = (await Effect.runPromise(
+    const service = await Effect.runPromise(
       makeProfilesService().pipe(
         Effect.provideService(ProfilesRepository, {
           daily: () => Effect.succeed([]),
@@ -130,7 +112,7 @@ describe("ProfilesService shadow-ban visibility", () => {
           stats,
         }),
       ),
-    )) as unknown as TestProfilesService;
+    );
 
     await expect(Effect.runPromise(service.getIdentity("target"))).resolves.toEqual({
       avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",

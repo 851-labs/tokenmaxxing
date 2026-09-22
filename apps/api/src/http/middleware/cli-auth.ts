@@ -1,11 +1,9 @@
-import { Effect } from "effect";
-import { Layer } from "effect";
-import { Option } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { HttpServerRequest } from "effect/unstable/http";
 
 import { CliAuth, CurrentCliIdentity, Unauthorized } from "@tokenmaxxing/api-contract";
-import type { CliIdentity } from "@tokenmaxxing/api-contract";
 
+import { bearerToken } from "../../auth/cookies";
 import { TokensService } from "../../tokens/service";
 
 /**
@@ -22,13 +20,10 @@ const CliAuthLive = Layer.effect(
     return CliAuth.of((httpEffect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const authorization = request.headers["authorization"];
-        const rawToken = authorization?.startsWith("Bearer ")
-          ? authorization.slice("Bearer ".length)
-          : null;
+        const rawToken = bearerToken(request);
         const identity =
           rawToken === null
-            ? Option.none<typeof CliIdentity.Type>()
+            ? Option.none()
             : yield* tokens
                 .resolveCliToken(rawToken)
                 .pipe(Effect.catchCause(() => Effect.succeedNone));

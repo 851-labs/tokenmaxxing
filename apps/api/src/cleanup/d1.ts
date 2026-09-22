@@ -1,10 +1,9 @@
 import { cliLoginRequests, sessions } from "@tokenmaxxing/db";
 import { lte } from "drizzle-orm";
-import { Effect } from "effect";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 
 import { Drizzle } from "../database";
-import { CleanupRepository } from "./service";
+import { CleanupRepository, CleanupService, makeCleanupService } from "./service";
 
 const makeD1CleanupRepository = Effect.fn("makeD1CleanupRepository")(function* () {
   const database = yield* Drizzle;
@@ -29,4 +28,8 @@ const makeD1CleanupRepository = Effect.fn("makeD1CleanupRepository")(function* (
 
 const CleanupRepositoryLive = Layer.effect(CleanupRepository, makeD1CleanupRepository());
 
-export { CleanupRepositoryLive };
+const CleanupServiceLive = Layer.effect(CleanupService, makeCleanupService()).pipe(
+  Layer.provide(CleanupRepositoryLive),
+);
+
+export { CleanupRepositoryLive, CleanupServiceLive };

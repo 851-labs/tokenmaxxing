@@ -1,38 +1,51 @@
+import { Context, Effect } from "effect";
 import * as Config from "effect/Config";
-import { Context } from "effect";
-import { Effect } from "effect";
 import * as Redacted from "effect/Redacted";
 
 const productName = "Tokenmaxxing";
 const apiWorkerName = "tokenmaxxing-api";
 
-type TokenmaxxingSandbox = "development" | "production";
-
-interface RuntimeUrls {
-  apiUrl: string;
-  sandbox: TokenmaxxingSandbox;
-  wwwUrl: string;
+/** Where one environment lives; cookie attributes and redirect targets derive from it. */
+interface Deployment {
+  apiOrigin: string;
+  cookieDomain: string;
+  secure: boolean;
+  wwwOrigin: string;
 }
 
-const runtimeUrlTable = {
+const deployments = {
   development: {
-    apiUrl: "http://api.tokenmaxxing.localhost:8788",
-    sandbox: "development",
-    wwwUrl: "http://tokenmaxxing.localhost:3002",
+    apiOrigin: "http://api.tokenmaxxing.localhost:8788",
+    cookieDomain: ".tokenmaxxing.localhost",
+    secure: false,
+    wwwOrigin: "http://tokenmaxxing.localhost:3002",
   },
   production: {
-    apiUrl: "https://api.tokenmaxxing.sh",
-    sandbox: "production",
-    wwwUrl: "https://tokenmaxxing.sh",
+    apiOrigin: "https://api.tokenmaxxing.sh",
+    cookieDomain: ".tokenmaxxing.sh",
+    secure: true,
+    wwwOrigin: "https://tokenmaxxing.sh",
   },
-} as const satisfies Record<TokenmaxxingSandbox, RuntimeUrls>;
+} as const satisfies Record<"development" | "production", Deployment>;
 
-interface GitHubOAuthConfig {
-  clientId: string;
-  clientSecret: string;
+/**
+ * One deploy serves dev (api.tokenmaxxing.localhost, http) and prod
+ * (api.tokenmaxxing.sh, https); the request host picks which. The local dev
+ * provider proxies with a rewritten Host (127.0.0.1:port), so any
+ * loopback-ish host means dev.
+ */
+function deploymentForHost(host: string): Deployment {
+  const hostname = host.split(":")[0] ?? host;
+  const isDev =
+    hostname.endsWith(".tokenmaxxing.localhost") ||
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1";
+
+  return isDev ? deployments.development : deployments.production;
 }
 
-interface GoogleOAuthConfig {
+interface OAuthClientConfig {
   clientId: string;
   clientSecret: string;
 }
@@ -40,10 +53,9 @@ interface GoogleOAuthConfig {
 interface AppConfigShape {
   apiWorkerName: string;
   corsOrigins: string[];
-  github: GitHubOAuthConfig;
-  google: GoogleOAuthConfig;
+  github: OAuthClientConfig;
+  google: OAuthClientConfig;
   productName: string;
-  urls: RuntimeUrls;
 }
 
 /**
@@ -62,60 +74,23 @@ class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
     const googleClientId = yield* Config.String("GOOGLE_CLIENT_ID");
     const googleClientSecret = yield* Config.Redacted("GOOGLE_CLIENT_SECRET");
 
-    return makeAppConfig(
-      {},
-      {
-        github: {
-          clientId: githubClientId,
-          clientSecret: Redacted.value(githubClientSecret),
-        },
-        google: {
-          clientId: googleClientId,
-          clientSecret: Redacted.value(googleClientSecret),
-        },
+    return AppConfig.of({
+      apiWorkerName,
+      // Local dev always passes browser CORS, regardless of the serving host.
+      corsOrigins: [deployments.production.wwwOrigin, deployments.development.wwwOrigin],
+      github: {
+        clientId: githubClientId,
+        clientSecret: Redacted.value(githubClientSecret),
       },
-    );
+      google: {
+        clientId: googleClientId,
+        clientSecret: Redacted.value(googleClientSecret),
+      },
+      productName,
+    });
   });
 }
 
-interface AppConfigEnv {
-  TOKENMAXXING_ENV?: string;
-}
+export { AppConfig, deploymentForHost };
 
-interface AppConfigSecrets {
-  github: GitHubOAuthConfig;
-  google: GoogleOAuthConfig;
-}
-
-function makeAppConfig(env: AppConfigEnv, secrets: AppConfigSecrets): AppConfigShape {
-  const urls = resolveRuntimeUrls(env);
-
-  return {
-    apiWorkerName,
-    corsOrigins: corsOriginsFor(urls),
-    productName,
-    urls,
-    ...secrets,
-  };
-}
-
-function corsOriginsFor(urls: RuntimeUrls): string[] {
-  return [
-    ...new Set([
-      new URL(urls.wwwUrl).origin,
-      // Local dev always passes browser CORS, regardless of resolved sandbox.
-      new URL(runtimeUrlTable.development.wwwUrl).origin,
-    ]),
-  ];
-}
-
-function resolveRuntimeUrls(env: AppConfigEnv): RuntimeUrls {
-  const sandbox: TokenmaxxingSandbox =
-    env.TOKENMAXXING_ENV === "development" ? "development" : "production";
-
-  return runtimeUrlTable[sandbox];
-}
-
-export { AppConfig };
-
-export type { AppConfigShape, GitHubOAuthConfig, GoogleOAuthConfig };
+export type { AppConfigShape, Deployment };

@@ -1,22 +1,15 @@
+import { Effect, Option } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import { Effect } from "effect";
-import { Option } from "effect";
 
-import {
-  AccountLinkConflict,
-  AuthRepository,
-  makeAuthService,
-  type CurrentUser,
-  type OAuthProfile,
-  type OAuthProviderId,
-  type UserAccountSummary,
-} from "./service";
+import type { AuthUser, OAuthProviderId } from "@tokenmaxxing/api-contract";
+
+import { AccountLinkConflict, AuthRepository, makeAuthService, type OAuthProfile } from "./service";
 
 describe("AuthService provider linking", () => {
   it("creates Google-only users from the verified email slug", async () => {
     const { service } = await makeTestAuth();
 
-    const result = await runAuth(
+    const result = await Effect.runPromise(
       service.signInWithProvider(googleProfile({ email: "Alex+Work@example.com" })),
     );
 
@@ -27,7 +20,7 @@ describe("AuthService provider linking", () => {
     const { service, store } = await makeTestAuth();
     store.users.set("existing", currentUser({ id: "existing", login: "alex" }));
 
-    const result = await runAuth(
+    const result = await Effect.runPromise(
       service.signInWithProvider(googleProfile({ email: "alex@example.com" })),
     );
 
@@ -40,7 +33,7 @@ describe("AuthService provider linking", () => {
       store.users.set(login, currentUser({ id: login, login }));
     }
 
-    const result = await runAuth(
+    const result = await Effect.runPromise(
       service.signInWithProvider(googleProfile({ email: "alex@example.com" })),
     );
 
@@ -56,7 +49,7 @@ describe("AuthService provider linking", () => {
       userId: user.id,
     });
 
-    const result = await runAuth(
+    const result = await Effect.runPromise(
       service.signInWithProvider(googleProfile({ email: "alex@example.com" })),
     );
 
@@ -79,7 +72,7 @@ describe("AuthService provider linking", () => {
       userId: second.id,
     });
 
-    const result = await runAuth(
+    const result = await Effect.runPromise(
       service.signInWithProvider(
         googleProfile({ email: "shared@example.com", providerAccountId: "google" }),
       ),
@@ -106,7 +99,7 @@ describe("AuthService provider linking", () => {
       userId: second.id,
     });
 
-    const result = await runAuth(
+    const result = await Effect.runPromise(
       service.signInWithProvider(googleProfile({ email: "shared@example.com" })),
     );
 
@@ -120,7 +113,7 @@ describe("AuthService provider linking", () => {
     const user = currentUser({ id: "current", login: "current" });
     store.users.set(user.id, user);
 
-    const result = await runAuth(
+    const result = await Effect.runPromise(
       service.signInWithProvider(googleProfile({ email: "new@example.com" }), {
         currentUser: user,
       }),
@@ -142,7 +135,7 @@ describe("AuthService provider linking", () => {
     });
 
     await expect(
-      runAuth(
+      Effect.runPromise(
         service.signInWithProvider(googleProfile({ email: "other@example.com" }), {
           currentUser: current,
         }),
@@ -165,7 +158,7 @@ describe("AuthService provider linking", () => {
       userId: duplicate.id,
     });
 
-    const result = await runAuth(
+    const result = await Effect.runPromise(
       service.signInWithProvider(googleProfile({ email: "alex@example.com" }), {
         currentUser: current,
       }),
@@ -186,7 +179,7 @@ interface TestStore {
   accounts: Map<string, AccountRecord>;
   nextUser: number;
   sessions: { id: string; userId: string }[];
-  users: Map<string, CurrentUser>;
+  users: Map<string, AuthUser>;
 }
 
 async function makeTestAuth() {
@@ -262,7 +255,7 @@ async function makeTestAuth() {
       Effect.sync(() =>
         [...store.accounts.values()]
           .filter((account) => account.userId === userId)
-          .map(({ profile }) => toSummary(profile)),
+          .map(({ profile }) => profile),
       ),
     mergeUsers: ({ sourceUserId, targetUserId }) =>
       Effect.sync(() => {
@@ -304,16 +297,12 @@ async function makeTestAuth() {
   return { service, store };
 }
 
-function runAuth<A, E>(effect: Effect.Effect<A, E, any>): Promise<A> {
-  return Effect.runPromise(effect as Effect.Effect<A, E, never>);
-}
-
 function currentUser(input: {
   avatarUrl?: string | null;
   id: string;
   login: string;
   name?: string | null;
-}): CurrentUser {
+}): AuthUser {
   return {
     avatarUrl: input.avatarUrl ?? null,
     id: input.id,
@@ -350,16 +339,4 @@ function googleProfile(input: Partial<OAuthProfile> = {}): OAuthProfile {
 
 function accountKey(provider: OAuthProviderId, providerAccountId: string): string {
   return `${provider}:${providerAccountId}`;
-}
-
-function toSummary(profile: OAuthProfile): UserAccountSummary {
-  return {
-    avatarUrl: profile.avatarUrl,
-    email: profile.email,
-    emailVerified: profile.emailVerified,
-    login: profile.login,
-    name: profile.name,
-    provider: profile.provider,
-    providerAccountId: profile.providerAccountId,
-  };
 }

@@ -1,13 +1,20 @@
 import { usageDays, users, type User } from "@tokenmaxxing/db";
 import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import { Effect } from "effect";
-import { Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 
-import type { StatsTotals } from "@tokenmaxxing/api-contract";
+import { StatsResponse, type StatsTotals } from "@tokenmaxxing/api-contract";
 
+import { toAuthUser } from "../auth/d1";
+import { makeEdgeJsonCache } from "../cloudflare/edge-cache";
 import { Drizzle } from "../database";
-import { STATS_2026_START, StatsRepository } from "./service";
+import {
+  makeStatsService,
+  STATS_2026_START,
+  STATS_CACHE_TTL_SECONDS,
+  StatsRepository,
+  StatsService,
+} from "./service";
 
 type StatsTotalsValue = typeof StatsTotals.Type;
 
@@ -236,12 +243,7 @@ function toUserMetric(row: {
     lastDate: row.lastDate,
     spendUsd: row.spendUsd,
     totalTokens: row.totalTokens,
-    user: {
-      avatarUrl: row.user.avatarUrl,
-      id: row.user.id,
-      login: row.user.login,
-      name: row.user.name,
-    },
+    user: toAuthUser(row.user),
   };
 }
 
@@ -262,4 +264,23 @@ function peakDay<Day extends { date: string }>(
 
 const StatsRepositoryLive = Layer.effect(StatsRepository, makeD1StatsRepository());
 
-export { StatsRepositoryLive };
+/** Cache API key only — never routed. Byte-identical to the key the worker
+ * used before, so deploys don't cold-start the colo caches. */
+const STATS_CACHE_KEY = "https://api.tokenmaxxing.sh/__cache/stats";
+
+// Suspended so `caches.default` is resolved when the layer builds (worker
+// init), not at module load.
+const StatsServiceLive = Layer.effect(
+  StatsService,
+  Effect.suspend(() =>
+    makeStatsService({
+      cache: makeEdgeJsonCache({
+        decode: Schema.decodeUnknownOption(StatsResponse),
+        key: STATS_CACHE_KEY,
+        ttlSeconds: STATS_CACHE_TTL_SECONDS,
+      }),
+    }),
+  ),
+).pipe(Layer.provide(StatsRepositoryLive));
+
+export { StatsRepositoryLive, StatsServiceLive };

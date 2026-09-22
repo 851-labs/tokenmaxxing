@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { LeaderboardRepositoryLive } from "./leaderboard/d1";
@@ -10,7 +10,7 @@ import { ProfilesRepository } from "./profiles/service";
 import { StatsRepositoryLive } from "./stats/d1";
 import { StatsRepository } from "./stats/service";
 import { makeTestDatabase, type TestDatabase } from "./testing/sqlite-d1";
-import { buildService, runTest } from "./testing/effect";
+import { buildService } from "./testing/effect";
 import { seedUsage, seedUser } from "./testing/seed";
 
 const until = "2026-09-23";
@@ -62,16 +62,18 @@ describe("public usage visibility", () => {
       ProfilesRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
     );
 
-    const entries = await runTest(
+    const entries = await Effect.runPromise(
       leaderboard.list({ limit: 10, metric: "tokens", since: null, until }),
     );
-    const visibleRank = await runTest(
+    const visibleRank = await Effect.runPromise(
       profiles.leaderboardRank({ since: "2026-06-10", until, userId: "visible" }),
     );
-    const bannedRank = await runTest(
+    const bannedRank = await Effect.runPromise(
       profiles.leaderboardRank({ since: "2026-06-10", until, userId: "banned" }),
     );
-    const hidden = await runTest(stats.snapshot({ last30dSince: "2026-06-10", limit: 10, until }));
+    const hidden = await Effect.runPromise(
+      stats.snapshot({ last30dSince: "2026-06-10", limit: 10, until }),
+    );
 
     expect(entries.map((entry) => [entry.rank, entry.user.login])).toEqual([[1, "visible"]]);
     expect(visibleRank).toBe(1);
@@ -94,13 +96,13 @@ describe("public usage visibility", () => {
 
     sqlite.prepare("update users set shadow_banned_at = null where id = 'banned'").run();
 
-    const restoredBannedRank = await runTest(
+    const restoredBannedRank = await Effect.runPromise(
       profiles.leaderboardRank({ since: "2026-06-10", until, userId: "banned" }),
     );
-    const restoredVisibleRank = await runTest(
+    const restoredVisibleRank = await Effect.runPromise(
       profiles.leaderboardRank({ since: "2026-06-10", until, userId: "visible" }),
     );
-    const restored = await runTest(
+    const restored = await Effect.runPromise(
       stats.snapshot({ last30dSince: "2026-06-10", limit: 10, until }),
     );
     expect(restoredBannedRank).toBe(1);
@@ -132,13 +134,13 @@ describe("public usage visibility", () => {
       ProfilesRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
     );
 
-    const allTimeVisibleRank = await runTest(
+    const allTimeVisibleRank = await Effect.runPromise(
       profiles.leaderboardRank({ since: null, until, userId: "visible" }),
     );
-    const recentVisibleRank = await runTest(
+    const recentVisibleRank = await Effect.runPromise(
       profiles.leaderboardRank({ since: "2026-06-10", until, userId: "visible" }),
     );
-    const recentBannedRank = await runTest(
+    const recentBannedRank = await Effect.runPromise(
       profiles.leaderboardRank({ since: "2026-06-10", until, userId: "banned" }),
     );
 
@@ -187,15 +189,19 @@ describe("future-dated usage rows", () => {
     );
 
     for (const since of [null, "2026-08-25", "2026-09-17"]) {
-      const entries = await runTest(leaderboard.list({ limit: 10, metric: "spend", since, until }));
+      const entries = await Effect.runPromise(
+        leaderboard.list({ limit: 10, metric: "spend", since, until }),
+      );
       expect(entries.map((entry) => [entry.user.login, entry.spendUsd])).toEqual([
         ["honest", 10],
         ["timetraveler", 1],
       ]);
-      expect(await runTest(profiles.leaderboardRank({ since, until, userId: "honest" }))).toBe(1);
+      expect(
+        await Effect.runPromise(profiles.leaderboardRank({ since, until, userId: "honest" })),
+      ).toBe(1);
     }
 
-    const snapshot = await runTest(
+    const snapshot = await Effect.runPromise(
       stats.snapshot({ last30dSince: "2026-08-25", limit: 10, until }),
     );
     for (const totals of [snapshot.allTime, snapshot.last30d, snapshot.year2026]) {
@@ -209,7 +215,7 @@ describe("future-dated usage rows", () => {
       "timetraveler",
     ]);
 
-    const profile = await runTest(
+    const profile = await Effect.runPromise(
       profiles.stats("timetraveler", { today: "2026-09-22", until: "2026-09-23" }),
     );
     expect(profile).toMatchObject({
@@ -221,7 +227,7 @@ describe("future-dated usage rows", () => {
       totalSpendUsd: 1,
       totalTokens: 1,
     });
-    const daily = await runTest(
+    const daily = await Effect.runPromise(
       profiles.daily("timetraveler", { groupBy: "model", until: "2026-09-23" }),
     );
     expect(daily.map((row) => row.date)).toEqual(["2026-09-20"]);

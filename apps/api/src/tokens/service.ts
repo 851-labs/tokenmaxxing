@@ -1,6 +1,4 @@
-import { Context } from "effect";
-import { Effect } from "effect";
-import { Option } from "effect";
+import { Context, Effect, Option } from "effect";
 
 import { DeviceNotFound, TokenNotFound } from "@tokenmaxxing/api-contract";
 import type { CliIdentity, CliTokenSummary, DeviceSummary } from "@tokenmaxxing/api-contract";
@@ -17,34 +15,28 @@ import type { RawUsageStorageError } from "../usage/raw-store";
 
 interface TokensServiceShape {
   /** Resolves a raw `tmx_` bearer; touches lastUsedAt on success. */
-  resolveCliToken(
-    rawToken: string,
-  ): Effect.Effect<Option.Option<typeof CliIdentity.Type>, never, any>;
-  listDevices(userId: string): Effect.Effect<(typeof DeviceSummary.Type)[], never, any>;
-  listTokens(userId: string): Effect.Effect<(typeof CliTokenSummary.Type)[], never, any>;
-  deleteDevice(userId: string, deviceId: string): Effect.Effect<void, DeviceNotFound, any>;
-  revokeToken(userId: string, tokenId: string): Effect.Effect<void, TokenNotFound, any>;
+  resolveCliToken(rawToken: string): Effect.Effect<Option.Option<typeof CliIdentity.Type>>;
+  listDevices(userId: string): Effect.Effect<(typeof DeviceSummary.Type)[]>;
+  listTokens(userId: string): Effect.Effect<(typeof CliTokenSummary.Type)[]>;
+  deleteDevice(userId: string, deviceId: string): Effect.Effect<void, DeviceNotFound>;
+  revokeToken(userId: string, tokenId: string): Effect.Effect<void, TokenNotFound>;
 }
 
 interface TokensRepositoryShape {
   findIdentityByHash(
     tokenHash: string,
     now: Date,
-  ): Effect.Effect<Option.Option<typeof CliIdentity.Type>, DatabaseError, any>;
-  listDevices(userId: string): Effect.Effect<(typeof DeviceSummary.Type)[], DatabaseError, any>;
-  listTokens(userId: string): Effect.Effect<(typeof CliTokenSummary.Type)[], DatabaseError, any>;
+  ): Effect.Effect<Option.Option<typeof CliIdentity.Type>, DatabaseError>;
+  listDevices(userId: string): Effect.Effect<(typeof DeviceSummary.Type)[], DatabaseError>;
+  listTokens(userId: string): Effect.Effect<(typeof CliTokenSummary.Type)[], DatabaseError>;
   /** Removes the device, its usage rows and raw reports (rows and stored
    * objects), and revokes its tokens. */
   deleteDevice(
     userId: string,
     deviceId: string,
     now: Date,
-  ): Effect.Effect<boolean, DatabaseError | RawUsageStorageError, any>;
-  revokeToken(
-    userId: string,
-    tokenId: string,
-    now: Date,
-  ): Effect.Effect<boolean, DatabaseError, any>;
+  ): Effect.Effect<boolean, DatabaseError | RawUsageStorageError>;
+  revokeToken(userId: string, tokenId: string, now: Date): Effect.Effect<boolean, DatabaseError>;
 }
 
 class TokensService extends Context.Service<TokensService, TokensServiceShape>()(

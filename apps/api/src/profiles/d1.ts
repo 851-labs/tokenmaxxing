@@ -1,11 +1,10 @@
 import { usageDays, usageSourceStats, users } from "@tokenmaxxing/db";
 import { and, asc, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
-import { Effect } from "effect";
-import { Layer } from "effect";
-import { Option } from "effect";
+import { Effect, Layer, Option } from "effect";
 
-import { Drizzle } from "../database";
-import { ProfilesRepository } from "./service";
+import { toAuthUser } from "../auth/d1";
+import { Drizzle, firstRow } from "../database";
+import { makeProfilesService, ProfilesRepository, ProfilesService } from "./service";
 import { usageStreaks } from "./streaks";
 
 const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function* () {
@@ -17,19 +16,13 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
         const rows = yield* database.use((db) =>
           db.select().from(users).where(eq(users.login, login)).limit(1),
         );
-        const row = rows[0];
 
-        return row === undefined
-          ? Option.none()
-          : Option.some({
-              shadowBanned: row.shadowBannedAt !== null,
-              user: {
-                avatarUrl: row.avatarUrl,
-                id: row.id,
-                login: row.login,
-                name: row.name,
-              },
-            });
+        return firstRow(rows).pipe(
+          Option.map((row) => ({
+            shadowBanned: row.shadowBannedAt !== null,
+            user: toAuthUser(row),
+          })),
+        );
       }),
     leaderboardRank: (input) =>
       Effect.gen(function* () {
@@ -197,4 +190,8 @@ function peakSpendDay(days: readonly { date: string; spendUsd: number }[]) {
   return peak;
 }
 
-export { ProfilesRepositoryLive };
+const ProfilesServiceLive = Layer.effect(ProfilesService, makeProfilesService()).pipe(
+  Layer.provide(ProfilesRepositoryLive),
+);
+
+export { ProfilesRepositoryLive, ProfilesServiceLive };

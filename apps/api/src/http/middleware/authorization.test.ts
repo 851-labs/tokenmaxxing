@@ -1,6 +1,4 @@
-import { Effect } from "effect";
-import { Layer } from "effect";
-import { Option } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -10,12 +8,9 @@ import {
   TokenmaxxingApi,
   type Unauthorized,
 } from "@tokenmaxxing/api-contract";
+import type { AuthUser } from "@tokenmaxxing/api-contract";
 
-import {
-  AuthService,
-  type AuthServiceShape,
-  type CurrentUser as AuthUser,
-} from "../../auth/service";
+import { AuthService, type AuthServiceShape } from "../../auth/service";
 import { makeTestApp, type TestApp } from "../../testing/http";
 import { TokensService, type TokensServiceShape } from "../../tokens/service";
 import { AuthorizationLive } from "./authorization";

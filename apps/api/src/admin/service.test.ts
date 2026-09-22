@@ -1,12 +1,7 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  AdminUserNotFound,
-  Forbidden,
-  type AdminUsersResponse,
-  type ShadowBanUserResponse,
-} from "@tokenmaxxing/api-contract";
+import { AdminUserNotFound, Forbidden } from "@tokenmaxxing/api-contract";
 
 import {
   AdminRepository,
@@ -31,18 +26,6 @@ const latestRelease: LatestCliRelease = {
     rc: null,
   },
 };
-
-interface TestAdminService {
-  listUsers(userId: string): Effect.Effect<typeof AdminUsersResponse.Type, Forbidden>;
-  shadowBanUser(
-    adminUserId: string,
-    targetUserId: string,
-  ): Effect.Effect<typeof ShadowBanUserResponse.Type, AdminUserNotFound | Forbidden>;
-  shadowUnbanUser(
-    adminUserId: string,
-    targetUserId: string,
-  ): Effect.Effect<typeof ShadowBanUserResponse.Type, AdminUserNotFound | Forbidden>;
-}
 
 function device(input: Partial<AdminDeviceSnapshot> = {}): AdminDeviceSnapshot {
   return {
@@ -147,12 +130,12 @@ async function makeService(
   repository: AdminRepositoryShape,
   options: { latestCliRelease?: LatestCliRelease | undefined } = {},
 ) {
-  return (await Effect.runPromise(
+  return Effect.runPromise(
     makeAdminService({
       fetchLatestCliRelease: () => Effect.succeed(options.latestCliRelease ?? latestRelease),
       now: () => now,
     }).pipe(Effect.provideService(AdminRepository, repository)),
-  )) as unknown as TestAdminService;
+  );
 }
 
 describe("AdminService.listUsers", () => {

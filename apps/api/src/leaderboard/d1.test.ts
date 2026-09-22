@@ -1,4 +1,4 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { ProfilesRepositoryLive } from "../profiles/d1";
@@ -6,7 +6,7 @@ import { ProfilesRepository } from "../profiles/service";
 import { StatsRepositoryLive } from "../stats/d1";
 import { StatsRepository } from "../stats/service";
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
-import { buildService, runTest } from "../testing/effect";
+import { buildService } from "../testing/effect";
 import { seedUsage, seedUser } from "../testing/seed";
 import { LeaderboardRepositoryLive } from "./d1";
 import { LeaderboardRepository } from "./service";
@@ -49,10 +49,10 @@ describe("D1 leaderboard ranking", () => {
     usage("charlie", "2026-07-01", 2, 300);
     const leaderboard = await makeLeaderboard();
 
-    const bySpend = await runTest(
+    const bySpend = await Effect.runPromise(
       leaderboard.list({ limit: 10, metric: "spend", since: null, until }),
     );
-    const byTokens = await runTest(
+    const byTokens = await Effect.runPromise(
       leaderboard.list({ limit: 10, metric: "tokens", since: null, until }),
     );
 
@@ -70,7 +70,7 @@ describe("D1 leaderboard ranking", () => {
     }
     const leaderboard = await makeLeaderboard();
 
-    const entries = await runTest(
+    const entries = await Effect.runPromise(
       leaderboard.list({ limit: 10, metric: "spend", since: null, until }),
     );
 
@@ -84,7 +84,7 @@ describe("D1 leaderboard ranking", () => {
     usage("delta", "2026-07-01", 2, 2);
     const leaderboard = await makeLeaderboard();
 
-    const entries = await runTest(
+    const entries = await Effect.runPromise(
       leaderboard.list({ limit: 2, metric: "spend", since: null, until }),
     );
 
@@ -98,7 +98,7 @@ describe("D1 leaderboard ranking", () => {
     usage("charlie", "2026-06-29", 50, 50);
     const leaderboard = await makeLeaderboard();
 
-    const entries = await runTest(
+    const entries = await Effect.runPromise(
       leaderboard.list({ limit: 10, metric: "spend", since: "2026-07-01", until }),
     );
 
@@ -135,15 +135,15 @@ describe("D1 leaderboard ranking", () => {
       StatsRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
     );
 
-    const entries = await runTest(
+    const entries = await Effect.runPromise(
       leaderboard.list({ limit: 10, metric: "spend", since: null, until }),
     );
-    const snapshot = await runTest(
+    const snapshot = await Effect.runPromise(
       stats.snapshot({ last30dSince: "2026-06-01", limit: 10, until }),
     );
     const profileRanks = await Promise.all(
       entries.map((entry) =>
-        runTest(profiles.leaderboardRank({ since: null, until, userId: entry.user.id })),
+        Effect.runPromise(profiles.leaderboardRank({ since: null, until, userId: entry.user.id })),
       ),
     );
 

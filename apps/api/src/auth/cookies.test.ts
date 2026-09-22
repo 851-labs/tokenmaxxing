@@ -2,29 +2,24 @@ import { Duration } from "effect";
 import { HttpServerRequest } from "effect/unstable/http";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  cookieOptions,
-  cookieScopeFor,
-  readCookie,
-  SESSION_COOKIE,
-  sessionTokenFrom,
-} from "./cookies";
+import { deploymentForHost } from "../config";
+import { cookieOptions, readCookie, SESSION_COOKIE, sessionTokenFrom } from "./cookies";
 
 const devScope = {
   apiOrigin: "http://api.tokenmaxxing.localhost:8788",
-  domain: ".tokenmaxxing.localhost",
+  cookieDomain: ".tokenmaxxing.localhost",
   secure: false,
   wwwOrigin: "http://tokenmaxxing.localhost:3002",
 };
 
 const prodScope = {
   apiOrigin: "https://api.tokenmaxxing.sh",
-  domain: ".tokenmaxxing.sh",
+  cookieDomain: ".tokenmaxxing.sh",
   secure: true,
   wwwOrigin: "https://tokenmaxxing.sh",
 };
 
-describe("cookieScopeFor", () => {
+describe("deploymentForHost", () => {
   it.each([
     "api.tokenmaxxing.localhost:8788",
     "api.tokenmaxxing.localhost",
@@ -32,13 +27,13 @@ describe("cookieScopeFor", () => {
     "localhost",
     "127.0.0.1:61234",
   ])("treats %s as local dev", (host) => {
-    expect(cookieScopeFor(host)).toEqual(devScope);
+    expect(deploymentForHost(host)).toEqual(devScope);
   });
 
   it.each(["api.tokenmaxxing.sh", "api.tokenmaxxing.sh:443", "evil.localhost.example", ""])(
     "defaults %j to the secure production scope",
     (host) => {
-      expect(cookieScopeFor(host)).toEqual(prodScope);
+      expect(deploymentForHost(host)).toEqual(prodScope);
     },
   );
 });

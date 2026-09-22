@@ -1,9 +1,4 @@
-import { Context } from "effect";
-import { Effect } from "effect";
-import { Layer } from "effect";
-import { Option } from "effect";
-import { Schema } from "effect";
-import { Scope } from "effect";
+import { Effect, Layer, Option, Schema, Scope } from "effect";
 import * as Path from "effect/Path";
 import {
   HttpEffect,
@@ -26,26 +21,25 @@ import {
   DEFAULT_LEADERBOARD_WINDOW,
   TokenmaxxingApi,
 } from "@tokenmaxxing/api-contract";
-import type { Authorization, CliAuth } from "@tokenmaxxing/api-contract";
 
-import { AppConfig } from "../config";
-import { cookieScopeFor, sessionTokenFrom } from "../auth/cookies";
 import { AdminService } from "../admin/service";
+import { sessionTokenFrom } from "../auth/cookies";
 import { AuthService } from "../auth/service";
 import { CliLoginService } from "../clilogin/service";
-import type { Drizzle } from "../database";
+import { AppConfig, deploymentForHost } from "../config";
 import { LeaderboardService } from "../leaderboard/service";
+import type { OAuthProviders } from "../oauth/registry";
 import { ProfilesService } from "../profiles/service";
 import { STATS_CACHE_TTL_SECONDS, StatsService } from "../stats/service";
 import { TokensService } from "../tokens/service";
 import { UsageService } from "../usage/service";
-import { oauthRoutesLayer } from "./routes/oauth";
+import { AuthorizationLive } from "./middleware/authorization";
+import { CliAuthLive } from "./middleware/cli-auth";
+import { OAuthRoutesLive } from "./routes/oauth";
+import { resolveViewer } from "./viewer";
 
-/**
- * Handler layers, one per contract group — pure pass-throughs over the
- * domain services. Groups whose milestone has not landed yet die with
- * "not implemented"; the contract still serves and typechecks end-to-end.
- */
+/** Handler layers, one per contract group — pure pass-throughs over the
+ * domain services. */
 
 /**
  * CLI payloads reject undeclared properties (`onExcessProperty: "error"`).
@@ -114,7 +108,7 @@ const meHandlers = HttpApiBuilder.group(TokenmaxxingApi, "me", (handlers) =>
       Effect.gen(function* () {
         const user = yield* CurrentUser;
         const auth = yield* AuthService;
-        return { accounts: yield* auth.listAccounts(user.id).pipe(Effect.orDie) };
+        return { accounts: yield* auth.listAccounts(user.id) };
       }),
     )
     .handle("describeCliLogin", ({ query }) =>
@@ -169,9 +163,11 @@ const cliLoginHandlers = HttpApiBuilder.group(TokenmaxxingApi, "cliLogin", (hand
       Effect.gen(function* () {
         yield* rejectUndeclaredProperties(endpoint);
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const scope = cookieScopeFor(request.headers["host"] ?? "");
         const cliLogin = yield* CliLoginService;
-        return yield* cliLogin.start(payload, scope.wwwOrigin);
+        return yield* cliLogin.start(
+          payload,
+          deploymentForHost(request.headers["host"] ?? "").wwwOrigin,
+        );
       }),
     )
     .handle("poll", ({ endpoint, payload }) =>
@@ -241,6 +237,14 @@ const leaderboardHandlers = HttpApiBuilder.group(TokenmaxxingApi, "leaderboard",
   ),
 );
 
+/** The signed-in viewer's id, if any — owners still see their own
+ * shadow-banned profile. */
+const viewerUserId = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const viewer = yield* resolveViewer(sessionTokenFrom(request), { allowCliToken: false });
+  return Option.getOrNull(Option.map(viewer, (user) => user.id));
+});
+
 const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (handlers) =>
   handlers
     .handle("identity", ({ params }) =>
@@ -254,7 +258,7 @@ const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (hand
     .handle("get", ({ params }) =>
       Effect.gen(function* () {
         const profiles = yield* ProfilesService;
-        const profile = yield* profiles.getProfile(params.login, yield* optionalCurrentUserId());
+        const profile = yield* profiles.getProfile(params.login, yield* viewerUserId);
         yield* cacheControl(yield* viewerCacheControl());
         return profile;
       }),
@@ -269,29 +273,13 @@ const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (hand
             since: query.since,
             until: query.until,
           },
-          yield* optionalCurrentUserId(),
+          yield* viewerUserId,
         );
         yield* cacheControl(yield* viewerCacheControl());
         return daily;
       }),
     ),
 );
-
-function optionalCurrentUserId() {
-  return Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const token = sessionTokenFrom(request);
-    if (token === null) {
-      return null;
-    }
-
-    const auth = yield* AuthService;
-    const user = yield* auth
-      .resolveSession(token)
-      .pipe(Effect.catchCause(() => Effect.succeedNone));
-    return Option.isSome(user) ? user.value.id : null;
-  });
-}
 
 /**
  * Cache policy for public reads. `s-maxage` only addresses shared caches
@@ -360,7 +348,7 @@ const adminHandlers = HttpApiBuilder.group(TokenmaxxingApi, "admin", (handlers) 
     ),
 );
 
-const handlersLayer = Layer.mergeAll(
+const HandlersLive = Layer.mergeAll(
   adminHandlers,
   healthHandlers,
   meHandlers,
@@ -370,72 +358,6 @@ const handlersLayer = Layer.mergeAll(
   statsHandlers,
   profilesHandlers,
 );
-
-interface ApiLayerOptions {
-  adminServiceLayer: Layer.Layer<AdminService>;
-  appConfigLayer: Layer.Layer<AppConfig>;
-  authServiceLayer: Layer.Layer<AuthService>;
-  cliLoginServiceLayer: Layer.Layer<CliLoginService>;
-  drizzleLayer: Layer.Layer<Drizzle>;
-  leaderboardServiceLayer: Layer.Layer<LeaderboardService>;
-  profilesServiceLayer: Layer.Layer<ProfilesService>;
-  statsServiceLayer: Layer.Layer<StatsService>;
-  middlewareLayer: Layer.Layer<Authorization | CliAuth, never, AuthService | TokensService>;
-  tokensServiceLayer: Layer.Layer<TokensService>;
-  usageServiceLayer: Layer.Layer<UsageService>;
-}
-
-function makeApiLayer(options: ApiLayerOptions) {
-  const apiLayer = Layer.mergeAll(
-    HttpApiBuilder.layer(TokenmaxxingApi, { openapiPath: "/openapi.json" }),
-    oauthRoutesLayer,
-  );
-
-  return apiLayer.pipe(
-    Layer.provide(handlersLayer),
-    Layer.provide(options.middlewareLayer),
-    Layer.provide(requestIdLayer),
-    Layer.provide(corsLayer),
-    Layer.provide(options.cliLoginServiceLayer),
-    Layer.provide(options.adminServiceLayer),
-    Layer.provide(options.leaderboardServiceLayer),
-    Layer.provide(options.profilesServiceLayer),
-    Layer.provide(options.statsServiceLayer),
-    Layer.provide(options.tokensServiceLayer),
-    Layer.provide(options.usageServiceLayer),
-    Layer.provide(options.authServiceLayer),
-    Layer.provide(options.drizzleLayer),
-    Layer.provide(options.appConfigLayer),
-  );
-}
-
-function makeApiHttpEffect(options: ApiLayerOptions) {
-  return makeApiLayer(options).pipe(
-    Layer.provide([Etag.layer, HttpPlatformStub, Path.layer]),
-    HttpRouter.toHttpEffect,
-    Effect.map(recoverDefects),
-  );
-}
-
-/**
- * Builds the router, handlers, middleware, CORS and OpenAPI spec exactly
- * once and returns the per-request handler. The worker's `fetch` must be the
- * returned HttpEffect itself, never an Effect that builds one: alchemy
- * re-runs an Effect-valued `fetch` on every request, which would rebuild the
- * whole layer graph per request.
- *
- * The built layer lives in its own scope that is never closed — the router
- * must outlive the init closure (whose scope we cannot name in types) and
- * every request, and workerd has no isolate-teardown hook anyway. Nothing in
- * the graph registers finalizers that matter at shutdown.
- */
-function makeApiFetch<R>(options: ApiLayerOptions, requestServices: Context.Context<R>) {
-  return Effect.gen(function* () {
-    const routerScope = yield* Scope.make();
-    const httpEffect = yield* makeApiHttpEffect(options).pipe(Scope.provide(routerScope));
-    return httpEffect.pipe(Effect.provideContext(requestServices));
-  });
-}
 
 /**
  * Schema decode failures respond with their own 400; every other defect
@@ -502,4 +424,60 @@ const HttpPlatformStub = Layer.succeed(HttpPlatform.HttpPlatform, {
   fileWebResponse: () => Effect.die("HttpPlatform.fileWebResponse not supported"),
 });
 
+/** Everything the handlers, middleware and raw routes resolve. */
+type ApiServices =
+  | AdminService
+  | AppConfig
+  | AuthService
+  | CliLoginService
+  | LeaderboardService
+  | OAuthProviders
+  | ProfilesService
+  | StatsService
+  | TokensService
+  | UsageService;
+
+/** Handlers and raw routes resolve services per request; hand them the
+ * instances the router was built with. */
+const RequestServices = Layer.effectContext(Effect.context<ApiServices>());
+
+/** The whole HTTP surface: contract handlers, OAuth routes and middleware. */
+const ApiLive = Layer.mergeAll(
+  HttpApiBuilder.layer(TokenmaxxingApi, { openapiPath: "/openapi.json" }),
+  OAuthRoutesLive,
+).pipe(
+  Layer.provide(HandlersLive),
+  Layer.provide(Layer.mergeAll(AuthorizationLive, CliAuthLive)),
+  Layer.provide(requestIdLayer),
+  Layer.provide(corsLayer),
+  HttpRouter.provideRequest(RequestServices),
+  Layer.provide([Etag.layer, HttpPlatformStub, Path.layer]),
+);
+
+/** Builds the router over `services`; the effect it yields serves requests. */
+function makeApiHttpEffect<E>(services: Layer.Layer<ApiServices, E>) {
+  return ApiLive.pipe(Layer.provide(services), HttpRouter.toHttpEffect, Effect.map(recoverDefects));
+}
+
+/**
+ * Builds the router, handlers, middleware, CORS and OpenAPI spec exactly
+ * once and returns the per-request handler. The worker's `fetch` must be the
+ * returned HttpEffect itself, never an Effect that builds one: alchemy
+ * re-runs an Effect-valued `fetch` on every request, which would rebuild the
+ * whole layer graph per request.
+ *
+ * The built layer lives in its own scope that is never closed — the router
+ * must outlive the init closure (whose scope we cannot name in types) and
+ * every request, and workerd has no isolate-teardown hook anyway. Nothing in
+ * the graph registers finalizers that matter at shutdown.
+ */
+function makeApiFetch<E>(services: Layer.Layer<ApiServices, E>) {
+  return Effect.gen(function* () {
+    const routerScope = yield* Scope.make();
+    return yield* makeApiHttpEffect(services).pipe(Scope.provide(routerScope));
+  });
+}
+
 export { makeApiFetch, makeApiHttpEffect };
+
+export type { ApiServices };

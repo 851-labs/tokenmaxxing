@@ -1,5 +1,4 @@
-import { Context, Data, Effect } from "effect";
-import { Layer } from "effect";
+import { Context, Data, Effect, Layer } from "effect";
 
 class RawUsageStorageError extends Data.TaggedError("RawUsageStorageError")<{
   readonly cause: unknown;
@@ -13,8 +12,8 @@ interface R2BucketLike {
       customMetadata?: Record<string, string>;
       httpMetadata?: { contentType?: string };
     },
-  ): Effect.Effect<unknown, unknown, any>;
-  delete(keys: string[]): Effect.Effect<unknown, unknown, any>;
+  ): Effect.Effect<unknown, unknown>;
+  delete(keys: string[]): Effect.Effect<unknown, unknown>;
 }
 
 interface RawUsageObjectStoreShape {
@@ -23,9 +22,9 @@ interface RawUsageObjectStoreShape {
     payloadBytes: number;
     payloadHash: string;
     payloadJson: string;
-  }): Effect.Effect<void, RawUsageStorageError, any>;
+  }): Effect.Effect<void, RawUsageStorageError>;
   /** Deletes objects by key; missing keys are a no-op, so retries are safe. */
-  deleteObjects(keys: readonly string[]): Effect.Effect<void, RawUsageStorageError, any>;
+  deleteObjects(keys: readonly string[]): Effect.Effect<void, RawUsageStorageError>;
 }
 
 /** R2 caps a multi-key delete at 1000 keys. */
