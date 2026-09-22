@@ -606,6 +606,21 @@ const StatsDailyModelPoint = Schema.Struct({
 
 type StatsDailyModelPoint = typeof StatsDailyModelPoint.Type;
 
+/**
+ * Series per stats chart: www stacks each metric's top models and folds the
+ * rest into one "Other" series. The API keeps every model that ranks in the
+ * top `STATS_CHART_MODEL_LIMIT` of any charted metric (spend, tokens,
+ * sessions) and sums the long tail into `STATS_OTHER_MODEL_KEY`, so the
+ * charts stay exact without shipping every model ever seen.
+ */
+const STATS_CHART_MODEL_LIMIT = 10;
+const STATS_OTHER_MODEL_KEY = "Other";
+
+/** One (date, model) cell of a window's daily charts; `rowCount` is sessions. */
+const StatsChartPoint = StatsDailyModelPoint.mapFields(Struct.omit(["outputTokens"]));
+
+type StatsChartPoint = typeof StatsChartPoint.Type;
+
 const StatsRankedMetric = Schema.Struct({
   key: Schema.String,
   rowCount: Schema.Number,
@@ -617,33 +632,26 @@ const StatsRankedMetric = Schema.Struct({
 type StatsRankedMetric = typeof StatsRankedMetric.Type;
 
 /** `ytd` starts on Jan 1 of the server's current UTC year. */
-const StatsWindowId = Schema.Literals(["allTime", "last30d", "ytd"]);
+const StatsWindowId = Schema.Literals(["last30d", "ytd"]);
 
 type StatsWindowId = typeof StatsWindowId.Type;
 
 const StatsWindow = Schema.Struct({
+  /** Daily chart cells, date-ascending; see `STATS_OTHER_MODEL_KEY`. */
+  dailyByModel: Schema.Array(StatsChartPoint),
   modelsBySpend: Schema.Array(StatsRankedMetric),
   modelsByTokens: Schema.Array(StatsRankedMetric),
-  /** Inclusive YYYY-MM-DD lower bound; null = all time. */
-  since: Schema.NullOr(Schema.String),
+  /** Inclusive YYYY-MM-DD lower bound. */
+  since: Schema.String,
   sources: Schema.Array(StatsRankedMetric),
   totals: StatsTotals,
 });
 
 type StatsWindow = typeof StatsWindow.Type;
 
+/** Exactly what the /stats page renders: one entry per selectable window. */
 const StatsResponse = Schema.Struct({
-  daily: Schema.Array(StatsDailyPoint),
-  dailyByModel: Schema.Array(StatsDailyModelPoint),
   generatedAt: Schema.String,
-  peaks: Schema.Struct({
-    spend: Schema.NullOr(StatsDailyPoint),
-    tokens: Schema.NullOr(StatsDailyPoint),
-  }),
-  topUsers: Schema.Struct({
-    bySpend: Schema.Array(UserUsageMetric),
-    byTokens: Schema.Array(UserUsageMetric),
-  }),
   windows: Schema.Record(StatsWindowId, StatsWindow),
 });
 
@@ -920,6 +928,9 @@ export {
   ShadowBan,
   ShadowBanUserResponse,
   SourceUsageStatsInput,
+  STATS_CHART_MODEL_LIMIT,
+  STATS_OTHER_MODEL_KEY,
+  StatsChartPoint,
   StatsDailyModelPoint,
   StatsDailyPoint,
   StatsRankedMetric,

@@ -1,5 +1,5 @@
 import type {
-  StatsDailyModelPoint,
+  StatsChartPoint,
   StatsResponse,
   StatsWindow,
   StatsWindowId,
@@ -45,7 +45,7 @@ const StatsTabParam = Schema.Union([
 interface StatsWindowView {
   /** Inclusive chart bounds, or null before any usage exists. */
   chartRange: { first: string; last: string } | null;
-  dailyByModel: StatsDailyModelPoint[];
+  dailyByModel: StatsChartPoint[];
   label: string;
   window: StatsWindow;
 }
@@ -71,7 +71,7 @@ function latestPlausibleDate(generatedAt: string): string {
 function selectStatsWindow(data: StatsResponse, tab: StatsTab): StatsWindowView {
   const window = data.windows[STATS_TAB_WINDOWS[tab]];
   const { totals } = window;
-  const since = window.since ?? "";
+  const { since } = window;
   const latest = latestPlausibleDate(data.generatedAt);
   const chartLast =
     totals.lastDate === null ? null : totals.lastDate > latest ? latest : totals.lastDate;
@@ -83,7 +83,7 @@ function selectStatsWindow(data: StatsResponse, tab: StatsTab): StatsWindowView 
       chartLast === null || totals.firstDate === null || chartFirst > chartLast
         ? null
         : { first: chartFirst, last: chartLast },
-    dailyByModel: data.dailyByModel.filter((row) => row.date >= since && row.date <= latest),
+    dailyByModel: window.dailyByModel.filter((row) => row.date >= since && row.date <= latest),
     label: tab === "ytd" ? ytdLabel(data) : "30d",
     window,
   };
@@ -91,7 +91,7 @@ function selectStatsWindow(data: StatsResponse, tab: StatsTab): StatsWindowView 
 
 /** The server's current year, e.g. "2026" — `ytd.since` is always Jan 1 of it. */
 function ytdLabel(data: StatsResponse): string {
-  return (data.windows.ytd.since ?? data.generatedAt).slice(0, 4);
+  return data.windows.ytd.since.slice(0, 4);
 }
 
 /** Spend, token, and session stacks over every day of the window's usage range. */

@@ -75,30 +75,27 @@ describe("public usage visibility", () => {
       stats.snapshot({
         limit: 10,
         until,
-        windows: { allTime: null, last30d: "2026-06-10", ytd: "2026-01-01" },
+        windows: { last30d: "2026-06-10", ytd: "2026-01-01" },
       }),
     );
 
     expect(entries.map((entry) => [entry.rank, entry.user.login])).toEqual([[1, "visible"]]);
     expect(visibleRank).toBe(1);
     expect(bannedRank).toBeNull();
-    expect(hidden.windows.allTime.totals).toMatchObject({
+    expect(hidden.windows.ytd.totals).toMatchObject({
       deviceCount: 1,
       rowCount: 1,
       spendUsd: 1,
       totalTokens: 100,
       userCount: 1,
     });
-    expect(hidden.daily).toEqual([
-      { date: "2026-07-09", spendUsd: 1, totalTokens: 100, userCount: 1 },
-    ]);
-    expect(hidden.dailyByModel.map((row) => row.key)).toEqual(["visible-model"]);
     for (const window of Object.values(hidden.windows)) {
+      expect(window.dailyByModel).toEqual([
+        { date: "2026-07-09", key: "visible-model", rowCount: 1, spendUsd: 1, totalTokens: 100 },
+      ]);
       expect(window.sources.map((row) => row.key)).toEqual(["codex"]);
       expect(window.modelsByTokens.map((row) => row.key)).toEqual(["visible-model"]);
     }
-    expect(hidden.topUsers.byTokens.map((row) => row.user.login)).toEqual(["visible"]);
-    expect(hidden.peaks.tokens).toMatchObject({ totalTokens: 100, userCount: 1 });
 
     sqlite.prepare("update users set shadow_banned_at = null where id = 'banned'").run();
 
@@ -112,19 +109,19 @@ describe("public usage visibility", () => {
       stats.snapshot({
         limit: 10,
         until,
-        windows: { allTime: null, last30d: "2026-06-10", ytd: "2026-01-01" },
+        windows: { last30d: "2026-06-10", ytd: "2026-01-01" },
       }),
     );
     expect(restoredBannedRank).toBe(1);
     expect(restoredVisibleRank).toBe(2);
-    expect(restored.windows.allTime.totals).toMatchObject({
+    expect(restored.windows.ytd.totals).toMatchObject({
       deviceCount: 2,
       rowCount: 2,
       spendUsd: 101,
       totalTokens: 10_100,
       userCount: 2,
     });
-    expect(restored.topUsers.byTokens[0]?.user.login).toBe("banned");
+    expect(restored.windows.ytd.modelsByTokens[0]?.key).toBe("fake-model");
   });
 
   it("applies the same date window as the leaderboard", async () => {
@@ -159,7 +156,7 @@ describe("public usage visibility", () => {
     expect(recentBannedRank).toBe(1);
   });
 
-  it("exposes only public user fields, and no rank on stats top users", async () => {
+  it("exposes only public user fields on leaderboard rows", async () => {
     seedUser(sqlite, {
       avatarUrl: "https://avatar.example/tied",
       id: "tied",
@@ -179,20 +176,9 @@ describe("public usage visibility", () => {
       LeaderboardRepository,
       LeaderboardRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
     );
-    const stats = await buildService(
-      StatsRepository,
-      StatsRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
-    );
 
     const [first] = await Effect.runPromise(
       leaderboard.list({ limit: 10, metric: "tokens", since: "2026-06-10", until }),
-    );
-    const snapshot = await Effect.runPromise(
-      stats.snapshot({
-        limit: 10,
-        until,
-        windows: { allTime: null, last30d: "2026-06-10", ytd: "2026-01-01" },
-      }),
     );
     // Public rows carry no internal user id.
     const user = {
@@ -205,13 +191,6 @@ describe("public usage visibility", () => {
       activeDays: 1,
       lastDate: "2026-07-08",
       rank: 1,
-      spendUsd: 1,
-      totalTokens: 100_000,
-      user,
-    });
-    expect(snapshot.topUsers.byTokens[0]).toEqual({
-      activeDays: 1,
-      lastDate: "2026-07-08",
       spendUsd: 1,
       totalTokens: 100_000,
       user,
@@ -274,7 +253,7 @@ describe("future-dated usage rows", () => {
       stats.snapshot({
         limit: 10,
         until,
-        windows: { allTime: null, last30d: "2026-08-25", ytd: "2026-01-01" },
+        windows: { last30d: "2026-08-25", ytd: "2026-01-01" },
       }),
     );
     for (const window of Object.values(snapshot.windows)) {
@@ -284,13 +263,9 @@ describe("future-dated usage rows", () => {
         totalTokens: 101,
       });
     }
-    expect(snapshot.daily.map((row) => row.date)).toEqual(["2026-09-20"]);
-    expect(snapshot.dailyByModel.map((row) => row.date)).toEqual(["2026-09-20"]);
-    expect(snapshot.peaks.spend).toMatchObject({ date: "2026-09-20", spendUsd: 11 });
-    expect(snapshot.topUsers.bySpend.map((row) => row.user.login)).toEqual([
-      "honest",
-      "timetraveler",
-    ]);
+    for (const window of Object.values(snapshot.windows)) {
+      expect(window.dailyByModel.map((row) => row.date)).toEqual(["2026-09-20"]);
+    }
 
     const profile = await Effect.runPromise(
       profiles.stats("timetraveler", { today: "2026-09-22", until: "2026-09-23" }),

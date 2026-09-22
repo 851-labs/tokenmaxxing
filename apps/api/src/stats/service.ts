@@ -13,8 +13,8 @@ const STATS_CACHE_TTL_SECONDS = 300;
 
 type StatsSnapshot = Omit<StatsResponse, "generatedAt">;
 
-/** Inclusive YYYY-MM-DD lower bound per window; null = all time. */
-type StatsWindowStarts = Record<StatsWindowId, string | null>;
+/** Inclusive YYYY-MM-DD lower bound per window. */
+type StatsWindowStarts = Record<StatsWindowId, string>;
 
 interface StatsServiceShape {
   getStats(): Effect.Effect<StatsResponse>;
@@ -77,7 +77,6 @@ const makeStatsService = Effect.fn("makeStatsService")(function* (
 
 function statsWindowStarts(now: Date): StatsWindowStarts {
   return {
-    allTime: null,
     last30d: trailingWindowStart(THIRTY_DAYS, now),
     ytd: yearStartDayKey(now),
   };

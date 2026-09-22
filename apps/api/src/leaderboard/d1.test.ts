@@ -3,8 +3,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { ProfilesRepositoryLive } from "../profiles/d1";
 import { ProfilesRepository } from "../profiles/service";
-import { StatsRepositoryLive } from "../stats/d1";
-import { StatsRepository } from "../stats/service";
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
 import { buildService } from "../testing/effect";
 import { seedUsage, seedUser } from "../testing/seed";
@@ -127,7 +125,7 @@ describe("D1 leaderboard ranking", () => {
     ]);
   });
 
-  it("ranks ties identically on the leaderboard, profiles and stats top users", async () => {
+  it("ranks ties identically on the leaderboard and profiles", async () => {
     for (const id of ["delta", "bravo", "charlie", "alpha"]) {
       usage(id, "2026-07-01", 5, 50);
     }
@@ -136,20 +134,9 @@ describe("D1 leaderboard ranking", () => {
       ProfilesRepository,
       ProfilesRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
     );
-    const stats = await buildService(
-      StatsRepository,
-      StatsRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
-    );
 
     const entries = await Effect.runPromise(
       leaderboard.list({ limit: 10, metric: "spend", since: null, until }),
-    );
-    const snapshot = await Effect.runPromise(
-      stats.snapshot({
-        limit: 10,
-        until,
-        windows: { allTime: null, last30d: "2026-06-01", ytd: "2026-01-01" },
-      }),
     );
     const profileRanks = await Promise.all(
       entries.map((entry) =>
@@ -159,9 +146,12 @@ describe("D1 leaderboard ranking", () => {
       ),
     );
 
-    const leaderboardOrder = entries.map((entry) => entry.user.login);
-    expect(snapshot.topUsers.bySpend.map((row) => row.user.login)).toEqual(leaderboardOrder);
-    expect(snapshot.topUsers.byTokens.map((row) => row.user.login)).toEqual(leaderboardOrder);
+    expect(entries.map((entry) => entry.user.login)).toEqual([
+      "alpha",
+      "bravo",
+      "charlie",
+      "delta",
+    ]);
     expect(profileRanks).toEqual(entries.map((entry) => entry.rank));
   });
 });

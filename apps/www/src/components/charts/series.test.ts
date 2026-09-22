@@ -48,6 +48,19 @@ describe("selectModelSeries", () => {
     expect(selection.label("model-10")).toBe("Other");
     expect(selection.label("model-11")).toBe("Other");
   });
+
+  it("folds a pre-collapsed Other row into the tail without ranking it", () => {
+    const rows = [
+      { key: "Other", value: 1_000 },
+      { key: "claude-opus", value: 20 },
+      { key: "gpt-5", value: 10 },
+    ];
+
+    const selection = selectModelSeries(rows, (row) => row.value, 3);
+
+    expect(selection.order).toEqual(["claude-opus", "gpt-5", "Other"]);
+    expect(selection.label("Other")).toBe("Other");
+  });
 });
 
 describe("stacked series", () => {

@@ -3,14 +3,14 @@ import { asc, desc, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { Effect, Layer, Schema } from "effect";
 
-import { StatsResponse } from "@tokenmaxxing/api-contract";
-import type { StatsWindow } from "@tokenmaxxing/api-contract";
+import { STATS_CHART_MODEL_LIMIT, StatsResponse } from "@tokenmaxxing/api-contract";
+import type { StatsChartPoint, StatsWindow } from "@tokenmaxxing/api-contract";
 
 import { makeEdgeJsonCache } from "../cloudflare/edge-cache";
 import { Drizzle } from "../database";
 import { singleAggregateRow, usageAggregates, usageMetric } from "../usage/aggregates";
-import { topUsers } from "../usage/ranking";
 import { visibleUsage } from "../usage/visible";
+import { collapseChartModels } from "./chart-models";
 import {
   makeStatsService,
   STATS_CACHE_TTL_SECONDS,
@@ -26,58 +26,37 @@ const makeD1StatsRepository = Effect.fn("makeD1StatsRepository")(function* () {
       Effect.gen(function* () {
         // One D1 round trip. Batched rows come back as objects keyed by
         // column name, so every statement here must select unique names.
-        const [daily, dailyByModel, topUsersBySpend, topUsersByTokens, ...windowRows] =
-          yield* database.use((db) =>
-            db.batch([
-              dailyTotals(db, until),
-              dailyModels(db, until),
-              topUsers(db, { limit, metric: "spend", since: null, until }),
-              topUsers(db, { limit, metric: "tokens", since: null, until }),
-              ...windowStatements(db, windows.allTime, until, limit),
-              ...windowStatements(db, windows.last30d, until, limit),
-              ...windowStatements(db, windows.ytd, until, limit),
-            ]),
-          );
-        const [allTime, last30d, ytd] = yield* Effect.all([
-          statsWindow(windows.allTime, [
+        // The chart rows cover both windows; each window slices its own.
+        const chartSince = windows.last30d < windows.ytd ? windows.last30d : windows.ytd;
+        const [chartRows, ...windowRows] = yield* database.use((db) =>
+          db.batch([
+            dailyModels(db, chartSince, until),
+            ...windowStatements(db, windows.last30d, until, limit),
+            ...windowStatements(db, windows.ytd, until, limit),
+          ]),
+        );
+        const [last30d, ytd] = yield* Effect.all([
+          statsWindow(windows.last30d, chartRows, [
             windowRows[0],
             windowRows[1],
             windowRows[2],
             windowRows[3],
           ]),
-          statsWindow(windows.last30d, [
+          statsWindow(windows.ytd, chartRows, [
             windowRows[4],
             windowRows[5],
             windowRows[6],
             windowRows[7],
           ]),
-          statsWindow(windows.ytd, [windowRows[8], windowRows[9], windowRows[10], windowRows[11]]),
         ]);
 
-        return {
-          daily,
-          dailyByModel,
-          peaks: {
-            spend: peakDay(daily, (day) => day.spendUsd),
-            tokens: peakDay(daily, (day) => day.totalTokens),
-          },
-          topUsers: {
-            bySpend: topUsersBySpend.map(withoutRank),
-            byTokens: topUsersByTokens.map(withoutRank),
-          },
-          windows: { allTime, last30d, ytd },
-        };
+        return { windows: { last30d, ytd } };
       }),
   });
 });
 
 /** The four statements behind one stats window, in `statsWindow` order. */
-function windowStatements(
-  db: DrizzleD1Database,
-  since: string | null,
-  until: string,
-  limit: number,
-) {
+function windowStatements(db: DrizzleD1Database, since: string, until: string, limit: number) {
   return [
     totals(db, since, until),
     rankedBy(db, usageDays.model, since, until, "spend", limit),
@@ -91,11 +70,16 @@ type AwaitedTuple<T extends readonly unknown[]> = { -readonly [K in keyof T]: Aw
 type WindowRows = AwaitedTuple<ReturnType<typeof windowStatements>>;
 
 function statsWindow(
-  since: string | null,
+  since: string,
+  chartRows: readonly StatsChartPoint[],
   [totalRows, modelsBySpend, modelsByTokens, sources]: WindowRows,
 ) {
   return singleAggregateRow(totalRows).pipe(
     Effect.map((windowTotals): StatsWindow => ({
+      dailyByModel: collapseChartModels(
+        chartRows.filter((row) => row.date >= since),
+        STATS_CHART_MODEL_LIMIT,
+      ),
       modelsBySpend,
       modelsByTokens,
       since,
@@ -105,7 +89,7 @@ function statsWindow(
   );
 }
 
-function totals(db: DrizzleD1Database, since: string | null, until: string) {
+function totals(db: DrizzleD1Database, since: string, until: string) {
   return visibleUsage(
     db
       .select({
@@ -128,37 +112,19 @@ function totals(db: DrizzleD1Database, since: string | null, until: string) {
   );
 }
 
-function dailyTotals(db: DrizzleD1Database, until: string) {
-  return visibleUsage(
-    db
-      .select({
-        date: usageDays.date,
-        spendUsd: usageAggregates.spendUsd(),
-        totalTokens: usageAggregates.totalTokens(),
-        userCount: usageAggregates.userCount(),
-      })
-      .from(usageDays)
-      .$dynamic(),
-    { until },
-  )
-    .groupBy(usageDays.date)
-    .orderBy(asc(usageDays.date));
-}
-
-function dailyModels(db: DrizzleD1Database, until: string) {
+function dailyModels(db: DrizzleD1Database, since: string, until: string) {
   return visibleUsage(
     db
       .select({
         date: usageDays.date,
         key: usageDays.model,
-        outputTokens: usageAggregates.outputTokens(),
         rowCount: usageAggregates.rowCount(),
         spendUsd: usageAggregates.spendUsd(),
         totalTokens: usageAggregates.totalTokens(),
       })
       .from(usageDays)
       .$dynamic(),
-    { until },
+    { since, until },
   )
     .groupBy(usageDays.date, usageDays.model)
     .orderBy(asc(usageDays.date), asc(usageDays.model));
@@ -167,7 +133,7 @@ function dailyModels(db: DrizzleD1Database, until: string) {
 function rankedBy(
   db: DrizzleD1Database,
   keyColumn: (typeof usageDays)["model" | "source"],
-  since: string | null,
+  since: string,
   until: string,
   orderBy: "spend" | "tokens",
   limit: number,
@@ -190,30 +156,10 @@ function rankedBy(
     .limit(limit);
 }
 
-/** Stats lists top users without the leaderboard's rank column. */
-function withoutRank<Row extends { rank: number }>({ rank: _rank, ...row }: Row) {
-  return row;
-}
-
-/** The busiest day by `metric`; the earliest one wins a tie. */
-function peakDay<Day extends { date: string }>(
-  days: readonly Day[],
-  metric: (day: Day) => number,
-): Day | null {
-  let peak: Day | null = null;
-  for (const day of days) {
-    if (peak === null || metric(day) > metric(peak)) {
-      peak = day;
-    }
-  }
-
-  return peak;
-}
-
 const StatsRepositoryLive = Layer.effect(StatsRepository, makeD1StatsRepository());
 
-/** Cache API key only — never routed. Byte-identical to the key the worker
- * used before, so deploys don't cold-start the colo caches. */
+/** Cache API key only — never routed. Entries in an older response shape
+ * fail to decode and fall through to D1, so the key survives shape changes. */
 const STATS_CACHE_KEY = "https://api.tokenmaxxing.sh/__cache/stats";
 
 // Suspended so `caches.default` is resolved when the layer builds (worker
