@@ -3,11 +3,12 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { describe, expect, it } from "vite-plus/test";
 
+import { makeTestLogger, type TestLogger } from "../testing/logger";
 import {
+  type LatestCliRelease,
   latestReleaseFromRegistryBody,
   makeNpmRegistry,
   noLatestCliRelease,
-  type NpmRegistryShape,
 } from "./npm-registry";
 import { latestRelease } from "./test-fixtures";
 
@@ -60,7 +61,7 @@ const registryBody = {
 function makeRegistry(
   respond: (signal: AbortSignal) => Response | "hang",
   options: { timeout?: Duration.Input } = {},
-): { calls: () => number; registry: NpmRegistryShape } {
+): { calls: () => number; latestCliRelease: () => Promise<LatestCliRelease>; logs: TestLogger } {
   let calls = 0;
   const http = HttpClient.make((request, _url, signal) => {
     calls += 1;
@@ -72,41 +73,64 @@ function makeRegistry(
   const registry = Effect.runSync(
     makeNpmRegistry(options).pipe(Effect.provideService(HttpClient.HttpClient, http)),
   );
+  const logs = makeTestLogger();
 
-  return { calls: () => calls, registry };
+  return {
+    calls: () => calls,
+    latestCliRelease: () =>
+      Effect.runPromise(registry.latestCliRelease.pipe(Effect.provide(logs.layer))),
+    logs,
+  };
+}
+
+/** The degraded-lookup warning, matched down to the underlying failure's tag. */
+function registryFailureLog(reason: "StatusCodeError" | "TimeoutError") {
+  const cause =
+    reason === "TimeoutError"
+      ? expect.objectContaining({ _tag: "TimeoutError" })
+      : expect.objectContaining({
+          _tag: "HttpClientError",
+          reason: expect.objectContaining({ _tag: reason }),
+        });
+
+  return expect.objectContaining({
+    args: [expect.objectContaining({ _tag: "NpmRegistryError", cause })],
+    level: "Warn",
+    message: "npm registry lookup failed",
+  });
 }
 
 describe("NpmRegistry.latestCliRelease", () => {
   it("caches a successful lookup", async () => {
-    const { calls, registry } = makeRegistry(() => Response.json(registryBody));
+    const { calls, latestCliRelease, logs } = makeRegistry(() => Response.json(registryBody));
 
-    const first = await Effect.runPromise(registry.latestCliRelease);
-    const second = await Effect.runPromise(registry.latestCliRelease);
+    const first = await latestCliRelease();
+    const second = await latestCliRelease();
 
     expect(first.version).toBe("0.5.4");
     expect(second).toEqual(first);
     expect(calls()).toBe(1);
+    expect(logs.entries).toEqual([]);
   });
 
   it("degrades failures to no release and retries on the next lookup", async () => {
     let status = 503;
-    const { calls, registry } = makeRegistry(() =>
+    const { calls, latestCliRelease, logs } = makeRegistry(() =>
       status === 200 ? Response.json(registryBody) : new Response("down", { status }),
     );
 
-    await expect(Effect.runPromise(registry.latestCliRelease)).resolves.toEqual(
-      noLatestCliRelease(),
-    );
+    await expect(latestCliRelease()).resolves.toEqual(noLatestCliRelease());
+    expect(logs.entries).toEqual([registryFailureLog("StatusCodeError")]);
+
     status = 200;
-    await expect(Effect.runPromise(registry.latestCliRelease)).resolves.toMatchObject({
-      version: "0.5.4",
-    });
+    await expect(latestCliRelease()).resolves.toMatchObject({ version: "0.5.4" });
     expect(calls()).toBe(2);
+    expect(logs.entries).toHaveLength(1);
   });
 
   it("aborts a registry request that exceeds the timeout", async () => {
     let signal: AbortSignal | undefined;
-    const { registry } = makeRegistry(
+    const { latestCliRelease, logs } = makeRegistry(
       (requestSignal) => {
         signal = requestSignal;
         return "hang";
@@ -114,9 +138,8 @@ describe("NpmRegistry.latestCliRelease", () => {
       { timeout: "10 millis" },
     );
 
-    await expect(Effect.runPromise(registry.latestCliRelease)).resolves.toEqual(
-      noLatestCliRelease(),
-    );
+    await expect(latestCliRelease()).resolves.toEqual(noLatestCliRelease());
     expect(signal?.aborted).toBe(true);
+    expect(logs.entries).toEqual([registryFailureLog("TimeoutError")]);
   });
 });

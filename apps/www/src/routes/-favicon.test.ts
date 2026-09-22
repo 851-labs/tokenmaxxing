@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { handleDefaultFaviconRequest } from "./favicon[.]svg";
 import type { FaviconCache } from "./favicon/{$login}[.]svg";
@@ -53,10 +53,13 @@ describe("profile favicon route", () => {
   });
 
   it("returns a short-lived gradient fallback when identity loading fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warn.mockRestore());
+    const error = new Error("API unavailable");
     const handler = makeProfileFaviconHandler({
       cache: () => null,
       loadIdentity: async () => {
-        throw new Error("API unavailable");
+        throw error;
       },
     });
 
@@ -69,6 +72,10 @@ describe("profile favicon route", () => {
     expect(response.headers.get("cache-control")).toContain("max-age=30");
     expect(svg).toContain('id="gradient"');
     expect(svg).not.toContain('id="avatar"');
+    expect(warn).toHaveBeenCalledExactlyOnceWith("Profile favicon identity load failed", {
+      error,
+      login: "pondorasti",
+    });
   });
 
   it("returns the gradient when an avatar redirects instead of following it", async () => {

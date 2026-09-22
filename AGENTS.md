@@ -20,3 +20,4 @@
 - `date` columns are opaque `YYYY-MM-DD` strings (ccusage local-time buckets); never parse them into Date objects for bucketing. Do day arithmetic with `shiftDayKey`/`utcDayKey` from `@tokenmaxxing/api-contract` (API windows live in `apps/api/src/date-keys.ts`).
 - Published CLIs bundle a frozen contract. `packages/api-contract/fixtures/` (recorded CLI requests + the CLI endpoint OpenAPI slice) is a compatibility contract: review diffs there as breaking-change reviews, and add a `legacy/` fixture before changing a shape a released CLI sends.
 - CLI tokens (`tmx_` prefix) never expire; revocation (`revokedAt`) is the only kill switch.
+- Keep `bun run test` output clean. A test that exercises a logging path captures and asserts the log (`makeTestLogger` in `apps/api/src/testing/logger.ts`; `vi.spyOn(console, ...)` outside Effect) instead of letting it print. `makeTestApp` already captures into `app.logs`. Captured Effect logs are replayed when a test fails.

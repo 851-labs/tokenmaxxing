@@ -1,4 +1,4 @@
-import { Context, Effect, Option } from "effect";
+import { Cause, Context, Effect, Logger, Option } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import { describe, expect, it } from "vite-plus/test";
@@ -8,6 +8,7 @@ import { AppConfig } from "../../config";
 import { makeGitHubProvider } from "../../oauth/github";
 import { OAuthStatusError } from "../../oauth/provider";
 import { OAuthProviders } from "../../oauth/registry";
+import { makeTestLogger } from "../../testing/logger";
 import { TokensService, type TokensServiceShape } from "../../tokens/service";
 import {
   defaultOAuthRedirectPath,
@@ -173,6 +174,12 @@ describe("oauth routes", () => {
       "oauth_failed",
     );
     expect(failing.calls.signOuts).toEqual([]);
+    expect(failing.logs.entries).toEqual([
+      expect.objectContaining({ level: "Error", message: "github oauth callback failed" }),
+    ]);
+    expect(failing.logs.entries.map((entry) => Cause.squash(entry.cause))).toEqual([
+      expect.any(OAuthStatusError),
+    ]);
 
     const conflicting = oauthHandler({ signIn: "conflict" });
     const conflict = await conflicting.handler(
@@ -182,6 +189,8 @@ describe("oauth routes", () => {
       "oauth_account_conflict",
     );
     expect(conflicting.calls.signOuts).toEqual([]);
+    // A link conflict is an expected outcome, not an incident.
+    expect(conflicting.logs.entries).toEqual([]);
   });
 });
 
@@ -224,7 +233,9 @@ function oauthHandler(options: { exchange?: "fail"; signIn?: "conflict" } = {}) 
       Effect.provide(FetchHttpClient.layer),
     ),
   );
+  const logs = makeTestLogger();
   const services = Context.empty().pipe(
+    Context.add(Logger.CurrentLoggers, new Set([logs.logger])),
     Context.add(
       AuthService,
       AuthService.of({
@@ -268,7 +279,7 @@ function oauthHandler(options: { exchange?: "fail"; signIn?: "conflict" } = {}) 
   );
   const { handler } = HttpRouter.toWebHandler(OAuthRoutesLive, { disableLogger: true });
 
-  return { calls, handler: (request: Request) => handler(request, services) };
+  return { calls, handler: (request: Request) => handler(request, services), logs };
 }
 
 function callbackRequest(query: string, cookies: Record<string, string>): Request {
