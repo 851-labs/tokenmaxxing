@@ -3,9 +3,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { ProfileDailyResponse, ProfileResponse } from "@tokenmaxxing/api-contract";
 
+import { profileOgVersion } from "../lib/og";
 import type { OgBrowser, OgR2Bucket, OgRuntimeEnv } from "../lib/og-runtime";
 import { ProfileOgCard } from "./og-card/$login";
-import { makeOgImageHandler, ogCacheKey, VERSIONED_CACHE_CONTROL } from "./og/{$login}[.]png";
+import {
+  makeOgImageHandler,
+  ogCacheKey,
+  PREVIEW_CACHE_CONTROL,
+  TRANSIENT_CACHE_CONTROL,
+  VERSIONED_CACHE_CONTROL,
+} from "./og/{$login}[.]png";
 
 type Daily = typeof ProfileDailyResponse.Type;
 type Profile = typeof ProfileResponse.Type;
@@ -14,6 +21,7 @@ const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const PNG_FROM_BROWSER = new Uint8Array([...PNG_SIGNATURE, 1]);
 const PNG_FROM_CACHE = new Uint8Array([...PNG_SIGNATURE, 2]);
 const PNG_FROM_PRIOR_CACHE = new Uint8Array([...PNG_SIGNATURE, 3]);
+const VERSION = profileOgVersion(profile());
 
 describe("profile OG card", () => {
   it("renders the stats html card", () => {
@@ -28,13 +36,16 @@ describe("profile OG card", () => {
 
 describe("profile OG image route", () => {
   it("returns cached png bytes without calling Browser Run", async () => {
-    const key = ogCacheKey("pondorasti", "abc");
+    const key = ogCacheKey("pondorasti", VERSION);
     const bucket = memoryBucket([[key, PNG_FROM_CACHE]]);
     const captureScreenshot = screenshotSpy(PNG_FROM_BROWSER);
-    const response = await requestOgImage("https://tokenmaxxing.sh/og/pondorasti.png?v=abc", {
-      captureScreenshot,
-      env: { BUCKET: bucket },
-    });
+    const response = await requestOgImage(
+      `https://tokenmaxxing.sh/og/pondorasti.png?v=${VERSION}`,
+      {
+        captureScreenshot,
+        env: { BUCKET: bucket },
+      },
+    );
     const bytes = new Uint8Array(await response.arrayBuffer());
 
     expect(response.status).toBe(200);
@@ -49,10 +60,13 @@ describe("profile OG image route", () => {
     const bucket = memoryBucket();
     const browser = browserBinding();
     const captureScreenshot = screenshotSpy(PNG_FROM_BROWSER);
-    const response = await requestOgImage("https://tokenmaxxing.sh/og/pondorasti.png?v=abc", {
-      captureScreenshot,
-      env: { BROWSER: browser, BUCKET: bucket },
-    });
+    const response = await requestOgImage(
+      `https://tokenmaxxing.sh/og/pondorasti.png?v=${VERSION}`,
+      {
+        captureScreenshot,
+        env: { BROWSER: browser, BUCKET: bucket },
+      },
+    );
     const bytes = new Uint8Array(await response.arrayBuffer());
 
     expect(Array.from(bytes)).toEqual(Array.from(PNG_FROM_BROWSER));
@@ -61,11 +75,64 @@ describe("profile OG image route", () => {
       browser,
       "https://tokenmaxxing.sh/og-card/pondorasti",
     );
-    expect(bucket.putCalls.map((call) => call.key)).toEqual([ogCacheKey("pondorasti", "abc")]);
+    expect(bucket.putCalls.map((call) => call.key)).toEqual([ogCacheKey("pondorasti", VERSION)]);
+  });
+
+  it("ignores a spoofed ?v= instead of minting a new cache key or screenshot", async () => {
+    const bucket = memoryBucket([[ogCacheKey("pondorasti", VERSION), PNG_FROM_CACHE]]);
+    const captureScreenshot = screenshotSpy(PNG_FROM_BROWSER);
+    const response = await requestOgImage("https://tokenmaxxing.sh/og/pondorasti.png?v=spoofed", {
+      captureScreenshot,
+      env: { BROWSER: browserBinding(), BUCKET: bucket },
+    });
+    const bytes = new Uint8Array(await response.arrayBuffer());
+
+    expect(Array.from(bytes)).toEqual(Array.from(PNG_FROM_CACHE));
+    expect(response.headers.get("x-og-source")).toBe("cache");
+    expect(response.headers.get("cache-control")).toBe(PREVIEW_CACHE_CONTROL);
+    expect(captureScreenshot).not.toHaveBeenCalled();
+    expect(bucket.putCalls).toEqual([]);
+  });
+
+  it("stores a spoofed ?v= miss under the real fingerprint without immutable caching", async () => {
+    const bucket = memoryBucket();
+    const response = await requestOgImage("https://tokenmaxxing.sh/og/pondorasti.png?v=spoofed", {
+      env: { BROWSER: browserBinding(), BUCKET: bucket },
+    });
+
+    expect(response.headers.get("cache-control")).toBe(PREVIEW_CACHE_CONTROL);
+    expect(bucket.putCalls.map((call) => call.key)).toEqual([ogCacheKey("pondorasti", VERSION)]);
+  });
+
+  it("serves a briefly cached fallback png when the profile loader throws", async () => {
+    const captureScreenshot = screenshotSpy(PNG_FROM_BROWSER);
+    const bucket = memoryBucket([[ogCacheKey("pondorasti", "old"), PNG_FROM_PRIOR_CACHE]]);
+    const handler = makeOgImageHandler({
+      captureScreenshot,
+      getRuntimeEnv: async () => ({ BROWSER: browserBinding(), BUCKET: bucket }),
+      loadProfileOgData: async () => {
+        throw new Error("Failed to load profile pondorasti: 503");
+      },
+    });
+
+    const response = await handler({
+      params: { login: "pondorasti" },
+      request: new Request(`https://tokenmaxxing.sh/og/pondorasti.png?v=${VERSION}`),
+    });
+    const bytes = new Uint8Array(await response.arrayBuffer());
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("cache-control")).toBe(TRANSIENT_CACHE_CONTROL);
+    expect(response.headers.get("x-og-source")).toBe("fallback");
+    expect(response.headers.get("x-og-error")).toBe("Failed to load profile pondorasti: 503");
+    expect(Array.from(bytes.slice(0, PNG_SIGNATURE.length))).toEqual(Array.from(PNG_SIGNATURE));
+    expect(captureScreenshot).not.toHaveBeenCalled();
+    expect(bucket.putCalls).toEqual([]);
   });
 
   it("falls back to the latest prior cached image when Browser Run fails", async () => {
-    const currentKey = ogCacheKey("pondorasti", "new");
+    const currentKey = ogCacheKey("pondorasti", VERSION);
     const priorKey = ogCacheKey("pondorasti", "old");
     const bucket = memoryBucket([[priorKey, PNG_FROM_PRIOR_CACHE]]);
     const captureScreenshot = vi.fn<(browser: OgBrowser, url: string) => Promise<Uint8Array>>(
@@ -73,10 +140,13 @@ describe("profile OG image route", () => {
         throw new Error("browser failed");
       },
     );
-    const response = await requestOgImage("https://tokenmaxxing.sh/og/pondorasti.png?v=new", {
-      captureScreenshot,
-      env: { BROWSER: browserBinding(), BUCKET: bucket },
-    });
+    const response = await requestOgImage(
+      `https://tokenmaxxing.sh/og/pondorasti.png?v=${VERSION}`,
+      {
+        captureScreenshot,
+        env: { BROWSER: browserBinding(), BUCKET: bucket },
+      },
+    );
     const bytes = new Uint8Array(await response.arrayBuffer());
 
     expect(currentKey).not.toBe(priorKey);
