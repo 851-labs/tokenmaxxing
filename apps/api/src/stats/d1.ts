@@ -199,12 +199,7 @@ function rankedBy(
     .limit(limit);
 }
 
-function usersBy(
-  db: DrizzleD1Database,
-  until: string,
-  orderBy: "spend" | "tokens",
-  limit: number,
-) {
+function usersBy(db: DrizzleD1Database, until: string, orderBy: "spend" | "tokens", limit: number) {
   const spendUsd = sql<number>`coalesce(sum(${usageDays.costUsd}), 0)`.as("spend_usd");
   const totalTokens = sql<number>`coalesce(sum(${usageDays.totalTokens}), 0)`.as(
     "total_tokens_sum",
