@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Effect, Layer } from "effect";
 
 import { Drizzle } from "../database";
-import { AdminRepository, type AdminUserSnapshot } from "./service";
+import { AdminRepository, AdminService, type AdminUserSnapshot, makeAdminService } from "./service";
 
 const makeD1AdminRepository = Effect.fn("makeD1AdminRepository")(function* () {
   const database = yield* Drizzle;
@@ -266,6 +266,10 @@ const makeD1AdminRepository = Effect.fn("makeD1AdminRepository")(function* () {
 
 const AdminRepositoryLive = Layer.effect(AdminRepository, makeD1AdminRepository());
 
+const AdminServiceLive = Layer.effect(AdminService, makeAdminService()).pipe(
+  Layer.provide(AdminRepositoryLive),
+);
+
 function groupBy<A, K>(values: readonly A[], key: (value: A) => K): Map<K, A[]> {
   const grouped = new Map<K, A[]>();
   for (const value of values) {
@@ -281,4 +285,4 @@ function groupBy<A, K>(values: readonly A[], key: (value: A) => K): Map<K, A[]> 
   return grouped;
 }
 
-export { AdminRepositoryLive };
+export { AdminRepositoryLive, AdminServiceLive };

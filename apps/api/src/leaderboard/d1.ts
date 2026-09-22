@@ -4,7 +4,7 @@ import { Effect, Layer } from "effect";
 
 import { toAuthUser } from "../auth/d1";
 import { Drizzle } from "../database";
-import { LeaderboardRepository } from "./service";
+import { LeaderboardRepository, LeaderboardService, makeLeaderboardService } from "./service";
 
 const makeD1LeaderboardRepository = Effect.fn("makeD1LeaderboardRepository")(function* () {
   const database = yield* Drizzle;
@@ -62,4 +62,8 @@ const LeaderboardRepositoryLive = Layer.effect(
   makeD1LeaderboardRepository(),
 );
 
-export { LeaderboardRepositoryLive };
+const LeaderboardServiceLive = Layer.effect(LeaderboardService, makeLeaderboardService()).pipe(
+  Layer.provide(LeaderboardRepositoryLive),
+);
+
+export { LeaderboardRepositoryLive, LeaderboardServiceLive };

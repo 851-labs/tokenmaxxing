@@ -12,7 +12,7 @@ import { Effect, Layer, Option } from "effect";
 import { toAuthUser } from "../auth/d1";
 import { Drizzle, firstRow } from "../database";
 import { RawUsageObjectStore } from "../usage/raw-store";
-import { TokensRepository } from "./service";
+import { makeTokensService, TokensRepository, TokensService } from "./service";
 
 const makeD1TokensRepository = Effect.fn("makeD1TokensRepository")(function* () {
   const database = yield* Drizzle;
@@ -175,4 +175,8 @@ function isLastUsedStale(lastUsedAt: Date | null, now: Date): boolean {
   return lastUsedAt === null || now.getTime() - lastUsedAt.getTime() >= LAST_USED_REFRESH_MS;
 }
 
-export { isLastUsedStale, TokensRepositoryLive };
+const TokensServiceLive = Layer.effect(TokensService, makeTokensService()).pipe(
+  Layer.provide(TokensRepositoryLive),
+);
+
+export { isLastUsedStale, TokensRepositoryLive, TokensServiceLive };

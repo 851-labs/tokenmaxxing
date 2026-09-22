@@ -6,11 +6,9 @@ import { AdminService } from "../admin/service";
 import { AuthService } from "../auth/service";
 import { CliLoginService } from "../clilogin/service";
 import { AppConfig } from "../config";
-import { Drizzle } from "../database";
 import { makeApiHttpEffect } from "../http/layer";
-import { AuthorizationLive } from "../http/middleware/authorization";
-import { CliAuthLive } from "../http/middleware/cli-auth";
 import { LeaderboardService } from "../leaderboard/service";
+import { OAuthProviders } from "../oauth/registry";
 import { ProfilesService } from "../profiles/service";
 import { StatsService } from "../stats/service";
 import { TokensService } from "../tokens/service";
@@ -61,13 +59,13 @@ async function makeTestApp(services: TestAppServices = {}): Promise<TestApp> {
   const tokens = stub<TokensService["Service"]>("TokensService", services.tokens);
   const usage = stub<UsageService["Service"]>("UsageService", services.usage);
 
-  // Mirrors worker.ts: handlers also resolve services per request.
-  const requestServices = Context.empty().pipe(
+  const context = Context.empty().pipe(
     Context.add(AdminService, admin),
     Context.add(AppConfig, testConfig),
     Context.add(AuthService, auth),
     Context.add(CliLoginService, cliLogin),
     Context.add(LeaderboardService, leaderboard),
+    Context.add(OAuthProviders, stub<OAuthProviders["Service"]>("OAuthProviders")),
     Context.add(ProfilesService, profiles),
     Context.add(StatsService, stats),
     Context.add(TokensService, tokens),
@@ -76,22 +74,7 @@ async function makeTestApp(services: TestAppServices = {}): Promise<TestApp> {
 
   const scope = Effect.runSync(Scope.make());
   const httpEffect = await Effect.runPromise(
-    makeApiHttpEffect({
-      adminServiceLayer: Layer.succeed(AdminService, admin),
-      appConfigLayer: Layer.succeed(AppConfig, testConfig),
-      authServiceLayer: Layer.succeed(AuthService, auth),
-      cliLoginServiceLayer: Layer.succeed(CliLoginService, cliLogin),
-      drizzleLayer: Layer.succeed(
-        Drizzle,
-        Drizzle.of({ use: () => Effect.die("Drizzle is not available in HTTP tests") }),
-      ),
-      leaderboardServiceLayer: Layer.succeed(LeaderboardService, leaderboard),
-      middlewareLayer: Layer.mergeAll(AuthorizationLive, CliAuthLive),
-      profilesServiceLayer: Layer.succeed(ProfilesService, profiles),
-      statsServiceLayer: Layer.succeed(StatsService, stats),
-      tokensServiceLayer: Layer.succeed(TokensService, tokens),
-      usageServiceLayer: Layer.succeed(UsageService, usage),
-    }).pipe(
+    makeApiHttpEffect(Layer.succeedContext(context)).pipe(
       // HttpApiBuilder.layer declares FileSystem for file responses; no
       // route under test serves files.
       Effect.provide(FileSystem.layerNoop({})),
@@ -104,7 +87,6 @@ async function makeTestApp(services: TestAppServices = {}): Promise<TestApp> {
     fetch: (request) =>
       Effect.runPromise(
         httpEffect.pipe(
-          Effect.provide(requestServices),
           Effect.provideService(
             HttpServerRequest.HttpServerRequest,
             HttpServerRequest.fromWeb(request),

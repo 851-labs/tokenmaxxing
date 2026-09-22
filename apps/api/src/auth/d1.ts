@@ -17,7 +17,13 @@ import { Effect, Layer, Option } from "effect";
 import type { AuthUser } from "@tokenmaxxing/api-contract";
 
 import { DatabaseError, Drizzle, firstRow } from "../database";
-import { AuthRepository, type OAuthProfile, UserRecordMissing } from "./service";
+import {
+  AuthRepository,
+  AuthService,
+  makeAuthService,
+  type OAuthProfile,
+  UserRecordMissing,
+} from "./service";
 
 const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
   const database = yield* Drizzle;
@@ -267,6 +273,10 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
 
 const AuthRepositoryLive = Layer.effect(AuthRepository, makeD1AuthRepository());
 
+const AuthServiceLive = Layer.effect(AuthService, makeAuthService()).pipe(
+  Layer.provide(AuthRepositoryLive),
+);
+
 function accountInsert(userId: string, profile: OAuthProfile, now: Date) {
   return {
     avatarUrl: profile.avatarUrl,
@@ -311,4 +321,4 @@ function toAccountProfile(account: UserAccount): OAuthProfile {
   };
 }
 
-export { AuthRepositoryLive, mergedShadowBan, toAuthUser };
+export { AuthRepositoryLive, AuthServiceLive, mergedShadowBan, toAuthUser };

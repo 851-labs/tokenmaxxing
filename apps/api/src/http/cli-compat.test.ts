@@ -11,15 +11,13 @@ import { AdminService } from "../admin/service";
 import { AuthService } from "../auth/service";
 import { CliLoginService } from "../clilogin/service";
 import { AppConfig } from "../config";
-import { Drizzle } from "../database";
 import { LeaderboardService } from "../leaderboard/service";
+import { OAuthProviders } from "../oauth/registry";
 import { ProfilesService } from "../profiles/service";
 import { StatsService } from "../stats/service";
 import { TokensService } from "../tokens/service";
 import { makeUsageService, UsageRepository, UsageService } from "../usage/service";
 import { makeApiHttpEffect } from "./layer";
-import { AuthorizationLive } from "./middleware/authorization";
-import { CliAuthLive } from "./middleware/cli-auth";
 
 /**
  * Replays every recorded CLI request (packages/api-contract/fixtures/
@@ -129,31 +127,15 @@ beforeAll(async () => {
     Context.add(AuthService, auth),
     Context.add(CliLoginService, cliLogin),
     Context.add(LeaderboardService, unused<LeaderboardService["Service"]>()),
+    Context.add(OAuthProviders, unused<OAuthProviders["Service"]>()),
     Context.add(ProfilesService, unused<ProfilesService["Service"]>()),
     Context.add(StatsService, unused<StatsService["Service"]>()),
     Context.add(TokensService, tokens),
     Context.add(UsageService, usage),
   );
-  const serviceLayer = <I, S>(tag: Context.Key<I, S>) =>
-    Layer.succeed(tag, Context.get(services as Context.Context<I>, tag));
-
   scope = await Effect.runPromise(Scope.make());
   const httpEffect = await Effect.runPromise(
-    makeApiHttpEffect({
-      adminServiceLayer: serviceLayer(AdminService),
-      appConfigLayer: serviceLayer(AppConfig),
-      authServiceLayer: serviceLayer(AuthService),
-      cliLoginServiceLayer: serviceLayer(CliLoginService),
-      drizzleLayer: Layer.succeed(Drizzle, unused<Drizzle["Service"]>()),
-      leaderboardServiceLayer: serviceLayer(LeaderboardService),
-      middlewareLayer: Layer.mergeAll(AuthorizationLive, CliAuthLive).pipe(
-        Layer.provide(Layer.mergeAll(serviceLayer(AuthService), serviceLayer(TokensService))),
-      ),
-      profilesServiceLayer: serviceLayer(ProfilesService),
-      statsServiceLayer: serviceLayer(StatsService),
-      tokensServiceLayer: serviceLayer(TokensService),
-      usageServiceLayer: serviceLayer(UsageService),
-    }).pipe(
+    makeApiHttpEffect(Layer.succeedContext(services)).pipe(
       // Only multipart payloads touch the file system; none of these do.
       Effect.provide(FileSystem.layerNoop({})),
       Scope.provide(scope),
@@ -167,7 +149,6 @@ beforeAll(async () => {
           HttpServerRequest.HttpServerRequest,
           HttpServerRequest.fromWeb(request),
         ),
-        Effect.provide(services),
         Scope.provide(scope),
         Effect.map((response) => HttpServerResponse.toWeb(response)),
       ) as Effect.Effect<Response>,

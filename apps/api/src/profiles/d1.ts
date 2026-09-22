@@ -4,7 +4,7 @@ import { Effect, Layer, Option } from "effect";
 
 import { toAuthUser } from "../auth/d1";
 import { Drizzle, firstRow } from "../database";
-import { ProfilesRepository } from "./service";
+import { makeProfilesService, ProfilesRepository, ProfilesService } from "./service";
 import { usageStreaks } from "./streaks";
 
 const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function* () {
@@ -190,4 +190,8 @@ function peakSpendDay(days: readonly { date: string; spendUsd: number }[]) {
   return peak;
 }
 
-export { ProfilesRepositoryLive };
+const ProfilesServiceLive = Layer.effect(ProfilesService, makeProfilesService()).pipe(
+  Layer.provide(ProfilesRepositoryLive),
+);
+
+export { ProfilesRepositoryLive, ProfilesServiceLive };
