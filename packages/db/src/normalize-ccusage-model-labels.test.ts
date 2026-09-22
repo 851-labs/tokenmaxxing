@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { applyMigration, applyMigrations, readMigration } from "./migrations";
 
-const MIGRATION_TAG = "0011_normalize_ccusage_model_labels";
+const MIGRATION_TAG = "20260722183503_normalize_ccusage_model_labels";
 
 describe("normalize ccusage model labels migration", () => {
   let database: DatabaseSync;

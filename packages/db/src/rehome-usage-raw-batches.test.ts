@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { applyMigration, applyMigrations, readMigration } from "./migrations";
 
-const MIGRATION_TAG = "0014_rehome_usage_raw_batches";
+const MIGRATION_TAG = "20260922190224_rehome_usage_raw_batches";
 
 describe("rehome usage raw batches migration", () => {
   let database: DatabaseSync;

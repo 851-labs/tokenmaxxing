@@ -17,16 +17,24 @@ import {
   ServiceRepairStatus,
 } from "@tokenmaxxing/api-contract";
 
-const users = sqliteTable("users", {
-  id: text("id").primaryKey(),
-  login: text("login").notNull().unique("users_login_unique"),
-  name: text("name"),
-  avatarUrl: text("avatar_url"),
-  shadowBannedAt: integer("shadow_banned_at", { mode: "timestamp_ms" }),
-  shadowBannedByUserId: text("shadow_banned_by_user_id"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-});
+// Unique columns are declared as `uniqueIndex` rather than column-level
+// `.unique()`: drizzle-kit v1 renders `.unique()` as an inline table
+// constraint, but these were created as named unique indexes (drizzle-kit
+// v0), and redeclaring them would make `db:generate` rebuild the tables.
+const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    login: text("login").notNull(),
+    name: text("name"),
+    avatarUrl: text("avatar_url"),
+    shadowBannedAt: integer("shadow_banned_at", { mode: "timestamp_ms" }),
+    shadowBannedByUserId: text("shadow_banned_by_user_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [uniqueIndex("users_login_unique").on(table.login)],
+);
 
 const userAccounts = sqliteTable(
   "user_accounts",
@@ -81,8 +89,8 @@ const cliLoginRequests = sqliteTable(
   "cli_login_requests",
   {
     id: text("id").primaryKey(),
-    code: text("code").notNull().unique("cli_login_requests_code_unique"),
-    deviceCodeHash: text("device_code_hash").unique("cli_login_requests_device_code_hash_unique"),
+    code: text("code").notNull(),
+    deviceCodeHash: text("device_code_hash"),
     status: text("status", { enum: ["pending", "approved"] })
       .notNull()
       .default("pending"),
@@ -96,6 +104,8 @@ const cliLoginRequests = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
+    uniqueIndex("cli_login_requests_code_unique").on(table.code),
+    uniqueIndex("cli_login_requests_device_code_hash_unique").on(table.deviceCodeHash),
     index("cli_login_requests_expires_at_idx").on(table.expiresAt),
     // Account merges re-point rows by user_id, and deleting a user cascades here.
     index("cli_login_requests_user_idx").on(table.userId),
@@ -107,7 +117,7 @@ const cliTokens = sqliteTable(
   "cli_tokens",
   {
     id: text("id").primaryKey(),
-    tokenHash: text("token_hash").notNull().unique("cli_tokens_token_hash_unique"),
+    tokenHash: text("token_hash").notNull(),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -117,7 +127,10 @@ const cliTokens = sqliteTable(
     lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
     revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
   },
-  (table) => [index("cli_tokens_user_idx").on(table.userId)],
+  (table) => [
+    uniqueIndex("cli_tokens_token_hash_unique").on(table.tokenHash),
+    index("cli_tokens_user_idx").on(table.userId),
+  ],
 );
 
 /**

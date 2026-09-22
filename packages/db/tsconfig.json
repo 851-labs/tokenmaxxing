@@ -1,4 +1,13 @@
 {
   "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    // Same targets as the root `paths`, redeclared relative to this file:
+    // drizzle-kit 1.0.0-rc.4 resolves inherited `paths` against the nearest
+    // tsconfig's directory instead of the one that declares them.
+    "paths": {
+      "@tokenmaxxing/api-contract": ["../api-contract/src/index.ts"],
+      "@tokenmaxxing/db": ["./src/index.ts"]
+    }
+  },
   "include": ["src/**/*.ts", "drizzle.config.ts"]
 }

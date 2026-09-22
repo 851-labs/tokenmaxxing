@@ -163,7 +163,7 @@ function dailyModels(db: DrizzleD1Database, until: string) {
 
 function rankedBy(
   db: DrizzleD1Database,
-  keyColumn: typeof usageDays.model | typeof usageDays.source,
+  keyColumn: (typeof usageDays)["model" | "source"],
   since: string | null,
   until: string,
   orderBy: "spend" | "tokens",
