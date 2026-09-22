@@ -1,13 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-const SITE_URL = "https://tokenmaxxing.sh";
-const GITHUB_URL = "https://github.com/851-labs/tokenmaxxing";
-const DISCORD_URL = "https://discord.gg/WzX6BpfaRH";
-const X_URL = "https://x.com/pondorasti";
+import { SUPPORTED_AGENTS } from "../lib/agents";
+import { textResponse } from "../lib/http";
+import {
+  CCUSAGE_URL,
+  DISCORD_URL,
+  GITHUB_URL,
+  NPM_INSTALL_COMMAND,
+  SITE_NAME,
+  siteUrl,
+  X_URL,
+} from "../lib/site";
 
 /** Curated llms.txt for answer engines and coding agents. Copy is sourced from
  * the homepage FAQ and the privacy page so it stays accurate to the product. */
-const LLMS_TXT = `# tokenmaxxing.sh
+function buildLlmsTxt(): string {
+  return `# ${SITE_NAME}
 
 > The social leaderboard for LLM coding-agent token usage. tokenmaxxing syncs your local usage from supported coding agents, turns it into daily token and spend totals, and lets you compare with other users on a public leaderboard.
 
@@ -16,42 +24,40 @@ const LLMS_TXT = `# tokenmaxxing.sh
 Install the CLI, then run the bootstrap command. Bootstrap signs you in, syncs your usage, and can set up automatic syncing.
 
 \`\`\`
-npm install -g @851-labs/tokenmaxxing@latest
+${NPM_INSTALL_COMMAND}
 tokenmaxxing bootstrap
 \`\`\`
 
 ## Supported agents
 
-Usage is parsed locally via [ccusage](https://ccusage.com/). Only daily aggregates (date, model name, agent source, token counts, and API-equivalent cost) are uploaded — prompts, file paths, project names, and session content are never uploaded.
+Usage is parsed locally via [ccusage](${CCUSAGE_URL}). Only daily aggregates (date, model name, agent source, token counts, and API-equivalent cost) are uploaded — prompts, file paths, project names, and session content are never uploaded.
 
-- Claude Code
-- OpenAI Codex
-- Cursor
-- OpenCode
-- Gemini CLI
+${SUPPORTED_AGENTS.map((agent) => `- ${agent.label}`).join("\n")}
 
 ## Links
 
-- [Site](${SITE_URL})
-- [Privacy](${SITE_URL}/privacy)
-- [Terms](${SITE_URL}/terms)
+- [Site](${siteUrl("/")})
+- [Stats](${siteUrl("/stats")})
+- [Privacy](${siteUrl("/privacy")})
+- [Terms](${siteUrl("/terms")})
 - [GitHub](${GITHUB_URL})
 - [Discord](${DISCORD_URL})
 - [X](${X_URL})
 `;
+}
+
+const LLMS_TXT = buildLlmsTxt();
 
 const Route = createFileRoute("/llms.txt")({
   server: {
     handlers: {
       GET: () =>
-        new Response(LLMS_TXT, {
-          headers: {
-            "cache-control": "public, max-age=3600, stale-while-revalidate=86400",
-            "content-type": "text/markdown; charset=utf-8",
-          },
+        textResponse(LLMS_TXT, {
+          cacheControl: "public, max-age=3600, stale-while-revalidate=86400",
+          contentType: "text/markdown; charset=utf-8",
         }),
     },
   },
 });
 
-export { Route };
+export { buildLlmsTxt, Route };

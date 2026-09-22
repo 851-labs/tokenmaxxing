@@ -10,11 +10,21 @@ import { Card } from "../components/ui/card";
 import { Code } from "../components/ui/code";
 import { Input, Textarea } from "../components/ui/input";
 import { Menu } from "../components/ui/menu";
-import { Tabs } from "../components/ui/tabs";
+import { SegmentedControl } from "../components/ui/segmented-control";
 import { cn } from "../lib/cn";
-import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH } from "../lib/og";
+import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SITE_OG_IMAGE_PATH } from "../lib/og";
 
+/**
+ * Internal design-system reference. It stays reachable in deployed builds
+ * (the PNG previews need a real Browser binding) but is kept out of search.
+ */
 const Route = createFileRoute("/design")({
+  head: () => ({
+    meta: [
+      { title: "Design system — tokenmaxxing.sh" },
+      { content: "noindex, nofollow", name: "robots" },
+    ],
+  }),
   component: DesignPage,
 });
 
@@ -60,6 +70,11 @@ const BADGE_VARIANTS: { label: string; variant: BadgeVariant }[] = [
 
 const OG_PREVIEWS = [
   {
+    cardSrc: "/og-card",
+    label: "Site",
+    pngSrc: SITE_OG_IMAGE_PATH,
+  },
+  {
     cardSrc: "/og-card/pondorasti",
     label: "Stats",
     pngSrc: "/og/pondorasti.png",
@@ -104,7 +119,7 @@ function DesignPage() {
                 <div className="min-w-0">
                   <span className="mb-1 block text-xs text-muted-foreground">PNG output</span>
                   <OgPngPreview
-                    alt={`${preview.label} profile Open Graph PNG preview`}
+                    alt={`${preview.label} Open Graph PNG preview`}
                     src={preview.pngSrc}
                   />
                 </div>
@@ -175,8 +190,8 @@ function DesignPage() {
         </div>
       </Section>
 
-      <Section title="Tabs">
-        <Tabs onChange={setTab} options={DEMO_TABS} value={tab} />
+      <Section title="Segmented control">
+        <SegmentedControl label="Demo metric" onChange={setTab} options={DEMO_TABS} value={tab} />
         <p className="mt-2 text-sm text-muted-foreground">
           Selected: <Code>{tab}</Code>
         </p>

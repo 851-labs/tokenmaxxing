@@ -11,18 +11,22 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as UserRouteImport } from './routes/$user'
+import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as DesignRouteImport } from './routes/design'
 import { Route as FaviconDotsvgRouteImport } from './routes/favicon[.]svg'
-import { Route as InternalRouteImport } from './routes/internal'
 import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as OgDotpngRouteImport } from './routes/og[.]png'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
-import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as StatsRouteImport } from './routes/stats'
 import { Route as TermsRouteImport } from './routes/terms'
+import { Route as AuthedInternalRouteImport } from './routes/_authed/internal'
+import { Route as AuthedSettingsRouteImport } from './routes/_authed/settings'
 import { Route as FaviconChar123loginChar125DotsvgRouteImport } from './routes/favicon/{$login}[.]svg'
 import { Route as LoginCliRouteImport } from './routes/login_.cli'
+import { Route as OgCardIndexRouteImport } from './routes/og-card/index'
 import { Route as OgCardLoginRouteImport } from './routes/og-card/$login'
 import { Route as OgChar123loginChar125DotpngRouteImport } from './routes/og/{$login}[.]png'
 
@@ -36,6 +40,10 @@ const UserRoute = UserRouteImport.update({
   path: '/$user',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthedRoute = AuthedRouteImport.update({
+  id: '/_authed',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DesignRoute = DesignRouteImport.update({
   id: '/design',
   path: '/design',
@@ -44,11 +52,6 @@ const DesignRoute = DesignRouteImport.update({
 const FaviconDotsvgRoute = FaviconDotsvgRouteImport.update({
   id: '/favicon.svg',
   path: '/favicon.svg',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const InternalRoute = InternalRouteImport.update({
-  id: '/internal',
-  path: '/internal',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LlmsDottxtRoute = LlmsDottxtRouteImport.update({
@@ -61,6 +64,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OgDotpngRoute = OgDotpngRouteImport.update({
+  id: '/og.png',
+  path: '/og.png',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
@@ -71,9 +79,9 @@ const RobotsDottxtRoute = RobotsDottxtRouteImport.update({
   path: '/robots.txt',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
+const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
+  id: '/sitemap.xml',
+  path: '/sitemap.xml',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StatsRoute = StatsRouteImport.update({
@@ -86,6 +94,16 @@ const TermsRoute = TermsRouteImport.update({
   path: '/terms',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthedInternalRoute = AuthedInternalRouteImport.update({
+  id: '/internal',
+  path: '/internal',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const FaviconChar123loginChar125DotsvgRoute =
   FaviconChar123loginChar125DotsvgRouteImport.update({
     id: '/favicon/{$login}.svg',
@@ -95,6 +113,11 @@ const FaviconChar123loginChar125DotsvgRoute =
 const LoginCliRoute = LoginCliRouteImport.update({
   id: '/login_/cli',
   path: '/login/cli',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OgCardIndexRoute = OgCardIndexRouteImport.update({
+  id: '/og-card/',
+  path: '/og-card/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OgCardLoginRoute = OgCardLoginRouteImport.update({
@@ -114,55 +137,65 @@ export interface FileRoutesByFullPath {
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
   '/favicon.svg': typeof FaviconDotsvgRoute
-  '/internal': typeof InternalRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
+  '/og.png': typeof OgDotpngRoute
   '/privacy': typeof PrivacyRoute
   '/robots.txt': typeof RobotsDottxtRoute
-  '/settings': typeof SettingsRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/stats': typeof StatsRoute
   '/terms': typeof TermsRoute
+  '/internal': typeof AuthedInternalRoute
+  '/settings': typeof AuthedSettingsRoute
   '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
   '/og/{$login}.png': typeof OgChar123loginChar125DotpngRoute
+  '/og-card/': typeof OgCardIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$user': typeof UserRoute
   '/design': typeof DesignRoute
   '/favicon.svg': typeof FaviconDotsvgRoute
-  '/internal': typeof InternalRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
+  '/og.png': typeof OgDotpngRoute
   '/privacy': typeof PrivacyRoute
   '/robots.txt': typeof RobotsDottxtRoute
-  '/settings': typeof SettingsRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/stats': typeof StatsRoute
   '/terms': typeof TermsRoute
+  '/internal': typeof AuthedInternalRoute
+  '/settings': typeof AuthedSettingsRoute
   '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
   '/og/{$login}.png': typeof OgChar123loginChar125DotpngRoute
+  '/og-card': typeof OgCardIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$user': typeof UserRoute
+  '/_authed': typeof AuthedRouteWithChildren
   '/design': typeof DesignRoute
   '/favicon.svg': typeof FaviconDotsvgRoute
-  '/internal': typeof InternalRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/login': typeof LoginRoute
+  '/og.png': typeof OgDotpngRoute
   '/privacy': typeof PrivacyRoute
   '/robots.txt': typeof RobotsDottxtRoute
-  '/settings': typeof SettingsRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/stats': typeof StatsRoute
   '/terms': typeof TermsRoute
+  '/_authed/internal': typeof AuthedInternalRoute
+  '/_authed/settings': typeof AuthedSettingsRoute
   '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login_/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
   '/og/{$login}.png': typeof OgChar123loginChar125DotpngRoute
+  '/og-card/': typeof OgCardIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -171,73 +204,85 @@ export interface FileRouteTypes {
     | '/$user'
     | '/design'
     | '/favicon.svg'
-    | '/internal'
     | '/llms.txt'
     | '/login'
+    | '/og.png'
     | '/privacy'
     | '/robots.txt'
-    | '/settings'
+    | '/sitemap.xml'
     | '/stats'
     | '/terms'
+    | '/internal'
+    | '/settings'
     | '/favicon/{$login}.svg'
     | '/login/cli'
     | '/og-card/$login'
     | '/og/{$login}.png'
+    | '/og-card/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/$user'
     | '/design'
     | '/favicon.svg'
-    | '/internal'
     | '/llms.txt'
     | '/login'
+    | '/og.png'
     | '/privacy'
     | '/robots.txt'
-    | '/settings'
+    | '/sitemap.xml'
     | '/stats'
     | '/terms'
+    | '/internal'
+    | '/settings'
     | '/favicon/{$login}.svg'
     | '/login/cli'
     | '/og-card/$login'
     | '/og/{$login}.png'
+    | '/og-card'
   id:
     | '__root__'
     | '/'
     | '/$user'
+    | '/_authed'
     | '/design'
     | '/favicon.svg'
-    | '/internal'
     | '/llms.txt'
     | '/login'
+    | '/og.png'
     | '/privacy'
     | '/robots.txt'
-    | '/settings'
+    | '/sitemap.xml'
     | '/stats'
     | '/terms'
+    | '/_authed/internal'
+    | '/_authed/settings'
     | '/favicon/{$login}.svg'
     | '/login_/cli'
     | '/og-card/$login'
     | '/og/{$login}.png'
+    | '/og-card/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   UserRoute: typeof UserRoute
+  AuthedRoute: typeof AuthedRouteWithChildren
   DesignRoute: typeof DesignRoute
   FaviconDotsvgRoute: typeof FaviconDotsvgRoute
-  InternalRoute: typeof InternalRoute
   LlmsDottxtRoute: typeof LlmsDottxtRoute
   LoginRoute: typeof LoginRoute
+  OgDotpngRoute: typeof OgDotpngRoute
   PrivacyRoute: typeof PrivacyRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
-  SettingsRoute: typeof SettingsRoute
+  SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   StatsRoute: typeof StatsRoute
   TermsRoute: typeof TermsRoute
   FaviconChar123loginChar125DotsvgRoute: typeof FaviconChar123loginChar125DotsvgRoute
   LoginCliRoute: typeof LoginCliRoute
   OgCardLoginRoute: typeof OgCardLoginRoute
   OgChar123loginChar125DotpngRoute: typeof OgChar123loginChar125DotpngRoute
+  OgCardIndexRoute: typeof OgCardIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -256,6 +301,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UserRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authed': {
+      id: '/_authed'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/design': {
       id: '/design'
       path: '/design'
@@ -268,13 +320,6 @@ declare module '@tanstack/react-router' {
       path: '/favicon.svg'
       fullPath: '/favicon.svg'
       preLoaderRoute: typeof FaviconDotsvgRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/internal': {
-      id: '/internal'
-      path: '/internal'
-      fullPath: '/internal'
-      preLoaderRoute: typeof InternalRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/llms.txt': {
@@ -291,6 +336,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/og.png': {
+      id: '/og.png'
+      path: '/og.png'
+      fullPath: '/og.png'
+      preLoaderRoute: typeof OgDotpngRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/privacy': {
       id: '/privacy'
       path: '/privacy'
@@ -305,11 +357,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RobotsDottxtRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
+    '/sitemap.xml': {
+      id: '/sitemap.xml'
+      path: '/sitemap.xml'
+      fullPath: '/sitemap.xml'
+      preLoaderRoute: typeof SitemapDotxmlRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/stats': {
@@ -326,6 +378,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authed/internal': {
+      id: '/_authed/internal'
+      path: '/internal'
+      fullPath: '/internal'
+      preLoaderRoute: typeof AuthedInternalRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/settings': {
+      id: '/_authed/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AuthedSettingsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/favicon/{$login}.svg': {
       id: '/favicon/{$login}.svg'
       path: '/favicon/{$login}.svg'
@@ -338,6 +404,13 @@ declare module '@tanstack/react-router' {
       path: '/login/cli'
       fullPath: '/login/cli'
       preLoaderRoute: typeof LoginCliRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/og-card/': {
+      id: '/og-card/'
+      path: '/og-card'
+      fullPath: '/og-card/'
+      preLoaderRoute: typeof OgCardIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/og-card/$login': {
@@ -357,23 +430,38 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthedRouteChildren {
+  AuthedInternalRoute: typeof AuthedInternalRoute
+  AuthedSettingsRoute: typeof AuthedSettingsRoute
+}
+
+const AuthedRouteChildren: AuthedRouteChildren = {
+  AuthedInternalRoute: AuthedInternalRoute,
+  AuthedSettingsRoute: AuthedSettingsRoute,
+}
+
+const AuthedRouteWithChildren =
+  AuthedRoute._addFileChildren(AuthedRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   UserRoute: UserRoute,
+  AuthedRoute: AuthedRouteWithChildren,
   DesignRoute: DesignRoute,
   FaviconDotsvgRoute: FaviconDotsvgRoute,
-  InternalRoute: InternalRoute,
   LlmsDottxtRoute: LlmsDottxtRoute,
   LoginRoute: LoginRoute,
+  OgDotpngRoute: OgDotpngRoute,
   PrivacyRoute: PrivacyRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,
-  SettingsRoute: SettingsRoute,
+  SitemapDotxmlRoute: SitemapDotxmlRoute,
   StatsRoute: StatsRoute,
   TermsRoute: TermsRoute,
   FaviconChar123loginChar125DotsvgRoute: FaviconChar123loginChar125DotsvgRoute,
   LoginCliRoute: LoginCliRoute,
   OgCardLoginRoute: OgCardLoginRoute,
   OgChar123loginChar125DotpngRoute: OgChar123loginChar125DotpngRoute,
+  OgCardIndexRoute: OgCardIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -1,19 +1,23 @@
 import type { ProfileResponse } from "@tokenmaxxing/api-contract";
 
-import { profileOgDescription, profileOgTitle, SITE_ORIGIN } from "./og";
+import { profileOgDescription, profileOgTitle } from "./og";
+import {
+  DISCORD_URL,
+  NPM_INSTALL_COMMAND,
+  NPM_URL,
+  SITE_DESCRIPTION,
+  SITE_NAME,
+  SITE_ORIGIN,
+  siteUrl,
+} from "./site";
 
 type Profile = typeof ProfileResponse.Type;
 
 const ORGANIZATION_NAME = "851 Labs";
 const ORGANIZATION_ID = `${SITE_ORIGIN}/#organization`;
 const WEBSITE_ID = `${SITE_ORIGIN}/#website`;
-const SITE_NAME = "tokenmaxxing.sh";
 
-const ORGANIZATION_SAME_AS = [
-  "https://github.com/851-labs",
-  "https://x.com/851labs",
-  "https://discord.gg/851labs",
-];
+const ORGANIZATION_SAME_AS = ["https://github.com/851-labs", "https://x.com/851labs", DISCORD_URL];
 
 function organizationSchema(): Record<string, unknown> {
   return {
@@ -33,7 +37,7 @@ function webSiteSchema(): Record<string, unknown> {
     "@id": WEBSITE_ID,
     name: SITE_NAME,
     url: SITE_ORIGIN,
-    description: "The best place to track token usage.",
+    description: SITE_DESCRIPTION,
     publisher: { "@id": ORGANIZATION_ID },
   };
 }
@@ -48,9 +52,9 @@ function softwareApplicationSchema(): Record<string, unknown> {
     applicationCategory: "DeveloperApplication",
     operatingSystem: "macOS, Linux, Windows",
     url: SITE_ORIGIN,
-    downloadUrl: "https://www.npmjs.com/package/@851-labs/tokenmaxxing",
-    installUrl: "https://www.npmjs.com/package/@851-labs/tokenmaxxing",
-    softwareHelp: { "@type": "CreativeWork", text: "npm install -g @851-labs/tokenmaxxing@latest" },
+    downloadUrl: NPM_URL,
+    installUrl: NPM_URL,
+    softwareHelp: { "@type": "CreativeWork", text: NPM_INSTALL_COMMAND },
     publisher: { "@id": ORGANIZATION_ID },
     offers: {
       "@type": "Offer",
@@ -82,7 +86,7 @@ function faqPageSchema(items: readonly FaqItem[]): Record<string, unknown> {
 
 function profilePageSchema(profile: Profile): Record<string, unknown> {
   const { stats, user } = profile;
-  const url = new URL(`/${encodeURIComponent(user.login)}`, SITE_ORIGIN).toString();
+  const url = siteUrl(`/${encodeURIComponent(user.login)}`);
 
   const person: Record<string, unknown> = {
     "@type": "Person",

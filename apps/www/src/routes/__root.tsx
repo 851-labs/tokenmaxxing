@@ -1,7 +1,6 @@
 import {
   createRootRouteWithContext,
   HeadContent,
-  Link,
   Outlet,
   Scripts,
   useRouterState,
@@ -10,6 +9,7 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import { Footer } from "../components/footer";
 import { Nav } from "../components/nav";
+import { NotFoundPage } from "../components/not-found";
 import { cn } from "../lib/cn";
 import {
   DEFAULT_APPLE_TOUCH_ICON_URL,
@@ -17,32 +17,32 @@ import {
   faviconUrlFromMatches,
 } from "../lib/favicon";
 import { organizationSchema, webSiteSchema } from "../lib/jsonld";
-import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SITE_ORIGIN } from "../lib/og";
+import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SITE_OG_IMAGE_URL } from "../lib/og";
+import { SITE_DESCRIPTION, SITE_NAME } from "../lib/site";
 import styles from "../styles.css?url";
 
 interface RouterContext {
   queryClient: QueryClient;
 }
 
-const DEFAULT_OG_IMAGE_URL = new URL("/og/pondorasti.png", SITE_ORIGIN).toString();
+const DEFAULT_OG_IMAGE_URL = SITE_OG_IMAGE_URL;
 
+/**
+ * Site-wide defaults. Pages override these by name/property via `pageHead`;
+ * og:url and the canonical link are deliberately absent here because only a
+ * page knows its own URL.
+ */
 function rootHead() {
   return {
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "tokenmaxxing.sh" },
-      {
-        name: "description",
-        content: "The best place to track token usage.",
-      },
-      { property: "og:title", content: "tokenmaxxing.sh" },
-      {
-        property: "og:description",
-        content: "The best place to track token usage.",
-      },
+      { title: SITE_NAME },
+      { name: "description", content: SITE_DESCRIPTION },
+      { property: "og:site_name", content: SITE_NAME },
+      { property: "og:title", content: SITE_NAME },
+      { property: "og:description", content: SITE_DESCRIPTION },
       { property: "og:type", content: "website" },
-      { property: "og:url", content: SITE_ORIGIN },
       { property: "og:image", content: DEFAULT_OG_IMAGE_URL },
       { property: "og:image:width", content: String(OG_IMAGE_WIDTH) },
       { property: "og:image:height", content: String(OG_IMAGE_HEIGHT) },
@@ -72,23 +72,9 @@ const Route = createRootRouteWithContext<RouterContext>()({
   notFoundComponent: NotFoundPage,
 });
 
-function NotFoundPage() {
-  return (
-    <div className="mx-auto mt-24 max-w-sm px-4 text-center">
-      <h1 className="text-xl font-semibold tracking-tight">Page not found</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        We couldn&apos;t find the page you were looking for.
-      </p>
-      <Link className="mt-6 inline-flex text-sm font-medium underline underline-offset-4" to="/">
-        Back to tokenmaxxing.sh
-      </Link>
-    </div>
-  );
-}
-
 function RootDocument() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const isOgCard = pathname.startsWith("/og-card/");
+  const isOgCard = pathname === "/og-card" || pathname.startsWith("/og-card/");
 
   return (
     <html lang="en">

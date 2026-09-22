@@ -1,11 +1,19 @@
 import type { ProfileResponse } from "@tokenmaxxing/api-contract";
 
+import { formatInteger, formatTokens, formatUsd } from "./format";
+import { SITE_ORIGIN } from "./site";
+
 type Profile = typeof ProfileResponse.Type;
 
-const SITE_ORIGIN = "https://tokenmaxxing.sh";
 const OG_IMAGE_HEIGHT = 630;
-const OG_IMAGE_STYLE_VERSION = 3;
+/** Bump when the card's rendering changes so versioned image URLs refresh. */
+const OG_IMAGE_STYLE_VERSION = 4;
 const OG_IMAGE_WIDTH = 1200;
+
+/** The site-wide card (`/og-card`), used by every page without its own image. */
+const SITE_OG_VERSION = `site-s${OG_IMAGE_STYLE_VERSION}`;
+const SITE_OG_IMAGE_PATH = `/og.png?${new URLSearchParams({ v: SITE_OG_VERSION }).toString()}`;
+const SITE_OG_IMAGE_URL = new URL(SITE_OG_IMAGE_PATH, SITE_ORIGIN).toString();
 
 function profileOgTitle(profile: Profile): string {
   return `${profile.user.login} on tokenmaxxing.sh`;
@@ -17,9 +25,9 @@ function profileOgDescription(profile: Profile): string {
     return `${profile.user.login} has not synced usage yet.`;
   }
 
-  return `${profile.user.login} has spent ${formatOgUsd(stats.totalSpendUsd)} across ${formatOgNumber(
+  return `${profile.user.login} has spent ${formatUsd(stats.totalSpendUsd)} across ${formatInteger(
     stats.activeDays,
-  )} active days and ${formatOgTokens(stats.totalTokens)} tokens.`;
+  )} active days and ${formatTokens(stats.totalTokens)} tokens.`;
 }
 
 function profileOgVersion(profile: Profile): string {
@@ -49,37 +57,7 @@ function profileUrl(profile: Profile, origin = SITE_ORIGIN): string {
   return new URL(`/${encodeURIComponent(profile.user.login)}`, origin).toString();
 }
 
-const compactFormatter = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 1,
-  notation: "compact",
-});
-
-const integerFormatter = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 0,
-});
-
-const usdFormatter = new Intl.NumberFormat("en-US", {
-  currency: "USD",
-  maximumFractionDigits: 0,
-  style: "currency",
-});
-
-function formatOgNumber(value: number): string {
-  return integerFormatter.format(value);
-}
-
-function formatOgTokens(value: number): string {
-  return compactFormatter.format(value);
-}
-
-function formatOgUsd(value: number): string {
-  return usdFormatter.format(value);
-}
-
 export {
-  formatOgNumber,
-  formatOgTokens,
-  formatOgUsd,
   OG_IMAGE_HEIGHT,
   OG_IMAGE_STYLE_VERSION,
   OG_IMAGE_WIDTH,
@@ -89,5 +67,9 @@ export {
   profileOgTitle,
   profileOgVersion,
   profileUrl,
+  SITE_OG_IMAGE_PATH,
+  SITE_OG_IMAGE_URL,
+  SITE_OG_VERSION,
+  // Re-exported for routes that still import it from here; prefer lib/site.
   SITE_ORIGIN,
 };

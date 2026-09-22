@@ -1,8 +1,6 @@
-import * as Schema from "effect/Schema";
 import { createFileRoute } from "@tanstack/react-router";
 import { ProfileIdentityResponse } from "@tokenmaxxing/api-contract";
 
-import { resolveApiUrl } from "../../lib/config";
 import { FAVICON_LAYOUT_VERSION } from "../../lib/favicon";
 import {
   avatarFetchUrl,
@@ -13,6 +11,8 @@ import {
   TRANSIENT_FAVICON_CACHE_CONTROL,
 } from "../../lib/favicon-svg";
 import type { FaviconFallbackReason } from "../../lib/favicon-svg";
+import { notFoundResponse } from "../../lib/http";
+import { fetchPublicProfile } from "../../lib/public-api";
 
 type ProfileFaviconIdentity = typeof ProfileIdentityResponse.Type;
 
@@ -78,14 +78,7 @@ function makeProfileFaviconHandler(overrides: Partial<ProfileFaviconRouteDeps> =
     }
 
     if (identity === null) {
-      return storeCachedFavicon(
-        cache,
-        cacheKey,
-        new Response("Not found", {
-          headers: { "cache-control": NOT_FOUND_CACHE_CONTROL },
-          status: 404,
-        }),
-      );
+      return storeCachedFavicon(cache, cacheKey, notFoundResponse(NOT_FOUND_CACHE_CONTROL));
     }
 
     let avatarDataUrl: string | null = null;
@@ -125,26 +118,11 @@ function makeProfileFaviconHandler(overrides: Partial<ProfileFaviconRouteDeps> =
   };
 }
 
-async function loadProfileFaviconIdentity(
+function loadProfileFaviconIdentity(
   login: string,
   signal: AbortSignal,
 ): Promise<ProfileFaviconIdentity | null> {
-  const apiUrl = resolveApiUrl().replace(/\/$/, "");
-  const headers = new Headers({ accept: "application/json" });
-
-  const response = await fetch(`${apiUrl}/profiles/${encodeURIComponent(login)}/identity`, {
-    headers,
-    redirect: "manual",
-    signal,
-  });
-  if (response.status === 404) {
-    return null;
-  }
-  if (!response.ok) {
-    throw new Error(`Failed to load favicon identity ${login}: ${response.status}`);
-  }
-
-  return Schema.decodeUnknownPromise(ProfileIdentityResponse)(await response.json());
+  return fetchPublicProfile(login, "/identity", ProfileIdentityResponse, { signal });
 }
 
 function canonicalFaviconRequest(request: Request): Request {

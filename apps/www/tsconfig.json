@@ -3,9 +3,6 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "lib": ["ES2024", "DOM"],
-    "paths": {
-      "@/*": ["./src/*"]
-    },
     "types": ["bun", "vite-plus/client"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
