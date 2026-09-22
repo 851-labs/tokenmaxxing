@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,13 +13,12 @@ const migrationsDir = fileURLToPath(new URL("../migrations/", import.meta.url));
 
 const STATEMENT_BREAKPOINT = "--> statement-breakpoint";
 
+/** drizzle-kit v1 migration folders: `YYYYMMDDHHMMSS_name/migration.sql`. */
+const MIGRATION_DIR_PATTERN = /^\d{14}_.+$/;
+
 interface Migration {
   statements: string[];
-  tag: string;
-}
-
-interface JournalEntry {
-  idx: number;
+  /** The migration folder name — also the name deploys record in `d1_migrations`. */
   tag: string;
 }
 
@@ -27,27 +26,35 @@ interface SqlExecutor {
   exec(sql: string): void;
 }
 
-/** Every migration in journal order; fails on SQL files the journal omits. */
+/**
+ * Every migration in folder-name order — the order drizzle-kit and alchemy
+ * apply them. Fails on anything else in the directory (a stray `.sql` file
+ * or a pre-v1 `meta/` journal), which deploys would skip or reject.
+ */
 function readMigrations(): Migration[] {
-  const journal = JSON.parse(
-    readFileSync(join(migrationsDir, "meta", "_journal.json"), "utf8"),
-  ) as { entries: JournalEntry[] };
-  const entries = [...journal.entries].sort((left, right) => left.idx - right.idx);
-  const journaled = new Set(entries.map((entry) => `${entry.tag}.sql`));
-  const unjournaled = readdirSync(migrationsDir).filter(
-    (file) => file.endsWith(".sql") && !journaled.has(file),
+  const entries = readdirSync(migrationsDir, { withFileTypes: true });
+  const unexpected = entries.filter(
+    (entry) =>
+      !entry.isDirectory() ||
+      !MIGRATION_DIR_PATTERN.test(entry.name) ||
+      !existsSync(join(migrationsDir, entry.name, "migration.sql")),
   );
-  if (unjournaled.length > 0) {
-    throw new Error(`Migrations missing from the journal: ${unjournaled.join(", ")}`);
+  if (unexpected.length > 0) {
+    throw new Error(
+      `Not drizzle-kit v1 migration folders: ${unexpected.map((entry) => entry.name).join(", ")}`,
+    );
   }
 
-  return entries.map((entry) => ({
-    statements: readFileSync(join(migrationsDir, `${entry.tag}.sql`), "utf8")
-      .split(STATEMENT_BREAKPOINT)
-      .map((statement) => statement.trim())
-      .filter((statement) => statement.length > 0),
-    tag: entry.tag,
-  }));
+  return entries
+    .map((entry) => entry.name)
+    .sort()
+    .map((tag) => ({
+      statements: readFileSync(join(migrationsDir, tag, "migration.sql"), "utf8")
+        .split(STATEMENT_BREAKPOINT)
+        .map((statement) => statement.trim())
+        .filter((statement) => statement.length > 0),
+      tag,
+    }));
 }
 
 function readMigration(tag: string): Migration {
@@ -60,7 +67,7 @@ function readMigration(tag: string): Migration {
 }
 
 /**
- * Applies migrations in journal order. `before` stops ahead of the named
+ * Applies migrations in order. `before` stops ahead of the named
  * tag so a migration's own test can seed the schema that preceded it.
  */
 function applyMigrations(database: SqlExecutor, options: { before?: string } = {}): void {

@@ -1,0 +1,752 @@
+{
+  "dialect": "sqlite",
+  "id": "08800724-c16b-4066-ae11-d3e6828c83a1",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "version": "7",
+  "ddl": [
+    {
+      "name": "cli_login_requests",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "table": "cli_login_requests",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "cli_login_requests_pk",
+      "table": "cli_login_requests",
+      "entityType": "pks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "code",
+      "table": "cli_login_requests",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'pending'",
+      "generated": null,
+      "name": "status",
+      "table": "cli_login_requests",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "table": "cli_login_requests",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "token",
+      "table": "cli_login_requests",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "device_id",
+      "table": "cli_login_requests",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "device_name",
+      "table": "cli_login_requests",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "device_platform",
+      "table": "cli_login_requests",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "expires_at",
+      "table": "cli_login_requests",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "table": "cli_login_requests",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        {
+          "value": "code",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "cli_login_requests_code_unique",
+      "table": "cli_login_requests",
+      "entityType": "indexes"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "tableTo": "users",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "cli_login_requests_user_id_users_id_fk",
+      "table": "cli_login_requests",
+      "entityType": "fks"
+    },
+    {
+      "name": "cli_tokens",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "table": "cli_tokens",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "cli_tokens_pk",
+      "table": "cli_tokens",
+      "entityType": "pks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "token_hash",
+      "table": "cli_tokens",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "table": "cli_tokens",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "device_id",
+      "table": "cli_tokens",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "table": "cli_tokens",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "table": "cli_tokens",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "last_used_at",
+      "table": "cli_tokens",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "revoked_at",
+      "table": "cli_tokens",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        {
+          "value": "token_hash",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "cli_tokens_token_hash_unique",
+      "table": "cli_tokens",
+      "entityType": "indexes"
+    },
+    {
+      "columns": [
+        {
+          "value": "user_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "cli_tokens_user_idx",
+      "table": "cli_tokens",
+      "entityType": "indexes"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "tableTo": "users",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "cli_tokens_user_id_users_id_fk",
+      "table": "cli_tokens",
+      "entityType": "fks"
+    },
+    {
+      "name": "devices",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "table": "devices",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "devices_pk",
+      "table": "devices",
+      "entityType": "pks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "table": "devices",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "table": "devices",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "platform",
+      "table": "devices",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "table": "devices",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "last_sync_at",
+      "table": "devices",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        {
+          "value": "user_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "devices_user_idx",
+      "table": "devices",
+      "entityType": "indexes"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "tableTo": "users",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "devices_user_id_users_id_fk",
+      "table": "devices",
+      "entityType": "fks"
+    },
+    {
+      "name": "sessions",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "table": "sessions",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "sessions_pk",
+      "table": "sessions",
+      "entityType": "pks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "table": "sessions",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "expires_at",
+      "table": "sessions",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "table": "sessions",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        {
+          "value": "user_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "sessions_user_idx",
+      "table": "sessions",
+      "entityType": "indexes"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "tableTo": "users",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "sessions_user_id_users_id_fk",
+      "table": "sessions",
+      "entityType": "fks"
+    },
+    {
+      "name": "usage_days",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "device_id",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "date",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "model",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "input_tokens",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "output_tokens",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "cache_creation_tokens",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "cache_read_tokens",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "total_tokens",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "real",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "cost_usd",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "synced_at",
+      "table": "usage_days",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        "device_id",
+        "date",
+        "source",
+        "model"
+      ],
+      "nameExplicit": false,
+      "name": "usage_days_device_id_date_source_model_pk",
+      "table": "usage_days",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        {
+          "value": "user_id",
+          "isExpression": false
+        },
+        {
+          "value": "date",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "usage_days_user_date_idx",
+      "table": "usage_days",
+      "entityType": "indexes"
+    },
+    {
+      "columns": [
+        {
+          "value": "date",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "usage_days_date_idx",
+      "table": "usage_days",
+      "entityType": "indexes"
+    },
+    {
+      "name": "users",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "table": "users",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "users_pk",
+      "table": "users",
+      "entityType": "pks"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "github_id",
+      "table": "users",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "login",
+      "table": "users",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "table": "users",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "avatar_url",
+      "table": "users",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "table": "users",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "table": "users",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        {
+          "value": "github_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "users_github_id_unique",
+      "table": "users",
+      "entityType": "indexes"
+    },
+    {
+      "columns": [
+        {
+          "value": "login",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "users_login_unique",
+      "table": "users",
+      "entityType": "indexes"
+    }
+  ],
+  "renames": []
+}

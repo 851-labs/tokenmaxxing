@@ -24,12 +24,12 @@ describe("migrations", () => {
 
   afterEach(() => database.close());
 
-  it("reads every migration in journal order", () => {
+  it("reads every migration in folder order", () => {
     const tags = readMigrations().map((migration) => migration.tag);
 
-    expect(tags[0]).toBe("0000_charming_morgan_stark");
+    expect(tags[0]).toBe("20260612221145_charming_morgan_stark");
     expect(tags).toEqual([...tags].sort());
-    expect(tags).toContain("0014_rehome_usage_raw_batches");
+    expect(tags).toContain("20260922190224_rehome_usage_raw_batches");
   });
 
   it("produces exactly the tables the drizzle schema declares", () => {

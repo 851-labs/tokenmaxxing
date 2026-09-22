@@ -7,7 +7,7 @@ import { Drizzle } from "../database";
 
 /**
  * Shared D1 test harness: an in-memory node:sqlite database migrated with
- * the real packages/db migrations (journal order), wrapped in the subset of
+ * the real packages/db migrations (in order), wrapped in the subset of
  * the D1 binding drizzle-orm/d1 calls — prepare/bind/all/raw/run/first and
  * an atomic batch — so repository tests run the real query-builder SQL
  * (including `RETURNING` and `db.batch`) against the real schema. Foreign
