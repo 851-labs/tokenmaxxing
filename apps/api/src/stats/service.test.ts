@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { StatsResponse } from "@tokenmaxxing/api-contract";
 
 import { type EdgeCacheLike, makeEdgeJsonCache } from "../cloudflare/edge-cache";
-import { makeStatsService, StatsRepository, statsWindowStart, type StatsSnapshot } from "./service";
+import { makeStatsService, StatsRepository, type StatsSnapshot } from "./service";
 
 const emptySnapshot: StatsSnapshot = {
   allTime: {
@@ -73,12 +73,6 @@ const emptySnapshot: StatsSnapshot = {
     userCount: 0,
   },
 };
-
-describe("statsWindowStart", () => {
-  it("covers trailing 30 calendar days inclusive of today", () => {
-    expect(statsWindowStart(new Date("2026-07-09T20:00:00.000Z"))).toBe("2026-06-10");
-  });
-});
 
 describe("StatsService.getStats", () => {
   it("adds generatedAt, the last-30d lower bound, and the future-date ceiling", async () => {

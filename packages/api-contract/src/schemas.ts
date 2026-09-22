@@ -639,7 +639,6 @@ const AdminUsersResponse = Schema.Struct({
   latestCliPublishedAt: Schema.NullOr(Schema.String),
   latestCliVersion: Schema.NullOr(Schema.String),
   latestCliVersions: AdminLatestCliVersions,
-  rolloutGraceHours: Schema.Number,
   staleThresholdHours: Schema.Number,
   summary: Schema.Struct({
     healthy: Schema.Number,

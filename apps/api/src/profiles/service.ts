@@ -12,15 +12,14 @@ import type {
 } from "@tokenmaxxing/api-contract";
 
 import type { DatabaseError } from "../database";
-import { windowStart } from "../leaderboard/service";
-import { latestUsageDateKey, utcDayKey } from "../date-keys";
+import { latestUsageDateKey, utcDayKey, YEAR_2026_START } from "../date-keys";
+import { leaderboardWindowStart } from "../usage/ranking";
 
 /**
  * Public profile dashboards: lifetime stats for the header cards plus the
- * per-day series the charts consume, grouped by model or source.
+ * per-day series the charts consume, grouped by model or source. Without an
+ * explicit `since`, charts cover 2026 year-to-date.
  */
-
-const PROFILE_CHART_START = "2026-01-01";
 
 interface DailyQuery {
   groupBy: typeof ProfileDailyGroupBy.Type;
@@ -29,7 +28,10 @@ interface DailyQuery {
 }
 
 interface ProfilesServiceShape {
-  getIdentity(login: string): Effect.Effect<typeof ProfileIdentityResponse.Type, UserNotFound>;
+  getIdentity(
+    login: string,
+    viewerUserId: string | null,
+  ): Effect.Effect<typeof ProfileIdentityResponse.Type, UserNotFound>;
   getProfile(
     login: string,
     viewerUserId: string | null,
@@ -97,8 +99,8 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
   });
 
   return ProfilesService.of({
-    getIdentity: Effect.fn("ProfilesService.getIdentity")(function* (login) {
-      const user = yield* requireUser(login, null);
+    getIdentity: Effect.fn("ProfilesService.getIdentity")(function* (login, viewerUserId) {
+      const user = yield* requireUser(login, viewerUserId);
       return { avatarUrl: user.avatarUrl, login: user.login };
     }),
     getProfile: Effect.fn("ProfilesService.getProfile")(function* (login, viewerUserId) {
@@ -109,7 +111,7 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
         [
           repository.stats(user.id, { today: utcDayKey(now), until }),
           repository.leaderboardRank({
-            since: windowStart(DEFAULT_LEADERBOARD_WINDOW, now),
+            since: leaderboardWindowStart(DEFAULT_LEADERBOARD_WINDOW, now),
             until,
             userId: user.id,
           }),
@@ -124,34 +126,25 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
       const now = new Date();
       const ceiling = latestUsageDateKey(now);
       const until = query.until === undefined || query.until > ceiling ? ceiling : query.until;
-      const days = yield* repository.daily(user.id, { ...query, until }).pipe(Effect.orDie);
+      const range = profileDailyRange(query, now);
+      // The reported range.first is also the query's lower bound, so charts
+      // never receive rows before the range they draw.
+      const days = yield* repository
+        .daily(user.id, { ...query, since: range.first, until })
+        .pipe(Effect.orDie);
 
-      return {
-        days,
-        range: profileDailyRange(query, now),
-      };
+      return { days, range };
     }),
   });
 });
 
 function profileDailyRange(query: Pick<DailyQuery, "since" | "until">, now: Date) {
   return {
-    first: query.since ?? PROFILE_CHART_START,
-    last: query.until ?? todayKeyUtc(now),
+    first: query.since ?? YEAR_2026_START,
+    last: query.until ?? utcDayKey(now),
   };
 }
 
-function todayKeyUtc(now: Date): string {
-  return utcDayKey(now);
-}
-
-export {
-  makeProfilesService,
-  PROFILE_CHART_START,
-  profileDailyRange,
-  ProfilesRepository,
-  ProfilesService,
-  todayKeyUtc,
-};
+export { makeProfilesService, profileDailyRange, ProfilesRepository, ProfilesService };
 
 export type { ProfilesRepositoryShape };

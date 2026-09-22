@@ -7,7 +7,8 @@ import type {
 } from "@tokenmaxxing/api-contract";
 
 import type { DatabaseError } from "../database";
-import { latestUsageDateKey, trailingWindowStart } from "../date-keys";
+import { latestUsageDateKey } from "../date-keys";
+import { leaderboardWindowStart } from "../usage/ranking";
 
 /**
  * Public rankings. Windows are computed as UTC date strings and compared
@@ -46,15 +47,6 @@ class LeaderboardRepository extends Context.Service<
   LeaderboardRepositoryShape
 >()("@tokenmaxxing/api/LeaderboardRepository") {}
 
-/** Inclusive lower bound covering the trailing `days` calendar days (UTC). */
-function windowStart(window: typeof LeaderboardWindow.Type, now: Date): string | null {
-  if (window === "all") {
-    return null;
-  }
-
-  return trailingWindowStart(window === "30d" ? 30 : 7, now);
-}
-
 const makeLeaderboardService = Effect.fn("makeLeaderboardService")(function* () {
   const repository = yield* LeaderboardRepository;
 
@@ -65,7 +57,7 @@ const makeLeaderboardService = Effect.fn("makeLeaderboardService")(function* () 
         .list({
           limit: LEADERBOARD_LIMIT,
           metric,
-          since: windowStart(window, now),
+          since: leaderboardWindowStart(window, now),
           until: latestUsageDateKey(now),
         })
         .pipe(Effect.orDie);
@@ -73,6 +65,6 @@ const makeLeaderboardService = Effect.fn("makeLeaderboardService")(function* () 
   });
 });
 
-export { LeaderboardRepository, LeaderboardService, makeLeaderboardService, windowStart };
+export { LeaderboardRepository, LeaderboardService, makeLeaderboardService };
 
 export type { LeaderboardRepositoryShape };

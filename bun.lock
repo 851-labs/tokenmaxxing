@@ -94,6 +94,7 @@
     "packages/db": {
       "name": "@tokenmaxxing/db",
       "dependencies": {
+        "@tokenmaxxing/api-contract": "workspace:*",
         "drizzle-orm": "catalog:",
       },
       "devDependencies": {

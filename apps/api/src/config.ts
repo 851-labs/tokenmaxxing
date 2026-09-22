@@ -4,6 +4,8 @@ import * as Redacted from "effect/Redacted";
 
 const productName = "Tokenmaxxing";
 const apiWorkerName = "tokenmaxxing-api";
+/** Users with a verified account email in this list can use the admin API. */
+const adminEmails = ["alexandru@851.sh", "pondorasti@gmail.com"] as const;
 
 /** Where one environment lives; cookie attributes and redirect targets derive from it. */
 interface Deployment {
@@ -51,6 +53,7 @@ interface OAuthClientConfig {
 }
 
 interface AppConfigShape {
+  adminEmails: readonly string[];
   apiWorkerName: string;
   corsOrigins: string[];
   github: OAuthClientConfig;
@@ -75,6 +78,7 @@ class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
     const googleClientSecret = yield* Config.Redacted("GOOGLE_CLIENT_SECRET");
 
     return AppConfig.of({
+      adminEmails,
       apiWorkerName,
       // Local dev always passes browser CORS, regardless of the serving host.
       corsOrigins: [deployments.production.wwwOrigin, deployments.development.wwwOrigin],

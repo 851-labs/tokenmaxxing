@@ -250,8 +250,8 @@ const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (hand
     .handle("identity", ({ params }) =>
       Effect.gen(function* () {
         const profiles = yield* ProfilesService;
-        const identity = yield* profiles.getIdentity(params.login);
-        yield* cacheControl(PUBLIC_READ_CACHE_CONTROL);
+        const identity = yield* profiles.getIdentity(params.login, yield* viewerUserId);
+        yield* cacheControl(yield* viewerCacheControl());
         return identity;
       }),
     )

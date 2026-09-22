@@ -8,6 +8,15 @@ import {
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
+import {
+  ServiceAutoUpdateManager,
+  ServiceAutoUpdateReason,
+  ServiceAutoUpdateStatus,
+  ServiceCheckInStatus,
+  ServiceRepairReason,
+  ServiceRepairStatus,
+} from "@tokenmaxxing/api-contract";
+
 const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   login: text("login").notNull().unique("users_login_unique"),
@@ -115,6 +124,10 @@ const cliTokens = sqliteTable(
  * id is a client-generated UUID persisted in the CLI config — it survives
  * logout/login so re-syncs stay idempotent across re-authentication.
  */
+/**
+ * Service telemetry enums are type-level only (no CHECK constraint): values
+ * arrive already validated by the check-in contract, which owns the literals.
+ */
 const devices = sqliteTable(
   "devices",
   {
@@ -140,21 +153,27 @@ const devices = sqliteTable(
     serviceAutoUpdateError: text("service_auto_update_error"),
     serviceAutoUpdateInstalledVersion: text("service_auto_update_installed_version"),
     serviceAutoUpdateLatestVersion: text("service_auto_update_latest_version"),
-    serviceAutoUpdateManager: text("service_auto_update_manager"),
-    serviceAutoUpdateReason: text("service_auto_update_reason"),
-    serviceAutoUpdateStatus: text("service_auto_update_status"),
+    serviceAutoUpdateManager: text("service_auto_update_manager", {
+      enum: ServiceAutoUpdateManager.literals,
+    }),
+    serviceAutoUpdateReason: text("service_auto_update_reason", {
+      enum: ServiceAutoUpdateReason.literals,
+    }),
+    serviceAutoUpdateStatus: text("service_auto_update_status", {
+      enum: ServiceAutoUpdateStatus.literals,
+    }),
     serviceBackend: text("service_backend"),
     serviceError: text("service_error"),
     serviceReloadRequired: integer("service_reload_required", { mode: "boolean" }),
     serviceRepairAttemptedAt: integer("service_repair_attempted_at", { mode: "timestamp_ms" }),
     serviceRepairCompletedAt: integer("service_repair_completed_at", { mode: "timestamp_ms" }),
     serviceRepairError: text("service_repair_error"),
-    serviceRepairReason: text("service_repair_reason"),
-    serviceRepairStatus: text("service_repair_status"),
+    serviceRepairReason: text("service_repair_reason", { enum: ServiceRepairReason.literals }),
+    serviceRepairStatus: text("service_repair_status", { enum: ServiceRepairStatus.literals }),
     serviceRunnerTarget: text("service_runner_target"),
     serviceRunnerVersion: text("service_runner_version"),
     serviceSchedulerActive: integer("service_scheduler_active", { mode: "boolean" }),
-    serviceStatus: text("service_status"),
+    serviceStatus: text("service_status", { enum: ServiceCheckInStatus.literals }),
     serviceTemplateVersion: integer("service_template_version"),
   },
   (table) => [index("devices_user_idx").on(table.userId)],

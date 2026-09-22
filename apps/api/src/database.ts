@@ -1,3 +1,4 @@
+import type { BatchItem } from "drizzle-orm/batch";
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
 import { Context, Data, Effect, Layer, Option } from "effect";
 
@@ -44,4 +45,13 @@ function firstRow<A>(rows: ReadonlyArray<A>): Option.Option<A> {
   return Option.fromUndefinedOr(rows[0]);
 }
 
-export { DatabaseError, Drizzle, firstRow };
+/** `db.batch` rejects an empty list; this runs any number of statements, including none. */
+function batchNonEmpty(
+  db: DrizzleD1Database,
+  statements: readonly BatchItem<"sqlite">[],
+): Promise<unknown> {
+  const [first, ...rest] = statements;
+  return first === undefined ? Promise.resolve([]) : db.batch([first, ...rest]);
+}
+
+export { batchNonEmpty, DatabaseError, Drizzle, firstRow };

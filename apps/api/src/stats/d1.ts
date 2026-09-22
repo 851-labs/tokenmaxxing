@@ -1,37 +1,22 @@
-import { usageDays, users, type User } from "@tokenmaxxing/db";
-import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { usageDays } from "@tokenmaxxing/db";
+import { asc, desc, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { Effect, Layer, Schema } from "effect";
 
-import { StatsResponse, type StatsTotals } from "@tokenmaxxing/api-contract";
+import { StatsResponse } from "@tokenmaxxing/api-contract";
 
-import { toAuthUser } from "../auth/d1";
 import { makeEdgeJsonCache } from "../cloudflare/edge-cache";
 import { Drizzle } from "../database";
+import { YEAR_2026_START } from "../date-keys";
+import { singleAggregateRow, usageAggregates, usageMetric } from "../usage/aggregates";
+import { topUsers } from "../usage/ranking";
+import { visibleUsage } from "../usage/visible";
 import {
   makeStatsService,
-  STATS_2026_START,
   STATS_CACHE_TTL_SECONDS,
   StatsRepository,
   StatsService,
 } from "./service";
-
-type StatsTotalsValue = typeof StatsTotals.Type;
-
-const EMPTY_TOTALS: StatsTotalsValue = {
-  activeDates: 0,
-  cacheCreationTokens: 0,
-  cacheReadTokens: 0,
-  deviceCount: 0,
-  firstDate: null,
-  inputTokens: 0,
-  lastDate: null,
-  outputTokens: 0,
-  rowCount: 0,
-  totalSpendUsd: 0,
-  totalTokens: 0,
-  userCount: 0,
-};
 
 const makeD1StatsRepository = Effect.fn("makeD1StatsRepository")(function* () {
   const database = yield* Drizzle;
@@ -62,28 +47,34 @@ const makeD1StatsRepository = Effect.fn("makeD1StatsRepository")(function* () {
           db.batch([
             totals(db, null, until),
             totals(db, last30dSince, until),
-            totals(db, STATS_2026_START, until),
+            totals(db, YEAR_2026_START, until),
             dailyTotals(db, until),
             rankedBy(db, usageDays.model, null, until, "spend", limit),
             rankedBy(db, usageDays.model, null, until, "tokens", limit),
             rankedBy(db, usageDays.model, last30dSince, until, "spend", limit),
             rankedBy(db, usageDays.model, last30dSince, until, "tokens", limit),
-            rankedBy(db, usageDays.model, STATS_2026_START, until, "spend", limit),
-            rankedBy(db, usageDays.model, STATS_2026_START, until, "tokens", limit),
+            rankedBy(db, usageDays.model, YEAR_2026_START, until, "spend", limit),
+            rankedBy(db, usageDays.model, YEAR_2026_START, until, "tokens", limit),
             rankedBy(db, usageDays.source, null, until, "tokens", limit),
             rankedBy(db, usageDays.source, last30dSince, until, "tokens", limit),
-            rankedBy(db, usageDays.source, STATS_2026_START, until, "tokens", limit),
-            usersBy(db, until, "spend", limit),
-            usersBy(db, until, "tokens", limit),
+            rankedBy(db, usageDays.source, YEAR_2026_START, until, "tokens", limit),
+            topUsers(db, { limit, metric: "spend", since: null, until }),
+            topUsers(db, { limit, metric: "tokens", since: null, until }),
             dailyModels(db, until),
           ]),
         );
 
+        const [allTimeTotals, last30dTotals, year2026Totals] = yield* Effect.all([
+          singleAggregateRow(allTime),
+          singleAggregateRow(last30d),
+          singleAggregateRow(year2026),
+        ]);
+
         return {
-          allTime: allTime[0] ?? EMPTY_TOTALS,
+          allTime: allTimeTotals,
           daily,
           dailyByModel,
-          last30d: last30d[0] ?? EMPTY_TOTALS,
+          last30d: last30dTotals,
           peaks: {
             spend: peakDay(daily, (day) => day.spendUsd),
             tokens: peakDay(daily, (day) => day.totalTokens),
@@ -102,77 +93,70 @@ const makeD1StatsRepository = Effect.fn("makeD1StatsRepository")(function* () {
             year2026ByTokens: year2026ModelsByTokens,
           },
           topUsers: {
-            bySpend: topUsersBySpend.map(toUserMetric),
-            byTokens: topUsersByTokens.map(toUserMetric),
+            bySpend: topUsersBySpend.map(withoutRank),
+            byTokens: topUsersByTokens.map(withoutRank),
           },
-          year2026: year2026[0] ?? EMPTY_TOTALS,
+          year2026: year2026Totals,
         };
       }),
   });
 });
 
-/**
- * Public, non-shadow-banned usage within `[since, until]`; `until` (UTC today
- * + 1) keeps future-dated rows out of every aggregate, all-time included.
- */
-function visibleUsage(until: string, since: string | null = null) {
-  return and(
-    isNull(users.shadowBannedAt),
-    lte(usageDays.date, until),
-    since === null ? undefined : gte(usageDays.date, since),
+function totals(db: DrizzleD1Database, since: string | null, until: string) {
+  return visibleUsage(
+    db
+      .select({
+        activeDates: usageAggregates.activeDays(),
+        cacheCreationTokens: usageAggregates.cacheCreationTokens(),
+        cacheReadTokens: usageAggregates.cacheReadTokens(),
+        deviceCount: usageAggregates.deviceCount(),
+        firstDate: usageAggregates.firstDate(),
+        inputTokens: usageAggregates.inputTokens(),
+        lastDate: usageAggregates.lastDate(),
+        outputTokens: usageAggregates.outputTokens(),
+        rowCount: usageAggregates.rowCount(),
+        totalSpendUsd: usageAggregates.spendUsd(),
+        totalTokens: usageAggregates.totalTokens(),
+        userCount: usageAggregates.userCount(),
+      })
+      .from(usageDays)
+      .$dynamic(),
+    { since, until },
   );
 }
 
-function totals(db: DrizzleD1Database, since: string | null, until: string) {
-  const base = db
-    .select({
-      activeDates: sql<number>`count(distinct ${usageDays.date})`,
-      cacheCreationTokens: sql<number>`coalesce(sum(${usageDays.cacheCreationTokens}), 0)`,
-      cacheReadTokens: sql<number>`coalesce(sum(${usageDays.cacheReadTokens}), 0)`,
-      deviceCount: sql<number>`count(distinct ${usageDays.deviceId})`,
-      firstDate: sql<string | null>`min(${usageDays.date})`,
-      inputTokens: sql<number>`coalesce(sum(${usageDays.inputTokens}), 0)`,
-      lastDate: sql<string | null>`max(${usageDays.date})`,
-      outputTokens: sql<number>`coalesce(sum(${usageDays.outputTokens}), 0)`,
-      rowCount: sql<number>`count(*)`,
-      totalSpendUsd: sql<number>`coalesce(sum(${usageDays.costUsd}), 0)`,
-      totalTokens: sql<number>`coalesce(sum(${usageDays.totalTokens}), 0)`,
-      userCount: sql<number>`count(distinct ${usageDays.userId})`,
-    })
-    .from(usageDays)
-    .innerJoin(users, eq(usageDays.userId, users.id));
-
-  return base.where(visibleUsage(until, since));
-}
-
 function dailyTotals(db: DrizzleD1Database, until: string) {
-  return db
-    .select({
-      date: usageDays.date,
-      spendUsd: sql<number>`coalesce(sum(${usageDays.costUsd}), 0)`,
-      totalTokens: sql<number>`coalesce(sum(${usageDays.totalTokens}), 0)`,
-      userCount: sql<number>`count(distinct ${usageDays.userId})`,
-    })
-    .from(usageDays)
-    .innerJoin(users, eq(usageDays.userId, users.id))
-    .where(visibleUsage(until))
+  return visibleUsage(
+    db
+      .select({
+        date: usageDays.date,
+        spendUsd: usageAggregates.spendUsd(),
+        totalTokens: usageAggregates.totalTokens(),
+        userCount: usageAggregates.userCount(),
+      })
+      .from(usageDays)
+      .$dynamic(),
+    { until },
+  )
     .groupBy(usageDays.date)
     .orderBy(asc(usageDays.date));
 }
 
 function dailyModels(db: DrizzleD1Database, until: string) {
-  return db
-    .select({
-      costUsd: sql<number>`coalesce(sum(${usageDays.costUsd}), 0)`,
-      date: usageDays.date,
-      key: usageDays.model,
-      outputTokens: sql<number>`coalesce(sum(${usageDays.outputTokens}), 0)`,
-      rowCount: sql<number>`count(*)`,
-      totalTokens: sql<number>`coalesce(sum(${usageDays.totalTokens}), 0)`,
-    })
-    .from(usageDays)
-    .innerJoin(users, eq(usageDays.userId, users.id))
-    .where(visibleUsage(until))
+  return visibleUsage(
+    db
+      .select({
+        costUsd: usageAggregates.spendUsd(),
+        date: usageDays.date,
+        key: usageDays.model,
+        outputTokens: usageAggregates.outputTokens(),
+        rowCount: usageAggregates.rowCount(),
+        totalTokens: usageAggregates.totalTokens(),
+      })
+      .from(usageDays)
+      .$dynamic(),
+    { until },
+  )
     .groupBy(usageDays.date, usageDays.model)
     .orderBy(asc(usageDays.date), asc(usageDays.model));
 }
@@ -185,66 +169,27 @@ function rankedBy(
   orderBy: "spend" | "tokens",
   limit: number,
 ) {
-  const spendUsd = sql<number>`coalesce(sum(${usageDays.costUsd}), 0)`.as("spend_usd");
-  const totalTokens = sql<number>`coalesce(sum(${usageDays.totalTokens}), 0)`.as(
-    "total_tokens_sum",
-  );
-
-  return db
-    .select({
-      key: sql<string>`${keyColumn}`.as("rank_key"),
-      rowCount: sql<number>`count(*)`,
-      spendUsd,
-      totalTokens,
-      userCount: sql<number>`count(distinct ${usageDays.userId})`,
-    })
-    .from(usageDays)
-    .innerJoin(users, eq(usageDays.userId, users.id))
-    .where(visibleUsage(until, since))
+  return visibleUsage(
+    db
+      .select({
+        key: sql<string>`${keyColumn}`.as("rank_key"),
+        rowCount: usageAggregates.rowCount(),
+        spendUsd: usageAggregates.spendUsd(),
+        totalTokens: usageAggregates.totalTokens(),
+        userCount: usageAggregates.userCount(),
+      })
+      .from(usageDays)
+      .$dynamic(),
+    { since, until },
+  )
     .groupBy(sql`rank_key`)
-    .orderBy(orderBy === "spend" ? desc(spendUsd) : desc(totalTokens))
+    .orderBy(desc(usageMetric(orderBy)))
     .limit(limit);
 }
 
-function usersBy(db: DrizzleD1Database, until: string, orderBy: "spend" | "tokens", limit: number) {
-  const spendUsd = sql<number>`coalesce(sum(${usageDays.costUsd}), 0)`.as("spend_usd");
-  const totalTokens = sql<number>`coalesce(sum(${usageDays.totalTokens}), 0)`.as(
-    "total_tokens_sum",
-  );
-
-  return (
-    db
-      .select({
-        activeDays: sql<number>`count(distinct ${usageDays.date})`,
-        lastDate: sql<string | null>`max(${usageDays.date})`,
-        spendUsd,
-        totalTokens,
-        user: users,
-      })
-      .from(usageDays)
-      .innerJoin(users, eq(usageDays.userId, users.id))
-      .where(visibleUsage(until))
-      .groupBy(usageDays.userId)
-      // Same tiebreak as the leaderboard, so equal totals rank identically.
-      .orderBy(orderBy === "spend" ? desc(spendUsd) : desc(totalTokens), asc(usageDays.userId))
-      .limit(limit)
-  );
-}
-
-function toUserMetric(row: {
-  activeDays: number;
-  lastDate: string | null;
-  spendUsd: number;
-  totalTokens: number;
-  user: User;
-}) {
-  return {
-    activeDays: row.activeDays,
-    lastDate: row.lastDate,
-    spendUsd: row.spendUsd,
-    totalTokens: row.totalTokens,
-    user: toAuthUser(row.user),
-  };
+/** Stats lists top users without the leaderboard's rank column. */
+function withoutRank<Row extends { rank: number }>({ rank: _rank, ...row }: Row) {
+  return row;
 }
 
 /** The busiest day by `metric`; the earliest one wins a tie. */

@@ -14,9 +14,8 @@ import {
 import { and, eq, gt, like, or } from "drizzle-orm";
 import { Effect, Layer, Option } from "effect";
 
-import type { AuthUser } from "@tokenmaxxing/api-contract";
-
 import { DatabaseError, Drizzle, firstRow } from "../database";
+import { toAuthUser } from "../public-user";
 import {
   AuthRepository,
   AuthService,
@@ -305,10 +304,6 @@ function mergedShadowBan(
 
 /** The public identity slice of a users row — every repository that joins
  * users returns this shape. */
-function toAuthUser(user: Pick<User, "avatarUrl" | "id" | "login" | "name">): AuthUser {
-  return { avatarUrl: user.avatarUrl, id: user.id, login: user.login, name: user.name };
-}
-
 function toAccountProfile(account: UserAccount): OAuthProfile {
   return {
     avatarUrl: account.avatarUrl,
@@ -321,4 +316,4 @@ function toAccountProfile(account: UserAccount): OAuthProfile {
   };
 }
 
-export { AuthRepositoryLive, AuthServiceLive, mergedShadowBan, toAuthUser };
+export { AuthRepositoryLive, AuthServiceLive, mergedShadowBan };
