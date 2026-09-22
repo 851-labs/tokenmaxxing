@@ -10,7 +10,7 @@ import {
   type User,
   type UserAccount,
 } from "@tokenmaxxing/db";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, like, or } from "drizzle-orm";
 import { Effect } from "effect";
 import { Layer } from "effect";
 import { Option } from "effect";
@@ -133,13 +133,18 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
           }),
         );
       }),
-    isLoginTaken: (login) =>
+    listLoginsLike: (base) =>
       Effect.gen(function* () {
+        // LIKE is case-insensitive and `_` is a wildcard, so this can
+        // over-match; callers compare exact strings.
         const rows = yield* database.use((db) =>
-          db.select({ id: users.id }).from(users).where(eq(users.login, login)).limit(1),
+          db
+            .select({ login: users.login })
+            .from(users)
+            .where(or(eq(users.login, base), like(users.login, `${base}-%`))),
         );
 
-        return rows.length > 0;
+        return rows.map((row) => row.login);
       }),
     linkAccount: (userId, profile) =>
       Effect.gen(function* () {

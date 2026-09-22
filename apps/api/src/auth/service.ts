@@ -69,7 +69,8 @@ interface AuthRepositoryShape {
     id: string;
     userId: string;
   }): Effect.Effect<void, DatabaseError, any>;
-  isLoginTaken(login: string): Effect.Effect<boolean, DatabaseError, any>;
+  /** Taken logins equal to `base` or of the form `${base}-…` (a superset is fine). */
+  listLoginsLike(base: string): Effect.Effect<string[], DatabaseError, any>;
   linkAccount(
     userId: string,
     profile: OAuthProfile,
@@ -117,13 +118,17 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
           profile.provider,
           profile.providerAccountId,
         );
+        // Looked up once, before any merge. Each branch below only ever
+        // folds a user that is already in this list into another one that
+        // is (or into the linking target), so re-querying after a merge
+        // yields this list minus the merged-away user — which the branches
+        // exclude explicitly — in the same createdAt/login order.
+        const emailUsers = yield* verifiedEmailUsers(profile);
         if (Option.isSome(existing)) {
           if (options?.currentUser !== undefined && options.currentUser.id !== existing.value.id) {
-            const canMerge = yield* canMergeVerifiedEmailConflict(
-              profile,
-              existing.value,
-              options.currentUser,
-            );
+            const emailUserIds = new Set(emailUsers.map((user) => user.id));
+            const canMerge =
+              emailUserIds.has(existing.value.id) && emailUserIds.has(options.currentUser.id);
             if (!canMerge) {
               return yield* Effect.fail(new AccountLinkConflict({ provider: profile.provider }));
             }
@@ -133,11 +138,11 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
               targetUserId: options.currentUser.id,
             });
             const user = yield* repository.linkAccount(options.currentUser.id, profile);
-            const merged = yield* mergeVerifiedEmailUsersInto(user, profile);
+            const merged = yield* mergeUsersInto(user, emailUsers, existing.value.id);
             return yield* mintSession(merged);
           }
 
-          const target = yield* canonicalVerifiedEmailUser(profile, existing.value);
+          const target = emailUsers[0] ?? existing.value;
           if (target.id !== existing.value.id) {
             yield* repository.mergeUsers({
               sourceUserId: existing.value.id,
@@ -145,20 +150,19 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
             });
           }
           const user = yield* repository.linkAccount(target.id, profile);
-          const merged = yield* mergeVerifiedEmailUsersInto(user, profile);
+          const merged = yield* mergeUsersInto(user, emailUsers, existing.value.id);
           return yield* mintSession(merged);
         }
 
         if (options?.currentUser !== undefined) {
           const user = yield* repository.linkAccount(options.currentUser.id, profile);
-          const merged = yield* mergeVerifiedEmailUsersInto(user, profile);
+          const merged = yield* mergeUsersInto(user, emailUsers);
           return yield* mintSession(merged);
         }
 
-        const emailUsers = yield* verifiedEmailUsers(profile);
         if (emailUsers.length > 0) {
           const user = yield* repository.linkAccount(emailUsers[0]!.id, profile);
-          const merged = yield* mergeVerifiedEmailUsersInto(user, profile);
+          const merged = yield* mergeUsersInto(user, emailUsers);
           return yield* mintSession(merged);
         }
 
@@ -191,33 +195,18 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
     });
   }
 
-  function canMergeVerifiedEmailConflict(
-    profile: OAuthProfile,
-    source: CurrentUser,
+  /** Folds every verified-email user (except the target and an already
+   * merged-away user) into `target`, in createdAt/login order. */
+  function mergeUsersInto(
     target: CurrentUser,
+    emailUsers: readonly CurrentUser[],
+    mergedAwayUserId?: string,
   ) {
     return Effect.gen(function* () {
-      const users = yield* verifiedEmailUsers(profile);
-      const userIds = new Set(users.map((user) => user.id));
-
-      return userIds.has(source.id) && userIds.has(target.id);
-    });
-  }
-
-  function canonicalVerifiedEmailUser(profile: OAuthProfile, fallback: CurrentUser) {
-    return Effect.gen(function* () {
-      const users = yield* verifiedEmailUsers(profile);
-      return users[0] ?? fallback;
-    });
-  }
-
-  function mergeVerifiedEmailUsersInto(target: CurrentUser, profile: OAuthProfile) {
-    return Effect.gen(function* () {
-      const users = yield* verifiedEmailUsers(profile);
       let merged = target;
 
-      for (const user of users) {
-        if (user.id !== target.id) {
+      for (const user of emailUsers) {
+        if (user.id !== target.id && user.id !== mergedAwayUserId) {
           merged = yield* repository.mergeUsers({
             sourceUserId: user.id,
             targetUserId: target.id,
@@ -231,10 +220,10 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
 
   function nextAvailableLogin(base: string) {
     return Effect.gen(function* () {
+      const taken = new Set(yield* repository.listLoginsLike(base));
       for (let suffix = 1; suffix < 10_000; suffix += 1) {
         const candidate = suffix === 1 ? base : `${base}-${suffix}`;
-        const taken = yield* repository.isLoginTaken(candidate);
-        if (!taken) {
+        if (!taken.has(candidate)) {
           return candidate;
         }
       }

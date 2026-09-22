@@ -1,5 +1,5 @@
 import { cliTokens, devices, usageDays, userAccounts, users } from "@tokenmaxxing/db";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { Layer } from "effect";
 
@@ -12,7 +12,7 @@ const makeD1AdminRepository = Effect.fn("makeD1AdminRepository")(function* () {
   const database = yield* Drizzle;
 
   return AdminRepository.of({
-    hasVerifiedEmail: (userId, email) =>
+    hasAnyVerifiedEmail: (userId, emails) =>
       Effect.gen(function* () {
         const rows = yield* database.use((db) =>
           db
@@ -21,7 +21,7 @@ const makeD1AdminRepository = Effect.fn("makeD1AdminRepository")(function* () {
             .where(
               and(
                 eq(userAccounts.userId, userId),
-                eq(userAccounts.email, email),
+                inArray(userAccounts.email, [...emails]),
                 eq(userAccounts.emailVerified, true),
               ),
             )
@@ -32,124 +32,123 @@ const makeD1AdminRepository = Effect.fn("makeD1AdminRepository")(function* () {
       }),
     listUserSnapshots: () =>
       Effect.gen(function* () {
-        const userRows = yield* database.use((db) =>
-          db
-            .select({
-              avatarUrl: users.avatarUrl,
-              createdAt: users.createdAt,
-              id: users.id,
-              login: users.login,
-              name: users.name,
-              shadowBannedAt: users.shadowBannedAt,
-              shadowBannedByUserId: users.shadowBannedByUserId,
-              updatedAt: users.updatedAt,
-            })
-            .from(users)
-            .orderBy(asc(users.login)),
-        );
-        const accountRows = yield* database.use((db) =>
-          db
-            .select({
-              email: userAccounts.email,
-              emailVerified: userAccounts.emailVerified,
-              login: userAccounts.login,
-              provider: userAccounts.provider,
-              userId: userAccounts.userId,
-            })
-            .from(userAccounts)
-            .orderBy(asc(userAccounts.provider)),
-        );
-        const deviceRows = yield* database.use((db) =>
-          db
-            .select({
-              arch: devices.arch,
-              createdAt: devices.createdAt,
-              id: devices.id,
-              lastCheckInAt: devices.lastCheckInAt,
-              lastSyncAt: devices.lastSyncAt,
-              name: devices.name,
-              platform: devices.platform,
-              serviceAutoUpdateAttemptedAt: devices.serviceAutoUpdateAttemptedAt,
-              serviceAutoUpdateCompletedAt: devices.serviceAutoUpdateCompletedAt,
-              serviceAutoUpdateCurrentVersion: devices.serviceAutoUpdateCurrentVersion,
-              serviceAutoUpdateEnabled: devices.serviceAutoUpdateEnabled,
-              serviceAutoUpdateError: devices.serviceAutoUpdateError,
-              serviceAutoUpdateInstalledVersion: devices.serviceAutoUpdateInstalledVersion,
-              serviceAutoUpdateLatestVersion: devices.serviceAutoUpdateLatestVersion,
-              serviceAutoUpdateManager: devices.serviceAutoUpdateManager,
-              serviceAutoUpdateReason: devices.serviceAutoUpdateReason,
-              serviceAutoUpdateStatus: devices.serviceAutoUpdateStatus,
-              serviceBackend: devices.serviceBackend,
-              serviceError: devices.serviceError,
-              serviceReloadRequired: devices.serviceReloadRequired,
-              serviceRepairAttemptedAt: devices.serviceRepairAttemptedAt,
-              serviceRepairCompletedAt: devices.serviceRepairCompletedAt,
-              serviceRepairError: devices.serviceRepairError,
-              serviceRepairReason: devices.serviceRepairReason,
-              serviceRepairStatus: devices.serviceRepairStatus,
-              serviceRunnerTarget: devices.serviceRunnerTarget,
-              serviceRunnerVersion: devices.serviceRunnerVersion,
-              serviceSchedulerActive: devices.serviceSchedulerActive,
-              serviceStatus: devices.serviceStatus,
-              serviceTemplateVersion: devices.serviceTemplateVersion,
-              userId: devices.userId,
-              version: devices.version,
-            })
-            .from(devices),
-        );
-        const tokenRows = yield* database.use((db) =>
-          db
-            .select({
-              deviceId: cliTokens.deviceId,
-              lastUsedAt: cliTokens.lastUsedAt,
-              revokedAt: cliTokens.revokedAt,
-              userId: cliTokens.userId,
-            })
-            .from(cliTokens),
-        );
-        const usageRows = yield* database.use((db) =>
-          db
-            .select({
-              activeDays: sql<number>`count(distinct ${usageDays.date})`,
-              lastUsageDate: sql<string | null>`max(${usageDays.date})`,
-              totalSpendUsd: sql<number | null>`sum(${usageDays.costUsd})`,
-              totalTokens: sql<number | null>`sum(${usageDays.totalTokens})`,
-              userId: usageDays.userId,
-            })
-            .from(usageDays)
-            .groupBy(usageDays.userId),
-        );
-        const sourceRows = yield* database.use((db) =>
-          db
-            .selectDistinct({
-              source: usageDays.source,
-              userId: usageDays.userId,
-            })
-            .from(usageDays)
-            .orderBy(asc(usageDays.source)),
-        );
-        const deviceUsageRows = yield* database.use((db) =>
-          db
-            .select({
-              activeDays: sql<number>`count(distinct ${usageDays.date})`,
-              deviceId: usageDays.deviceId,
-              lastUsageDate: sql<string | null>`max(${usageDays.date})`,
-              totalSpendUsd: sql<number | null>`sum(${usageDays.costUsd})`,
-              totalTokens: sql<number | null>`sum(${usageDays.totalTokens})`,
-              userId: usageDays.userId,
-            })
-            .from(usageDays)
-            .groupBy(usageDays.userId, usageDays.deviceId),
-        );
-        const deviceSourceRows = yield* database.use((db) =>
-          db
-            .selectDistinct({
-              deviceId: usageDays.deviceId,
-              source: usageDays.source,
-              userId: usageDays.userId,
-            })
-            .from(usageDays)
-            .orderBy(asc(usageDays.source)),
+        // One D1 round trip. Batched rows come back as objects keyed by
+        // column name, so every statement here must select unique names.
+        const [
+          userRows,
+          accountRows,
+          deviceRows,
+          tokenRows,
+          usageRows,
+          sourceRows,
+          deviceUsageRows,
+          deviceSourceRows,
+        ] = yield* database.use((db) =>
+          db.batch([
+            db
+              .select({
+                avatarUrl: users.avatarUrl,
+                createdAt: users.createdAt,
+                id: users.id,
+                login: users.login,
+                name: users.name,
+                shadowBannedAt: users.shadowBannedAt,
+                shadowBannedByUserId: users.shadowBannedByUserId,
+                updatedAt: users.updatedAt,
+              })
+              .from(users)
+              .orderBy(asc(users.login)),
+            db
+              .select({
+                email: userAccounts.email,
+                emailVerified: userAccounts.emailVerified,
+                login: userAccounts.login,
+                provider: userAccounts.provider,
+                userId: userAccounts.userId,
+              })
+              .from(userAccounts)
+              .orderBy(asc(userAccounts.provider)),
+            db
+              .select({
+                arch: devices.arch,
+                createdAt: devices.createdAt,
+                id: devices.id,
+                lastCheckInAt: devices.lastCheckInAt,
+                lastSyncAt: devices.lastSyncAt,
+                name: devices.name,
+                platform: devices.platform,
+                serviceAutoUpdateAttemptedAt: devices.serviceAutoUpdateAttemptedAt,
+                serviceAutoUpdateCompletedAt: devices.serviceAutoUpdateCompletedAt,
+                serviceAutoUpdateCurrentVersion: devices.serviceAutoUpdateCurrentVersion,
+                serviceAutoUpdateEnabled: devices.serviceAutoUpdateEnabled,
+                serviceAutoUpdateError: devices.serviceAutoUpdateError,
+                serviceAutoUpdateInstalledVersion: devices.serviceAutoUpdateInstalledVersion,
+                serviceAutoUpdateLatestVersion: devices.serviceAutoUpdateLatestVersion,
+                serviceAutoUpdateManager: devices.serviceAutoUpdateManager,
+                serviceAutoUpdateReason: devices.serviceAutoUpdateReason,
+                serviceAutoUpdateStatus: devices.serviceAutoUpdateStatus,
+                serviceBackend: devices.serviceBackend,
+                serviceError: devices.serviceError,
+                serviceReloadRequired: devices.serviceReloadRequired,
+                serviceRepairAttemptedAt: devices.serviceRepairAttemptedAt,
+                serviceRepairCompletedAt: devices.serviceRepairCompletedAt,
+                serviceRepairError: devices.serviceRepairError,
+                serviceRepairReason: devices.serviceRepairReason,
+                serviceRepairStatus: devices.serviceRepairStatus,
+                serviceRunnerTarget: devices.serviceRunnerTarget,
+                serviceRunnerVersion: devices.serviceRunnerVersion,
+                serviceSchedulerActive: devices.serviceSchedulerActive,
+                serviceStatus: devices.serviceStatus,
+                serviceTemplateVersion: devices.serviceTemplateVersion,
+                userId: devices.userId,
+                version: devices.version,
+              })
+              .from(devices),
+            db
+              .select({
+                deviceId: cliTokens.deviceId,
+                lastUsedAt: cliTokens.lastUsedAt,
+                revokedAt: cliTokens.revokedAt,
+                userId: cliTokens.userId,
+              })
+              .from(cliTokens),
+            db
+              .select({
+                activeDays: sql<number>`count(distinct ${usageDays.date})`,
+                lastUsageDate: sql<string | null>`max(${usageDays.date})`,
+                totalSpendUsd: sql<number | null>`sum(${usageDays.costUsd})`,
+                totalTokens: sql<number | null>`sum(${usageDays.totalTokens})`,
+                userId: usageDays.userId,
+              })
+              .from(usageDays)
+              .groupBy(usageDays.userId),
+            db
+              .selectDistinct({
+                source: usageDays.source,
+                userId: usageDays.userId,
+              })
+              .from(usageDays)
+              .orderBy(asc(usageDays.source)),
+            db
+              .select({
+                activeDays: sql<number>`count(distinct ${usageDays.date})`,
+                deviceId: usageDays.deviceId,
+                lastUsageDate: sql<string | null>`max(${usageDays.date})`,
+                totalSpendUsd: sql<number | null>`sum(${usageDays.costUsd})`,
+                totalTokens: sql<number | null>`sum(${usageDays.totalTokens})`,
+                userId: usageDays.userId,
+              })
+              .from(usageDays)
+              .groupBy(usageDays.userId, usageDays.deviceId),
+            db
+              .selectDistinct({
+                deviceId: usageDays.deviceId,
+                source: usageDays.source,
+                userId: usageDays.userId,
+              })
+              .from(usageDays)
+              .orderBy(asc(usageDays.source)),
+          ]),
         );
 
         const accountsByUser = groupBy(accountRows, (row) => row.userId);

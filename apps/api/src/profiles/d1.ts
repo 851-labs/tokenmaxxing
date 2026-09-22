@@ -62,102 +62,82 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
       }),
     stats: (userId) =>
       Effect.gen(function* () {
-        const [totals] = yield* database.use((db) =>
-          db
-            .select({
-              activeDays: sql<number>`count(distinct ${usageDays.date})`,
-              deviceCount: sql<number>`count(distinct ${usageDays.deviceId})`,
-              firstDate: sql<string | null>`min(${usageDays.date})`,
-              lastDate: sql<string | null>`max(${usageDays.date})`,
-              totalSpendUsd: sql<number | null>`sum(${usageDays.costUsd})`,
-              totalTokens: sql<number | null>`sum(${usageDays.totalTokens})`,
-            })
-            .from(usageDays)
-            .where(eq(usageDays.userId, userId)),
-        );
+        // One D1 round trip. Batched rows come back as objects keyed by
+        // column name, so every statement here must select unique names.
+        const [[totals], [sessionStats], [fallbackSessions], dayRows, topModels, sourceRows] =
+          yield* database.use((db) =>
+            db.batch([
+              db
+                .select({
+                  deviceCount: sql<number>`count(distinct ${usageDays.deviceId})`,
+                  totalSpendUsd: sql<number | null>`sum(${usageDays.costUsd})`,
+                  totalTokens: sql<number | null>`sum(${usageDays.totalTokens})`,
+                })
+                .from(usageDays)
+                .where(eq(usageDays.userId, userId)),
+              db
+                .select({
+                  sessionCount: sql<number | null>`sum(${usageSourceStats.sessionCount})`,
+                })
+                .from(usageSourceStats)
+                .where(eq(usageSourceStats.userId, userId)),
+              db
+                .select({
+                  sessionCount: sql<number>`count(distinct ${usageDays.deviceId} || ':' || ${usageDays.date} || ':' || ${usageDays.source})`,
+                })
+                .from(usageDays)
+                .leftJoin(
+                  usageSourceStats,
+                  and(
+                    eq(usageSourceStats.deviceId, usageDays.deviceId),
+                    eq(usageSourceStats.source, usageDays.source),
+                  ),
+                )
+                .where(and(eq(usageDays.userId, userId), isNull(usageSourceStats.deviceId))),
+              // Every active day, ascending: active-day count, first/last
+              // date, streaks and the peak day all derive from this.
+              db
+                .select({
+                  date: usageDays.date,
+                  spendUsd: sql<number>`sum(${usageDays.costUsd})`,
+                })
+                .from(usageDays)
+                .where(eq(usageDays.userId, userId))
+                .groupBy(usageDays.date)
+                .orderBy(asc(usageDays.date)),
+              db
+                .select({
+                  model: usageDays.model,
+                  spendUsd: sql<number>`sum(${usageDays.costUsd})`.as("model_spend"),
+                })
+                .from(usageDays)
+                .where(eq(usageDays.userId, userId))
+                .groupBy(usageDays.model)
+                .orderBy(desc(sql`model_spend`))
+                .limit(1),
+              db
+                .selectDistinct({ source: usageDays.source })
+                .from(usageDays)
+                .where(eq(usageDays.userId, userId))
+                .orderBy(asc(usageDays.source)),
+            ]),
+          );
 
-        const [sessionStats] = yield* database.use((db) =>
-          db
-            .select({
-              sessionCount: sql<number | null>`sum(${usageSourceStats.sessionCount})`,
-            })
-            .from(usageSourceStats)
-            .where(eq(usageSourceStats.userId, userId)),
-        );
-
-        const [fallbackSessions] = yield* database.use((db) =>
-          db
-            .select({
-              sessionCount: sql<number>`count(distinct ${usageDays.deviceId} || ':' || ${usageDays.date} || ':' || ${usageDays.source})`,
-            })
-            .from(usageDays)
-            .leftJoin(
-              usageSourceStats,
-              and(
-                eq(usageSourceStats.deviceId, usageDays.deviceId),
-                eq(usageSourceStats.source, usageDays.source),
-              ),
-            )
-            .where(and(eq(usageDays.userId, userId), isNull(usageSourceStats.deviceId))),
-        );
-
-        const peakDays = yield* database.use((db) =>
-          db
-            .select({
-              date: usageDays.date,
-              spendUsd: sql<number>`sum(${usageDays.costUsd})`.as("day_spend"),
-            })
-            .from(usageDays)
-            .where(eq(usageDays.userId, userId))
-            .groupBy(usageDays.date)
-            .orderBy(desc(sql`day_spend`))
-            .limit(1),
-        );
-
-        const topModels = yield* database.use((db) =>
-          db
-            .select({
-              model: usageDays.model,
-              spendUsd: sql<number>`sum(${usageDays.costUsd})`.as("model_spend"),
-            })
-            .from(usageDays)
-            .where(eq(usageDays.userId, userId))
-            .groupBy(usageDays.model)
-            .orderBy(desc(sql`model_spend`))
-            .limit(1),
-        );
-
-        const sourceRows = yield* database.use((db) =>
-          db
-            .selectDistinct({ source: usageDays.source })
-            .from(usageDays)
-            .where(eq(usageDays.userId, userId))
-            .orderBy(asc(usageDays.source)),
-        );
-
-        const activeDateRows = yield* database.use((db) =>
-          db
-            .selectDistinct({ date: usageDays.date })
-            .from(usageDays)
-            .where(eq(usageDays.userId, userId))
-            .orderBy(asc(usageDays.date)),
-        );
-
-        const activeDays = totals?.activeDays ?? 0;
+        const activeDays = dayRows.length;
         const totalSpendUsd = totals?.totalSpendUsd ?? 0;
         const sessionCount =
           (sessionStats?.sessionCount ?? 0) + (fallbackSessions?.sessionCount ?? 0);
-        const streaks = usageStreaks(activeDateRows.map((row) => row.date));
+        const streaks = usageStreaks(dayRows.map((row) => row.date));
 
         return {
           activeDays,
           avgSpendPerActiveDay: activeDays === 0 ? 0 : totalSpendUsd / activeDays,
           currentStreakDays: streaks.currentStreakDays,
           deviceCount: totals?.deviceCount ?? 0,
-          firstDate: totals?.firstDate ?? null,
-          lastDate: totals?.lastDate ?? null,
+          firstDate: dayRows[0]?.date ?? null,
+          lastDate: dayRows.at(-1)?.date ?? null,
           longestStreakDays: streaks.longestStreakDays,
-          peakDay: peakDays[0] ?? null,
+          peakDay: peakSpendDay(dayRows),
           sessionCount,
           sources: sourceRows.map((row) => row.source),
           topModel: topModels[0] ?? null,
@@ -198,5 +178,17 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
 });
 
 const ProfilesRepositoryLive = Layer.effect(ProfilesRepository, makeD1ProfilesRepository());
+
+/** The highest-spend day; the earliest one wins a tie. */
+function peakSpendDay(days: readonly { date: string; spendUsd: number }[]) {
+  let peak: { date: string; spendUsd: number } | null = null;
+  for (const day of days) {
+    if (peak === null || day.spendUsd > peak.spendUsd) {
+      peak = day;
+    }
+  }
+
+  return peak;
+}
 
 export { ProfilesRepositoryLive };

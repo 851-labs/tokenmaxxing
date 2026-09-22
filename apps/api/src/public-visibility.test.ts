@@ -174,8 +174,16 @@ function run<A, E>(effect: Effect.Effect<A, E, any>): Promise<A> {
 
 function d1Database(sqlite: DatabaseSync): D1Database {
   return {
+    // Like D1, batched statements come back as `{ results }` of row OBJECTS
+    // (drizzle maps them positionally via Object.keys), not raw arrays.
+    batch: async (statements: TestD1Statement[]) =>
+      statements.map((statement) => ({ results: statement.objects() })),
     prepare: (query: string) => d1Statement(sqlite, query),
   } as unknown as D1Database;
+}
+
+interface TestD1Statement {
+  objects(): unknown[];
 }
 
 function d1Statement(
@@ -183,14 +191,17 @@ function d1Statement(
   query: string,
   parameters: SQLInputValue[] = [],
 ): D1PreparedStatement {
-  return {
+  const statement = {
     all: async () => ({ results: sqlite.prepare(query).all(...parameters) }),
     bind: (...values: unknown[]) => d1Statement(sqlite, query, values as SQLInputValue[]),
+    objects: () => sqlite.prepare(query).all(...parameters),
     raw: async () => {
-      const statement = sqlite.prepare(query);
-      statement.setReturnArrays(true);
-      return statement.all(...parameters);
+      const prepared = sqlite.prepare(query);
+      prepared.setReturnArrays(true);
+      return prepared.all(...parameters);
     },
     run: async () => sqlite.prepare(query).run(...parameters),
-  } as unknown as D1PreparedStatement;
+  } satisfies TestD1Statement & Record<string, unknown>;
+
+  return statement as unknown as D1PreparedStatement;
 }
