@@ -48,8 +48,10 @@ const cannedResponses: Record<string, unknown> = {
   "POST /cli/login/poll": { status: "complete", token: "tmx_fixture", user },
   "POST /cli/login/start": {
     code: "ABCD-1234",
+    deviceCode: "device-code-secret",
     expiresAt: "2026-06-21T18:10:00.000Z",
     intervalSeconds: 0,
+    userCode: "ABCD-1234",
     verificationUri: "https://tokenmaxxing.example/login/cli?code=ABCD-1234",
   },
   "POST /cli/logout": { ok: true },

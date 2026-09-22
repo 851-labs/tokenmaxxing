@@ -1,5 +1,24 @@
 {
   "components": {
+    "CliUpgradeRequiredEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "CliUpgradeRequired"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "message"
+      ],
+      "additionalProperties": false
+    },
     "DeviceMissingEncoded": {
       "type": "object",
       "properties": {
@@ -182,6 +201,16 @@
                     "code": {
                       "type": "string"
                     },
+                    "deviceCode": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "expiresAt": {
                       "type": "string"
                     },
@@ -200,6 +229,9 @@
                         }
                       ]
                     },
+                    "userCode": {
+                      "type": "string"
+                    },
                     "verificationUri": {
                       "type": "string"
                     }
@@ -208,9 +240,20 @@
                     "code",
                     "expiresAt",
                     "intervalSeconds",
+                    "userCode",
                     "verificationUri"
                   ],
                   "additionalProperties": false
+                }
+              }
+            }
+          },
+          "426": {
+            "description": "CliUpgradeRequired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CliUpgradeRequiredEncoded"
                 }
               }
             }
@@ -245,6 +288,19 @@
                     "anyOf": [
                       {
                         "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "flow": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "device_code"
+                        ]
                       },
                       {
                         "type": "null"
@@ -383,16 +439,32 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "code": {
-                    "type": "string"
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "deviceCode": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "deviceCode"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "code"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "code"
-                ],
-                "additionalProperties": false
+                ]
               }
             }
           },

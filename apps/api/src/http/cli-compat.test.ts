@@ -90,12 +90,17 @@ beforeAll(async () => {
   const auth = { resolveSession: () => Effect.succeedNone } as unknown as AuthService["Service"];
   const cliLogin = CliLoginService.of({
     approve: () => Effect.succeed({ deviceName: "fixture-host" }),
+    describe: () => Effect.die("not called by the CLI"),
     poll: () => Effect.succeed({ status: "complete", token: "tmx_fixture", user }),
-    start: () =>
+    // Stubbed, so the legacy-login sunset is not exercised here: these tests
+    // pin routing and payload decoding for every recorded request shape.
+    start: (input) =>
       Effect.succeed({
         code: "ABCD-1234",
+        ...(input.flow === "device_code" ? { deviceCode: "device-code-secret" } : {}),
         expiresAt: "2026-06-21T18:10:00.000Z",
         intervalSeconds: 2,
+        userCode: "ABCD-1234",
         verificationUri: "https://tokenmaxxing.sh/login/cli?code=ABCD-1234",
       }),
   });
