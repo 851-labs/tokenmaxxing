@@ -1,11 +1,10 @@
-import { cliLoginRequests, cliTokens, devices, users } from "@tokenmaxxing/db";
+import { cliLoginRequests, cliTokens, devices } from "@tokenmaxxing/db";
 import { and, eq, gt, sql } from "drizzle-orm";
-import { Effect } from "effect";
-import { Layer } from "effect";
-import { Option } from "effect";
+import { Effect, Layer, Option } from "effect";
 
-import { Drizzle } from "../database";
-import { CliLoginRepository } from "./service";
+import { AuthRepositoryLive } from "../auth/d1";
+import { Drizzle, firstRow } from "../database";
+import { CliLoginRepository, CliLoginService, makeCliLoginService } from "./service";
 
 const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function* () {
   const database = yield* Drizzle;
@@ -13,7 +12,7 @@ const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function*
   const findRequestWhere = (where: ReturnType<typeof eq>) =>
     database
       .use((db) => db.select().from(cliLoginRequests).where(where).limit(1))
-      .pipe(Effect.map((rows) => Option.fromNullishOr(rows[0])));
+      .pipe(Effect.map(firstRow));
 
   return CliLoginRepository.of({
     insertRequest: (input) =>
@@ -52,7 +51,7 @@ const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function*
             )
             .returning(),
         )
-        .pipe(Effect.map((rows) => Option.fromNullishOr(rows[0]))),
+        .pipe(Effect.map(firstRow)),
     claimApprovedRequest: ({ now, requestId }) =>
       database
         .use((db) =>
@@ -67,7 +66,7 @@ const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function*
             )
             .returning(),
         )
-        .pipe(Effect.map((rows) => Option.fromNullishOr(rows[0]))),
+        .pipe(Effect.map(firstRow)),
     deleteRequest: (id) =>
       Effect.gen(function* () {
         yield* database.use((db) => db.delete(cliLoginRequests).where(eq(cliLoginRequests.id, id)));
@@ -81,18 +80,7 @@ const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function*
             .where(eq(devices.id, deviceId))
             .limit(1),
         )
-        .pipe(Effect.map((rows) => Option.fromNullishOr(rows[0]?.userId))),
-    findRequestUser: (userId) =>
-      Effect.gen(function* () {
-        const rows = yield* database.use((db) =>
-          db.select().from(users).where(eq(users.id, userId)).limit(1),
-        );
-        const row = rows[0];
-
-        return row === undefined
-          ? Option.none()
-          : Option.some({ avatarUrl: row.avatarUrl, id: row.id, login: row.login, name: row.name });
-      }),
+        .pipe(Effect.map((rows) => firstRow(rows).pipe(Option.map((row) => row.userId)))),
     issueCliToken: (input) =>
       Effect.gen(function* () {
         const [, inserted] = yield* database.use((db) =>
@@ -151,4 +139,8 @@ const makeD1CliLoginRepository = Effect.fn("makeD1CliLoginRepository")(function*
 
 const CliLoginRepositoryLive = Layer.effect(CliLoginRepository, makeD1CliLoginRepository());
 
-export { CliLoginRepositoryLive };
+const CliLoginServiceLive = Layer.effect(CliLoginService, makeCliLoginService()).pipe(
+  Layer.provide([CliLoginRepositoryLive, AuthRepositoryLive]),
+);
+
+export { CliLoginRepositoryLive, CliLoginServiceLive };

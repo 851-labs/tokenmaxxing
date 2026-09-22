@@ -1,5 +1,4 @@
-import { Context } from "effect";
-import { Effect } from "effect";
+import { Context, Effect } from "effect";
 
 import type { DatabaseError } from "../database";
 
@@ -15,12 +14,12 @@ interface PurgeResult {
 }
 
 interface CleanupServiceShape {
-  purgeExpired(now: Date): Effect.Effect<PurgeResult, never, any>;
+  purgeExpired(now: Date): Effect.Effect<PurgeResult>;
 }
 
 interface CleanupRepositoryShape {
   /** One batch: delete sessions and CLI login requests with expires_at <= now. */
-  deleteExpired(now: Date): Effect.Effect<PurgeResult, DatabaseError, any>;
+  deleteExpired(now: Date): Effect.Effect<PurgeResult, DatabaseError>;
 }
 
 class CleanupService extends Context.Service<CleanupService, CleanupServiceShape>()(

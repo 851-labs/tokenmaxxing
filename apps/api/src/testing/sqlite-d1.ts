@@ -14,14 +14,6 @@ import { Drizzle } from "../database";
  * keys stay on, matching D1.
  */
 
-/** A service with its `any` requirements erased so tests can runPromise it
- * directly (the repositories are already provided). */
-type RunnableService<S> = {
-  [K in keyof S]: S[K] extends (...args: infer Args) => Effect.Effect<infer A, infer E, any>
-    ? (...args: Args) => Effect.Effect<A, E>
-    : S[K];
-};
-
 interface ExecutedQuery {
   parameters: SQLInputValue[];
   sql: string;
@@ -141,4 +133,4 @@ function toSqlValue(value: unknown): SQLInputValue {
 
 export { makeD1Database, makeTestDatabase };
 
-export type { ExecutedQuery, RunnableService, TestDatabase };
+export type { ExecutedQuery, TestDatabase };

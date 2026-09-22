@@ -1,8 +1,8 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
-import { buildService, runTest } from "../testing/effect";
+import { buildService } from "../testing/effect";
 import { seedAccount, seedDevice, seedToken, seedUsage, seedUser } from "../testing/seed";
 import { AdminRepositoryLive } from "./d1";
 import { AdminRepository } from "./service";
@@ -71,7 +71,7 @@ describe("D1 listUserSnapshots", () => {
       AdminRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
     );
 
-    const snapshots = await runTest(repository.listUserSnapshots());
+    const snapshots = await Effect.runPromise(repository.listUserSnapshots());
 
     expect(snapshots.map((snapshot) => snapshot.user.login)).toEqual(["amy", "zed"]);
     const [amy, zed] = snapshots;

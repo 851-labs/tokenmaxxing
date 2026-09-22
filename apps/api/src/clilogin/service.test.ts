@@ -4,22 +4,22 @@ import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { hashCliToken, hashDeviceCode } from "../auth/crypto";
-import type { AuthUser as CurrentUser } from "@tokenmaxxing/api-contract";
-import { makeTestDatabase, type RunnableService } from "../testing/sqlite-d1";
-import { CliLoginRepositoryLive } from "./d1";
+import type { AuthUser } from "@tokenmaxxing/api-contract";
+
+import { makeTestDatabase } from "../testing/sqlite-d1";
+import { CliLoginRepositoryLive, CliLoginServiceLive } from "./d1";
 import {
   CliLoginRepository,
   CliLoginService,
   cliLoginVerificationUri,
   LEGACY_LOGIN_SUNSET,
   LOGIN_REQUEST_TTL_MS,
-  makeCliLoginService,
 } from "./service";
 
-type Service = RunnableService<typeof CliLoginService.Service>;
+type Service = typeof CliLoginService.Service;
 
-const alice: CurrentUser = { avatarUrl: null, id: "user_alice", login: "alice", name: null };
-const mallory: CurrentUser = { avatarUrl: null, id: "user_mallory", login: "mallory", name: null };
+const alice: AuthUser = { avatarUrl: null, id: "user_alice", login: "alice", name: null };
+const mallory: AuthUser = { avatarUrl: null, id: "user_mallory", login: "mallory", name: null };
 
 const device = {
   deviceArch: "arm64",
@@ -33,7 +33,7 @@ const NOW = new Date("2026-09-22T12:00:00.000Z");
 
 let sqlite: DatabaseSync;
 let service: Service;
-let repository: RunnableService<typeof CliLoginRepository.Service>;
+let repository: typeof CliLoginRepository.Service;
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -42,16 +42,16 @@ beforeEach(async () => {
   const database = makeTestDatabase();
   sqlite = database.sqlite;
   const repositoryLayer = CliLoginRepositoryLive.pipe(Layer.provide(database.drizzleLayer));
-  repository = (await Effect.runPromise(
+  repository = await Effect.runPromise(
     Effect.gen(function* () {
       return yield* CliLoginRepository;
     }).pipe(Effect.provide(repositoryLayer)),
-  )) as typeof repository;
-  service = (await Effect.runPromise(
-    makeCliLoginService().pipe(
-      Effect.provide(CliLoginRepositoryLive.pipe(Layer.provide(database.drizzleLayer))),
-    ),
-  )) as Service;
+  );
+  service = await Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* CliLoginService;
+    }).pipe(Effect.provide(CliLoginServiceLive.pipe(Layer.provide(database.drizzleLayer)))),
+  );
   insertUser(alice);
   insertUser(mallory);
 });
@@ -373,7 +373,7 @@ function ownerOf(deviceId: string) {
   return sqlite.prepare("SELECT user_id FROM devices WHERE id = ?").get(deviceId)?.user_id;
 }
 
-function insertUser(user: CurrentUser) {
+function insertUser(user: AuthUser) {
   sqlite
     .prepare("INSERT INTO users (id, login, created_at, updated_at) VALUES (?, ?, ?, ?)")
     .run(user.id, user.login, NOW.getTime(), NOW.getTime());

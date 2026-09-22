@@ -1,8 +1,8 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
-import { buildService, runTest } from "../testing/effect";
+import { buildService } from "../testing/effect";
 import { seedUsage, seedUser } from "../testing/seed";
 import { StatsRepositoryLive } from "./d1";
 import { StatsRepository } from "./service";
@@ -42,7 +42,9 @@ describe("D1 stats snapshot", () => {
       StatsRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
     );
 
-    return runTest(stats.snapshot({ last30dSince: "2026-07-01", limit, until: "2026-12-31" }));
+    return Effect.runPromise(
+      stats.snapshot({ last30dSince: "2026-07-01", limit, until: "2026-12-31" }),
+    );
   }
 
   it("limits and tie-breaks top users by ascending user id", async () => {

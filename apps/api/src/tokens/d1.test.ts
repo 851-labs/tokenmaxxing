@@ -1,8 +1,8 @@
-import { Exit, Layer } from "effect";
+import { Effect, Exit, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
-import { buildService, runTest, runTestExit } from "../testing/effect";
+import { buildService } from "../testing/effect";
 import { makeMemoryBucket, type MemoryBucket } from "../testing/r2";
 import {
   seedDevice,
@@ -83,7 +83,7 @@ describe("D1 deleteDevice", () => {
     const bucket = makeMemoryBucket();
     const repository = await makeRepository(bucket);
 
-    const deleted = await runTest(repository.deleteDevice("user", "doomed", NOW));
+    const deleted = await Effect.runPromise(repository.deleteDevice("user", "doomed", NOW));
 
     expect(deleted).toBe(true);
     expect(deviceIds("devices")).toEqual(["foreign", "kept"]);
@@ -103,7 +103,7 @@ describe("D1 deleteDevice", () => {
     const bucket = makeMemoryBucket();
     const repository = await makeRepository(bucket);
 
-    const deleted = await runTest(repository.deleteDevice("user", "foreign", NOW));
+    const deleted = await Effect.runPromise(repository.deleteDevice("user", "foreign", NOW));
 
     expect(deleted).toBe(false);
     expect(deviceIds("devices")).toEqual(["doomed", "foreign", "kept"]);
@@ -117,14 +117,14 @@ describe("D1 deleteDevice", () => {
     const repository = await makeRepository(bucket);
     bucket.setDeleteFailure(new Error("r2 down"));
 
-    const exit = await runTestExit(repository.deleteDevice("user", "doomed", NOW));
+    const exit = await Effect.runPromiseExit(repository.deleteDevice("user", "doomed", NOW));
 
     expect(Exit.isFailure(exit)).toBe(true);
     expect(deviceIds("devices")).toEqual(["doomed", "foreign", "kept"]);
     expect(deviceIds("usage_raw_batches")).toEqual(["doomed", "doomed", "foreign", "kept"]);
 
     bucket.setDeleteFailure(null);
-    expect(await runTest(repository.deleteDevice("user", "doomed", NOW))).toBe(true);
+    expect(await Effect.runPromise(repository.deleteDevice("user", "doomed", NOW))).toBe(true);
     expect(deviceIds("usage_raw_batches")).toEqual(["foreign", "kept"]);
     expect(bucket.objects.has(rawKey("doomed"))).toBe(false);
   });
@@ -148,7 +148,7 @@ describe("D1 deleteDevice", () => {
     });
     const repository = await makeRepository(bucket);
 
-    await runTest(repository.deleteDevice("user", "doomed", NOW));
+    await Effect.runPromise(repository.deleteDevice("user", "doomed", NOW));
 
     expect(deviceIds("usage_raw_batches")).toEqual(["foreign", "kept"]);
     expect(bucket.deletes.at(-1)).toEqual([`${rawKey("doomed")}.late`]);
@@ -158,7 +158,7 @@ describe("D1 deleteDevice", () => {
   it("finds the device's raw reports through an index", async () => {
     const repository = await makeRepository(makeMemoryBucket());
 
-    await runTest(repository.deleteDevice("user", "doomed", NOW));
+    await Effect.runPromise(repository.deleteDevice("user", "doomed", NOW));
 
     expect(database.tableScans("usage_raw_batches")).toEqual([]);
   });

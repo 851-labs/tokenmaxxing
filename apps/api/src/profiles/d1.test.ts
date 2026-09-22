@@ -1,8 +1,8 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
-import { buildService, runTest } from "../testing/effect";
+import { buildService } from "../testing/effect";
 import { seedSourceStats, seedUsage, seedUser } from "../testing/seed";
 import { ProfilesRepositoryLive } from "./d1";
 import { ProfilesRepository } from "./service";
@@ -54,7 +54,7 @@ describe("D1 profiles repository", () => {
     it("returns empty stats for a user without usage", async () => {
       const repository = await makeRepository();
 
-      expect(await runTest(repository.stats("user", statsWindow))).toEqual({
+      expect(await Effect.runPromise(repository.stats("user", statsWindow))).toEqual({
         activeDays: 0,
         avgSpendPerActiveDay: 0,
         currentStreakDays: 0,
@@ -81,7 +81,7 @@ describe("D1 profiles repository", () => {
       usage("elsewhere", "2026-07-04", "codex", "gpt-5", 1_000, 1_000, "other");
       const repository = await makeRepository();
 
-      const stats = await runTest(repository.stats("user", statsWindow));
+      const stats = await Effect.runPromise(repository.stats("user", statsWindow));
 
       expect(stats).toMatchObject({
         activeDays: 5,
@@ -123,7 +123,7 @@ describe("D1 profiles repository", () => {
       });
       const repository = await makeRepository();
 
-      const stats = await runTest(repository.stats("user", statsWindow));
+      const stats = await Effect.runPromise(repository.stats("user", statsWindow));
 
       expect(stats.sessionCount).toBe(10 + 2 + 1);
     });
@@ -142,7 +142,7 @@ describe("D1 profiles repository", () => {
     it("groups by model, ordered by date then key", async () => {
       const repository = await makeRepository();
 
-      const rows = await runTest(repository.daily("user", { groupBy: "model", until }));
+      const rows = await Effect.runPromise(repository.daily("user", { groupBy: "model", until }));
 
       expect(rows.map((row) => [row.date, row.key, row.costUsd])).toEqual([
         ["2026-07-01", "gpt-5", 1],
@@ -163,7 +163,7 @@ describe("D1 profiles repository", () => {
     it("groups by source", async () => {
       const repository = await makeRepository();
 
-      const rows = await runTest(repository.daily("user", { groupBy: "source", until }));
+      const rows = await Effect.runPromise(repository.daily("user", { groupBy: "source", until }));
 
       expect(rows.map((row) => [row.date, row.key, row.costUsd, row.totalTokens])).toEqual([
         ["2026-07-01", "codex", 3, 20],
@@ -176,13 +176,13 @@ describe("D1 profiles repository", () => {
     it("applies since and until as an inclusive window", async () => {
       const repository = await makeRepository();
 
-      const sinceOnly = await runTest(
+      const sinceOnly = await Effect.runPromise(
         repository.daily("user", { groupBy: "source", since: "2026-07-02", until }),
       );
-      const untilOnly = await runTest(
+      const untilOnly = await Effect.runPromise(
         repository.daily("user", { groupBy: "source", until: "2026-07-01" }),
       );
-      const both = await runTest(
+      const both = await Effect.runPromise(
         repository.daily("user", {
           groupBy: "source",
           since: "2026-07-02",

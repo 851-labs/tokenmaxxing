@@ -1,8 +1,8 @@
-import { Exit, Layer } from "effect";
+import { Effect, Exit, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
-import { buildService, runTest, runTestExit } from "../testing/effect";
+import { buildService } from "../testing/effect";
 import {
   countRowsByUser,
   seedAccount,
@@ -95,7 +95,7 @@ describe("D1 mergeUsers", () => {
     const before = countRowsByUser(database.sqlite, "source");
     const repository = await makeRepository();
 
-    const merged = await runTest(
+    const merged = await Effect.runPromise(
       repository.mergeUsers({ sourceUserId: "source", targetUserId: "target" }),
     );
 
@@ -128,7 +128,9 @@ describe("D1 mergeUsers", () => {
   it("re-homes raw reports through an index", async () => {
     const repository = await makeRepository();
 
-    await runTest(repository.mergeUsers({ sourceUserId: "source", targetUserId: "target" }));
+    await Effect.runPromise(
+      repository.mergeUsers({ sourceUserId: "source", targetUserId: "target" }),
+    );
 
     expect(database.tableScans("usage_raw_batches")).toEqual([]);
   });
@@ -141,7 +143,9 @@ describe("D1 mergeUsers", () => {
       .run();
     const repository = await makeRepository();
 
-    await runTest(repository.mergeUsers({ sourceUserId: "source", targetUserId: "target" }));
+    await Effect.runPromise(
+      repository.mergeUsers({ sourceUserId: "source", targetUserId: "target" }),
+    );
 
     expect(
       database.sqlite
@@ -160,7 +164,7 @@ describe("D1 mergeUsers", () => {
     `);
     const repository = await makeRepository();
 
-    const exit = await runTestExit(
+    const exit = await Effect.runPromiseExit(
       repository.mergeUsers({ sourceUserId: "source", targetUserId: "target" }),
     );
 
@@ -172,7 +176,7 @@ describe("D1 mergeUsers", () => {
     const before = countRowsByUser(database.sqlite, "source");
     const repository = await makeRepository();
 
-    const merged = await runTest(
+    const merged = await Effect.runPromise(
       repository.mergeUsers({ sourceUserId: "source", targetUserId: "source" }),
     );
 
