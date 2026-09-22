@@ -15,8 +15,12 @@ class GitHubApiError extends Data.TaggedError("GitHubApiError")<{
 }> {}
 
 interface GitHubClientShape {
-  /** OAuth authorization-code exchange; returns the user access token. */
-  exchangeCode(code: string, redirectUri: string): Effect.Effect<string, GitHubApiError>;
+  /** OAuth authorization-code exchange (PKCE); returns the user access token. */
+  exchangeCode(
+    code: string,
+    redirectUri: string,
+    codeVerifier: string,
+  ): Effect.Effect<string, GitHubApiError>;
   fetchUser(accessToken: string): Effect.Effect<OAuthProfile, GitHubApiError>;
 }
 
@@ -53,29 +57,32 @@ const makeGitHubClient = Effect.fn("makeGitHubClient")(function* () {
   });
 
   return GitHubClient.of({
-    exchangeCode: Effect.fn("GitHubClient.exchangeCode")(function* (code, redirectUri) {
-      const payload = (yield* requestJson(
-        HttpClientRequest.post("https://github.com/login/oauth/access_token", {
-          headers: { accept: "application/json" },
-        }).pipe(
-          HttpClientRequest.bodyJsonUnsafe({
-            client_id: config.github.clientId,
-            client_secret: config.github.clientSecret,
-            code,
-            redirect_uri: redirectUri,
-          }),
-        ),
-      )) as { access_token?: string; error?: string };
-      if (typeof payload.access_token !== "string") {
-        return yield* Effect.fail(
-          new GitHubApiError({
-            cause: new Error(`GitHub token exchange rejected: ${payload.error ?? "no token"}`),
-          }),
-        );
-      }
+    exchangeCode: Effect.fn("GitHubClient.exchangeCode")(
+      function* (code, redirectUri, codeVerifier) {
+        const payload = (yield* requestJson(
+          HttpClientRequest.post("https://github.com/login/oauth/access_token", {
+            headers: { accept: "application/json" },
+          }).pipe(
+            HttpClientRequest.bodyJsonUnsafe({
+              client_id: config.github.clientId,
+              client_secret: config.github.clientSecret,
+              code,
+              code_verifier: codeVerifier,
+              redirect_uri: redirectUri,
+            }),
+          ),
+        )) as { access_token?: string; error?: string };
+        if (typeof payload.access_token !== "string") {
+          return yield* Effect.fail(
+            new GitHubApiError({
+              cause: new Error(`GitHub token exchange rejected: ${payload.error ?? "no token"}`),
+            }),
+          );
+        }
 
-      return payload.access_token;
-    }),
+        return payload.access_token;
+      },
+    ),
     fetchUser: Effect.fn("GitHubClient.fetchUser")(function* (accessToken) {
       const payload = (yield* requestJson(
         HttpClientRequest.get("https://api.github.com/user", {
@@ -119,9 +126,16 @@ const makeGitHubClient = Effect.fn("makeGitHubClient")(function* () {
   }
 });
 
-function buildAuthorizeUrl(config: GitHubOAuthConfig, redirectUri: string, state: string): string {
+function buildAuthorizeUrl(
+  config: GitHubOAuthConfig,
+  redirectUri: string,
+  state: string,
+  codeChallenge: string,
+): string {
   const url = new URL("https://github.com/login/oauth/authorize");
   url.searchParams.set("client_id", config.clientId);
+  url.searchParams.set("code_challenge", codeChallenge);
+  url.searchParams.set("code_challenge_method", "S256");
   url.searchParams.set("redirect_uri", redirectUri);
   // Identity only; the public profile is all the leaderboard needs.
   url.searchParams.set("scope", "read:user user:email");
@@ -130,4 +144,4 @@ function buildAuthorizeUrl(config: GitHubOAuthConfig, redirectUri: string, state
   return url.toString();
 }
 
-export { buildAuthorizeUrl, GitHubClient, makeGitHubClient };
+export { buildAuthorizeUrl, GitHubApiError, GitHubClient, makeGitHubClient };
