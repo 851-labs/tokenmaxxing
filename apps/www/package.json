@@ -4,7 +4,6 @@
   "type": "module",
   "scripts": {
     "build": "vp build",
-    "test": "vp -C ../.. test run --project www",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {

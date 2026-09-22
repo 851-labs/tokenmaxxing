@@ -49,7 +49,7 @@
     "plan": "ALCHEMY_STATE=cloudflare alchemy plan --env-file .env.production --stage prod",
     "build": "vp run --cache -r build",
     "db:generate": "vp run --no-cache @tokenmaxxing/db#db:generate",
-    "test": "vp run test:all",
+    "test": "vp test",
     "typecheck": "vp run --cache -r typecheck",
     "lint": "vp lint",
     "lint:fix": "vp lint --fix",

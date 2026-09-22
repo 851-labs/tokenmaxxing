@@ -55,7 +55,7 @@ jobs:
         run: bun --filter @851-labs/tokenmaxxing typecheck
 
       - name: Test CLI
-        run: bun --filter @851-labs/tokenmaxxing test
+        run: bun run vp test --project cli
 
       - name: Lint
         run: bun run lint

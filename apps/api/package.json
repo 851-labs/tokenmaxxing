@@ -4,7 +4,6 @@
   "type": "module",
   "scripts": {
     "build": "bun run typecheck",
-    "test": "vp -C ../.. test run --project api",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {

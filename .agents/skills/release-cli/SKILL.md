@@ -51,7 +51,7 @@ Run the existing checks directly.
 
 ```sh
 bun --filter @851-labs/tokenmaxxing typecheck
-bun --filter @851-labs/tokenmaxxing test
+bun run vp test --project cli
 bun run lint
 bun run fmt
 bun --filter @851-labs/tokenmaxxing build

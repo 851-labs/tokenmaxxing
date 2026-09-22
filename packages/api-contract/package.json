@@ -7,7 +7,6 @@
   },
   "scripts": {
     "build": "bun run typecheck",
-    "test": "vp -C ../.. test run --project api-contract",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {

@@ -24,14 +24,6 @@ const config = defineConfig({
       { root: "./packages/db", test: { name: "db" } },
     ],
   },
-  run: {
-    tasks: {
-      "test:all": {
-        command: "vp test run",
-        output: [],
-      },
-    },
-  },
 });
 
 export default config;
