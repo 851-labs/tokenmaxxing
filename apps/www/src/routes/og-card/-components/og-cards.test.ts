@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ProfileResponse } from "@tokenmaxxing/api-contract";
 
 import { ProfileOgCard, SiteOgCard } from "./og-cards";
-import { formatTokens, formatUsd } from "../lib/format";
+import { formatTokens, formatUsd } from "../../../lib/format";
 
 type Profile = typeof ProfileResponse.Type;
 

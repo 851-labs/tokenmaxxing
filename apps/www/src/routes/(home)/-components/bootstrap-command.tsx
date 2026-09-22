@@ -2,10 +2,10 @@ import { Tabs } from "@base-ui/react/tabs";
 import { Check, Copy } from "@phosphor-icons/react/ssr";
 import { useState } from "react";
 
-import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
-import { cn } from "../../lib/cn";
-import { NPM_INSTALL_COMMAND, NPM_PACKAGE } from "../../lib/site";
-import { codeTextStyle } from "../ui/code";
+import { useCopyToClipboard } from "../../../hooks/use-copy-to-clipboard";
+import { cn } from "../../../lib/cn";
+import { NPM_INSTALL_COMMAND, NPM_PACKAGE } from "../../../lib/site";
+import { codeTextStyle } from "../../../components/ui/code";
 
 const BOOTSTRAP_COMMANDS = [
   { command: `${NPM_INSTALL_COMMAND}\ntokenmaxxing bootstrap`, label: "npm", value: "npm" },

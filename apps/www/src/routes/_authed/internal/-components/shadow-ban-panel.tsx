@@ -2,15 +2,15 @@ import { useId, useState, type KeyboardEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { AdminUsersResponse } from "@tokenmaxxing/api-contract";
 
-import { errorMessage, runApi } from "../../lib/api";
-import { formatInteger, formatUsd } from "../../lib/format";
-import { invalidatePublicViews, queryKeys } from "../../lib/queries";
-import { LocalDateTime } from "../local-date-time";
-import { Avatar } from "../ui/avatar";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { ErrorText } from "../ui/error-text";
-import { Input } from "../ui/input";
+import { errorMessage, runApi } from "../../../../lib/api";
+import { formatInteger, formatUsd } from "../../../../lib/format";
+import { invalidatePublicViews, queryKeys } from "../../../../lib/queries";
+import { LocalDateTime } from "../../../../components/local-date-time";
+import { Avatar } from "../../../../components/ui/avatar";
+import { Badge } from "../../../../components/ui/badge";
+import { Button } from "../../../../components/ui/button";
+import { ErrorText } from "../../../../components/ui/error-text";
+import { Input } from "../../../../components/ui/input";
 
 type AdminUsersData = typeof AdminUsersResponse.Type;
 type UserRow = AdminUsersData["users"][number];

@@ -1,23 +1,25 @@
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, stripSearchParams, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, stripSearchParams, useNavigate } from "@tanstack/react-router";
 import {
   DEFAULT_LEADERBOARD_METRIC,
   DEFAULT_LEADERBOARD_WINDOW,
   LeaderboardMetric,
   LeaderboardWindow,
+  type LeaderboardResponse,
 } from "@tokenmaxxing/api-contract";
 import { z } from "zod";
 
-import { AGENT_ICONS } from "../components/agent-icons";
-import { BootstrapCommand } from "../components/home/bootstrap-command";
-import { FAQ_ITEMS } from "../components/home/faq-items";
-import { LeaderboardTable } from "../components/home/leaderboard-table";
-import { SegmentedControl, type SegmentedOption } from "../components/ui/segmented-control";
-import { SUPPORTED_AGENTS } from "../lib/agents";
-import { faqPageSchema, softwareApplicationSchema } from "../lib/jsonld";
-import { leaderboardQueryOptions } from "../lib/queries";
-import { pageHead } from "../lib/seo";
+import { AGENT_ICONS } from "./-components/agent-icons";
+import { BootstrapCommand } from "./-components/bootstrap-command";
+import { FAQ_ITEMS } from "./-components/faq-items";
+import { Avatar } from "../../components/ui/avatar";
+import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
+import { SUPPORTED_AGENTS } from "../../lib/agents";
+import { formatTokens, formatUsd } from "../../lib/format";
+import { faqPageSchema, softwareApplicationSchema } from "../../lib/jsonld";
+import { leaderboardQueryOptions } from "../../lib/queries";
+import { pageHead } from "../../lib/seo";
 
 const leaderboardSearchSchema = z.object({
   metric: z
@@ -53,7 +55,9 @@ const AGENTS_WITH_ICONS = SUPPORTED_AGENTS.flatMap((agent) => {
   return Icon === undefined ? [] : [{ Icon, label: agent.label }];
 });
 
-const Route = createFileRoute("/")({
+type LeaderboardEntry = (typeof LeaderboardResponse.Type)["entries"][number];
+
+const Route = createFileRoute("/(home)/")({
   validateSearch: leaderboardSearchSchema,
   search: {
     middlewares: [stripSearchParams<LeaderboardSearch>(DEFAULT_LEADERBOARD_SEARCH)],
@@ -131,6 +135,82 @@ function LeaderboardPage() {
 
       <FaqSection />
     </>
+  );
+}
+
+function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] }) {
+  return (
+    <div className="overflow-hidden border-y border-border">
+      {entries.length === 0 ? (
+        <p className="p-6 text-sm text-muted-foreground">
+          Nobody on the board yet — be the first to sync.
+        </p>
+      ) : (
+        <table className="w-full text-sm">
+          <caption className="sr-only">
+            Leaderboard of top users by LLM token spend and usage
+          </caption>
+          <thead>
+            <tr className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
+              <th className="w-12 p-3 font-medium" scope="col">
+                #
+              </th>
+              <th className="p-3 font-medium" scope="col">
+                User
+              </th>
+              <th className="p-3 text-right font-medium" scope="col">
+                Spend
+              </th>
+              <th className="p-3 text-right font-medium" scope="col">
+                Tokens
+              </th>
+              <th className="hidden p-3 text-right font-medium sm:table-cell" scope="col">
+                Active days
+              </th>
+              <th className="hidden p-3 text-right font-medium sm:table-cell" scope="col">
+                Last active
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr
+                className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/40"
+                key={entry.user.id}
+              >
+                <td className="p-3 font-mono text-muted-foreground">{entry.rank}</td>
+                <td className="p-3">
+                  <Link
+                    className="flex items-center gap-2.5 font-medium hover:underline"
+                    params={{ user: entry.user.login }}
+                    to="/$user"
+                  >
+                    <Avatar
+                      alt={`${entry.user.login} avatar`}
+                      size={24}
+                      src={entry.user.avatarUrl}
+                    />
+                    {entry.user.login}
+                  </Link>
+                </td>
+                <td className="p-3 text-right font-mono tabular-nums">
+                  {formatUsd(entry.spendUsd)}
+                </td>
+                <td className="p-3 text-right font-mono tabular-nums">
+                  {formatTokens(entry.totalTokens)}
+                </td>
+                <td className="hidden p-3 text-right tabular-nums text-muted-foreground sm:table-cell">
+                  {entry.activeDays}
+                </td>
+                <td className="hidden p-3 text-right text-muted-foreground sm:table-cell">
+                  {entry.lastDate ?? "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

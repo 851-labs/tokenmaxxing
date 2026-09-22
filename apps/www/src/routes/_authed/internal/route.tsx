@@ -1,13 +1,13 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 
-import { DevicesTable } from "../../components/internal/devices-table";
-import { ShadowBanPanel } from "../../components/internal/shadow-ban-panel";
-import { isApiError } from "../../lib/api";
-import { fleetSummary, formatVersion } from "../../lib/device-status";
-import { formatInteger } from "../../lib/format";
-import { adminUsersQueryOptions } from "../../lib/queries";
-import { pageHead } from "../../lib/seo";
+import { DevicesTable } from "./-components/devices-table";
+import { ShadowBanPanel } from "./-components/shadow-ban-panel";
+import { isApiError } from "../../../lib/api";
+import { fleetSummary, formatVersion } from "../../../lib/device-status";
+import { formatInteger } from "../../../lib/format";
+import { adminUsersQueryOptions } from "../../../lib/queries";
+import { pageHead } from "../../../lib/seo";
 
 const Route = createFileRoute("/_authed/internal")({
   loader: async ({ context }) => {

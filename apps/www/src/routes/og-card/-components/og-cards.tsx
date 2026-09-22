@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 
-import { supportedAgentSentenceList } from "../lib/agents";
-import { formatInteger, formatTokens, formatUsd } from "../lib/format";
-import type { ProfileOgData } from "../lib/og-data";
-import { NPM_INSTALL_COMMAND, SITE_DESCRIPTION, SITE_NAME } from "../lib/site";
+import { supportedAgentSentenceList } from "../../../lib/agents";
+import { formatInteger, formatTokens, formatUsd } from "../../../lib/format";
+import type { ProfileOgData } from "../../../lib/og-data";
+import { NPM_INSTALL_COMMAND, SITE_DESCRIPTION, SITE_NAME } from "../../../lib/site";
 
 /**
  * 1200×630 HTML cards captured into Open Graph PNGs. Values use the same

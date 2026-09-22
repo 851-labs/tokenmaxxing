@@ -1,6 +1,6 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 
-import { ProfileOgCard } from "../../components/og-cards";
+import { ProfileOgCard } from "./-components/og-cards";
 import { loadProfileOgData } from "../../lib/og-data";
 
 const Route = createFileRoute("/og-card/$login")({

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { SupportedAgentSource } from "../lib/agents";
+import type { SupportedAgentSource } from "../../../lib/agents";
 
 /** Monochrome marks for the supported-agents row (inherit `currentColor`). */
 

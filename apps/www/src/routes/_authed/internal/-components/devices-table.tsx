@@ -9,9 +9,9 @@ import {
   repairReasonLabel,
   serviceStatusTitle,
   updateBlockedReasonLabel,
-} from "../../lib/device-status";
-import { Avatar } from "../ui/avatar";
-import { Badge } from "../ui/badge";
+} from "../../../../lib/device-status";
+import { Avatar } from "../../../../components/ui/avatar";
+import { Badge } from "../../../../components/ui/badge";
 
 type AdminUsersData = typeof AdminUsersResponse.Type;
 type DeviceRow = AdminUsersData["devices"][number];

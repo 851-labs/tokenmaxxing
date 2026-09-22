@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 
-import { supportedAgentSentenceList } from "../../lib/agents";
-import type { FaqItem } from "../../lib/jsonld";
-import { CCUSAGE_URL, NPM_INSTALL_COMMAND } from "../../lib/site";
-import { ExternalLink } from "../external-link";
-import { Code } from "../ui/code";
+import { supportedAgentSentenceList } from "../../../lib/agents";
+import type { FaqItem } from "../../../lib/jsonld";
+import { CCUSAGE_URL, NPM_INSTALL_COMMAND } from "../../../lib/site";
+import { ExternalLink } from "../../../components/external-link";
+import { Code } from "../../../components/ui/code";
 
 /**
  * Homepage FAQ. `answerText` feeds FAQPage JSON-LD and is rendered as-is
