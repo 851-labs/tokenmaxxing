@@ -420,6 +420,16 @@ describe("request-level errors", () => {
     }
   }
 
+  // Unauthenticated login endpoints included: the limit applies before auth.
+  it.each(fixtures.filter(({ fixture }) => fixture.body !== undefined))(
+    "$file with a body over the limit is 413 PayloadTooLarge",
+    async ({ fixture }) => {
+      const padded = { ...(fixture.body as object), padding: "x".repeat(16 * 1024 * 1024) };
+
+      await expectUnbranchedError(await send(fixture, padded), 413, "PayloadTooLarge");
+    },
+  );
+
   // cliLogin.* runs before the CLI has a token.
   it.each(fixtures.filter(({ fixture }) => !fixture.endpoint.startsWith("cliLogin.")))(
     "$file with a failing token lookup is 503 ServiceUnavailable, not 401",
@@ -527,12 +537,86 @@ describe("ingest boundary", () => {
     expect(await response.json()).toMatchObject({ received: 1, upserted: 1 });
   });
 
+  it("rejects a daily report over the day cap instead of silently dropping it", async () => {
+    const [report] = body.reports;
+    const response = await send(ingest, {
+      ...body,
+      reports: [{ ...report, payload: { daily: Array(10_001).fill({}) } }],
+    });
+
+    expect(response.status).toBe(400);
+  });
+
   it("rejects profile daily ranges that are not calendar date keys", async () => {
     for (const query of ["since=2026-02-30", "until=tomorrow", "since=2026-6-1"]) {
       const response = await handle(
         new Request(`https://api.tokenmaxxing.sh/profiles/alex/daily?${query}`),
       );
       expect(response.status).toBe(400);
+    }
+  });
+});
+
+describe("legacy sync boundary", () => {
+  const sync = fixtures.find(({ file }) => file === "legacy/0.2.3-usage.sync.json")!.fixture;
+  const body = sync.body as { days: Array<Record<string, unknown>>; device: unknown };
+
+  // 0.2.x CLIs resend their whole history on every sync; one bad row used to
+  // 400 the upload, so the device could never sync again.
+  it("drops invalid rows individually instead of rejecting the upload", async () => {
+    usageRepository.upsertChunk.mockClear();
+    const [row] = body.days;
+    const response = await send(sync, {
+      ...body,
+      days: [
+        ...body.days,
+        { ...row, date: "0000-01-01" },
+        { ...row, date: "2026-02-30" },
+        { ...row, inputTokens: -1 },
+        { ...row, totalTokens: 1.5 },
+        { ...row, model: "m".repeat(257) },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+    expect(
+      decodeReleased(RELEASED_CLI_RESPONSES["usage.sync"], await response.json()),
+    ).toMatchObject({ received: 8, upserted: 3 });
+  });
+
+  it("still rejects structurally invalid payloads", async () => {
+    for (const invalid of [
+      { ...body, days: "not-an-array" },
+      { ...body, days: [1, "row", null] },
+      { ...body, days: Array(1_001).fill(body.days[0]) },
+      { days: body.days },
+    ]) {
+      expect((await send(sync, invalid)).status).toBe(400);
+    }
+  });
+});
+
+describe("CLI login boundary", () => {
+  const start = fixtures.find(({ file }) => file === "current/cliLogin.start.json")!.fixture;
+  const body = start.body as Record<string, unknown>;
+
+  async function expectBadField(response: Response, field: string) {
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      _tag: "BadRequest",
+      message: `Invalid request body field \`${field}\`.`,
+    });
+  }
+
+  it("rejects device ids that are not UUIDs", async () => {
+    for (const deviceId of ["", "device_123", "x".repeat(10_000)]) {
+      await expectBadField(await send(start, { ...body, deviceId }), "deviceId");
+    }
+  });
+
+  it("rejects oversized device fields", async () => {
+    for (const field of ["deviceArch", "deviceName", "devicePlatform", "deviceVersion"]) {
+      await expectBadField(await send(start, { ...body, [field]: "x".repeat(257) }), field);
     }
   });
 });

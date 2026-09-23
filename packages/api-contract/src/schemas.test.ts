@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   AdminUsersResponse,
+  CliLoginApproveInput,
+  CliLoginPollInput,
   CliLoginStartInput,
   IngestUsageInput,
   ProfileDailyGroupBy,
@@ -21,12 +23,12 @@ describe("device telemetry inputs", () => {
   it("keeps old clients without version or arch compatible", async () => {
     await expect(
       Schema.decodeUnknownPromise(CliLoginStartInput)({
-        deviceId: "device_123",
+        deviceId: "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0",
         deviceName: "Mac.localdomain",
         devicePlatform: "darwin",
       }),
     ).resolves.toEqual({
-      deviceId: "device_123",
+      deviceId: "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0",
       deviceName: "Mac.localdomain",
       devicePlatform: "darwin",
     });
@@ -510,6 +512,54 @@ describe("usage input validation", () => {
     }
   });
 
+  it("rejects usage days before the ingest floor", async () => {
+    for (const date of ["0000-01-01", "1970-01-01", "2023-12-31"]) {
+      await expect(decodes(UsageDayInput, { ...validDay, date })).rejects.toThrow();
+    }
+    await expect(decodes(UsageDayInput, { ...validDay, date: "2024-01-01" })).resolves.toEqual({
+      ...validDay,
+      date: "2024-01-01",
+    });
+  });
+
+  it("rejects daily reports over the day cap", async () => {
+    const withDays = (count: number) => ({
+      ...validReport,
+      payload: { daily: Array(count).fill({}) },
+    });
+
+    await expect(decodes(RawUsageReportInput, withDays(10_000))).resolves.toBeDefined();
+    await expect(decodes(RawUsageReportInput, withDays(10_001))).rejects.toThrow(
+      "expected at most 10000 daily entries",
+    );
+    // Session payloads and non-array `daily` values are the lenient parser's job.
+    await expect(
+      decodes(RawUsageReportInput, {
+        ...validReport,
+        payload: { sessions: Array(10_001).fill({}) },
+        reportKind: "session",
+      }),
+    ).resolves.toBeDefined();
+    await expect(
+      decodes(RawUsageReportInput, { ...validReport, payload: { daily: "x" } }),
+    ).resolves.toBeDefined();
+  });
+
+  it("decodes legacy sync rows leniently but keeps the envelope strict", async () => {
+    const invalidRows = [
+      { ...validDay, date: "0000-01-01" },
+      { ...validDay, inputTokens: -1 },
+      { ...validDay, model: "m".repeat(257) },
+    ];
+    await expect(decodes(SyncUsageInput, { days: invalidRows, device })).resolves.toEqual({
+      days: invalidRows,
+      device,
+    });
+    for (const days of [[1], ["row"], [null], [[validDay]], validDay]) {
+      await expect(decodes(SyncUsageInput, { days, device })).rejects.toThrow();
+    }
+  });
+
   it("caps string and array sizes", async () => {
     await expect(
       decodes(UsageDayInput, { ...validDay, model: "m".repeat(256) }),
@@ -546,6 +596,110 @@ describe("usage input validation", () => {
     await expect(
       decodes(IngestUsageInput, { device: { ...device, version: "v".repeat(65) }, reports: [] }),
     ).rejects.toThrow();
+  });
+});
+
+describe("CLI login inputs", () => {
+  const start = {
+    deviceArch: "arm64",
+    deviceId: "7d0f3a52-5f0a-4f39-9d7c-3b8f1c2a9e11",
+    deviceName: "fixture-host",
+    devicePlatform: "darwin",
+    deviceVersion: "0.6.0",
+  };
+
+  it("requires a UUID device id", async () => {
+    await expect(decodes(CliLoginStartInput, start)).resolves.toEqual(start);
+    await expect(
+      decodes(CliLoginStartInput, { ...start, deviceId: start.deviceId.toUpperCase() }),
+    ).resolves.toBeDefined();
+    for (const deviceId of ["", "device_123", "x".repeat(10_000), `${start.deviceId}/x`]) {
+      await expect(decodes(CliLoginStartInput, { ...start, deviceId })).rejects.toThrow();
+    }
+  });
+
+  it("caps device fields like usage device payloads", async () => {
+    await expect(
+      decodes(CliLoginStartInput, { ...start, deviceName: "h".repeat(256) }),
+    ).resolves.toBeDefined();
+    for (const overrides of [
+      { deviceName: "h".repeat(257) },
+      { devicePlatform: "p".repeat(65) },
+      { deviceArch: "a".repeat(65) },
+      { deviceVersion: "v".repeat(65) },
+    ]) {
+      await expect(decodes(CliLoginStartInput, { ...start, ...overrides })).rejects.toThrow();
+    }
+  });
+
+  it("caps poll and approve codes", async () => {
+    await expect(
+      decodes(CliLoginPollInput, { deviceCode: "d".repeat(128) }),
+    ).resolves.toBeDefined();
+    await expect(decodes(CliLoginPollInput, { deviceCode: "d".repeat(129) })).rejects.toThrow();
+    await expect(decodes(CliLoginPollInput, { code: "c".repeat(129) })).rejects.toThrow();
+    await expect(decodes(CliLoginApproveInput, { code: "c".repeat(129) })).rejects.toThrow();
+  });
+});
+
+describe("service check-in telemetry", () => {
+  const checkIn = (service: Record<string, unknown>) =>
+    Schema.decodeUnknownPromise(UsageCheckInInput)(
+      { device, service: { status: "failure", ...service } },
+      serverParseOptions,
+    );
+
+  it("rejects oversized identifiers, versions, and timestamps", async () => {
+    for (const field of [
+      "backend",
+      "repairAttemptedAt",
+      "repairCompletedAt",
+      "runnerTarget",
+      "runnerVersion",
+    ]) {
+      await expect(checkIn({ [field]: "x".repeat(256) })).resolves.toBeDefined();
+      await expect(checkIn({ [field]: "x".repeat(257) })).rejects.toThrow();
+    }
+    await expect(
+      checkIn({
+        autoUpdate: {
+          enabled: true,
+          latestVersion: "x".repeat(257),
+          manager: null,
+          reason: null,
+          status: "failure",
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("truncates long error messages instead of rejecting the check-in", async () => {
+    const long = "e".repeat(4 * 1024 * 1024);
+    const decoded = await checkIn({
+      autoUpdate: { enabled: true, error: long, manager: null, reason: null, status: "failure" },
+      error: long,
+      repairError: long,
+    });
+
+    expect(decoded.service.error).toHaveLength(4_096);
+    expect(decoded.service.repairError).toHaveLength(4_096);
+    expect(decoded.service.autoUpdate?.error).toHaveLength(4_096);
+    await expect(checkIn({ error: "short" })).resolves.toMatchObject({
+      service: { error: "short" },
+    });
+    // A cut never strands half of a surrogate pair.
+    const emoji = await checkIn({ error: `${"e".repeat(4_095)}😀` });
+    expect(emoji.service.error).toBe("e".repeat(4_095));
+  });
+
+  it("encodes long errors unchanged so clients never fail locally", async () => {
+    const long = "e".repeat(5_000);
+    const encoded = await Schema.encodeUnknownPromise(UsageCheckInInput)({
+      device,
+      service: { error: long, status: "failure" },
+    });
+
+    expect(encoded.service.error).toBe(long);
   });
 });
 

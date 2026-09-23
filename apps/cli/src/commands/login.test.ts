@@ -103,7 +103,8 @@ function makeTestLayer(options: TestLayerOptions) {
           token: options.initialConfig.token,
           tokenCleared: options.initialConfig.token !== undefined,
         }),
-      ensureDeviceId: () => Effect.succeed(options.initialConfig.deviceId ?? "device_123"),
+      ensureDeviceId: () =>
+        Effect.succeed(options.initialConfig.deviceId ?? "0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0"),
       hasEnvToken: () => Effect.succeed(options.envTokenActive ?? false),
       readConfig: () => Effect.succeed(options.initialConfig),
       writeToken: (token) => Effect.succeed({ ...options.initialConfig, token }),

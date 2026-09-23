@@ -12,8 +12,9 @@ import { DeviceId, TokenId, UserId } from "./schemas";
  * defects the services convert at their boundary; the server renders them as
  * InternalServerError (or ServiceUnavailable while resolving credentials).
  *
- * The request-level errors (BadRequest, UnsupportedMediaType, RouteNotFound,
- * MethodNotAllowed, InternalServerError, ServiceUnavailable) are produced by
+ * The request-level errors (BadRequest, PayloadTooLarge, UnsupportedMediaType,
+ * RouteNotFound, MethodNotAllowed, InternalServerError, ServiceUnavailable)
+ * are produced by
  * the server's HTTP stack rather than by services, so every non-2xx response
  * shares the same `{ _tag, message }` envelope.
  *
@@ -110,6 +111,13 @@ class BadRequest extends Schema.TaggedError<BadRequest>()(
   { httpApiStatus: 400 },
 ) {}
 
+/** The request body is over the endpoint's size limit; it was never decoded. */
+class PayloadTooLarge extends Schema.TaggedError<PayloadTooLarge>()(
+  "PayloadTooLarge",
+  { message: message("Request body too large.") },
+  { httpApiStatus: 413 },
+) {}
+
 class UnsupportedMediaType extends Schema.TaggedError<UnsupportedMediaType>()(
   "UnsupportedMediaType",
   { message: message("Send the request body as application/json.") },
@@ -161,6 +169,7 @@ const ApiErrors = [
   LoginCodeExpired,
   LoginCodeNotFound,
   MethodNotAllowed,
+  PayloadTooLarge,
   RouteNotFound,
   ServiceUnavailable,
   TokenDeviceUnbound,
@@ -185,6 +194,7 @@ export {
   LoginCodeExpired,
   LoginCodeNotFound,
   MethodNotAllowed,
+  PayloadTooLarge,
   RouteNotFound,
   ServiceUnavailable,
   TokenDeviceUnbound,

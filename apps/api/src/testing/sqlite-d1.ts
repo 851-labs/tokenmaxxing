@@ -11,8 +11,12 @@ import { Drizzle } from "../database";
  * the D1 binding drizzle-orm/d1 calls — prepare/bind/all/raw/run/first and
  * an atomic batch — so repository tests run the real query-builder SQL
  * (including `RETURNING` and `db.batch`) against the real schema. Foreign
- * keys stay on, matching D1.
+ * keys stay on, matching D1, and so does D1's cap of 100 bound parameters per
+ * statement (node:sqlite allows far more, which would hide the failure).
  */
+
+/** https://developers.cloudflare.com/d1/platform/limits/ */
+const D1_MAX_BOUND_PARAMETERS = 100;
 
 interface ExecutedQuery {
   parameters: SQLInputValue[];
@@ -90,6 +94,11 @@ function makeD1Statement(
   parameters: SQLInputValue[] = [],
 ): D1PreparedStatement {
   const prepareRecorded = () => {
+    if (parameters.length > D1_MAX_BOUND_PARAMETERS) {
+      throw new Error(
+        `D1_ERROR: too many SQL variables: ${parameters.length} bound parameters (D1 allows ${D1_MAX_BOUND_PARAMETERS})`,
+      );
+    }
     executed.push({ parameters, sql: query });
     return sqlite.prepare(query);
   };

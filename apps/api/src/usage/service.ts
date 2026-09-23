@@ -1,14 +1,14 @@
-import { Context, Effect } from "effect";
+import { Context, Effect, Option, Schema } from "effect";
 
-import { TokenDeviceUnbound } from "@tokenmaxxing/api-contract";
+import { TokenDeviceUnbound, UsageDayInput } from "@tokenmaxxing/api-contract";
 import type {
   CliIdentity,
   DeviceId,
   RawUsageReportInput,
   SourceUsageStatsInput,
+  SyncUsageDayInput,
   SyncUsageResponse,
   UsageCheckInInput,
-  UsageDayInput,
   UsageSource,
 } from "@tokenmaxxing/api-contract";
 
@@ -31,6 +31,7 @@ import type { RawUsageStorageError } from "./raw-store";
  * deviceId always comes from the presenting token, so payloads cannot write
  * into another device's history. Days later than UTC today + 1 are dropped
  * (not rejected): a skewed device clock should not block its real history.
+ * Legacy sync rows that fail to decode are dropped the same way, one by one.
  */
 
 type SyncResult = typeof SyncUsageResponse.Type;
@@ -67,7 +68,7 @@ interface UsageServiceShape {
   syncBatch(
     identity: CliIdentity,
     device: UsageDevice,
-    days: readonly UsageDayInput[],
+    days: readonly SyncUsageDayInput[],
     sourceStats?: readonly SourceUsageStatsInput[],
   ): Effect.Effect<SyncResult, TokenDeviceUnbound>;
 }
@@ -126,6 +127,9 @@ class UsageRepository extends Context.Service<UsageRepository, UsageRepositorySh
 ) {}
 
 const UPSERT_CHUNK_SIZE = 40;
+
+/** Strict like every CLI payload: a row with undeclared fields is dropped too. */
+const decodeUsageDay = Schema.decodeUnknownEffect(UsageDayInput, { onExcessProperty: "error" });
 
 const makeUsageService = Effect.fn("makeUsageService")(function* (
   options: { now?: () => Date } = {},
@@ -191,13 +195,20 @@ const makeUsageService = Effect.fn("makeUsageService")(function* (
       const deviceId = yield* requireDeviceId(identity);
       const syncedAt = now();
       const latestDate = latestUsageDateKey(syncedAt);
+      const validDays: UsageDayInput[] = [];
+      for (const day of days) {
+        const decoded = yield* decodeUsageDay(day).pipe(Effect.option);
+        if (Option.isSome(decoded) && decoded.value.date <= latestDate) {
+          validDays.push(decoded.value);
+        }
+      }
 
       const upserted = yield* writeStructuredUsage(
         repository,
         identity.user.id,
         deviceId,
         device,
-        days.filter((day) => day.date <= latestDate),
+        validDays,
         sourceStats,
         syncedAt,
       );

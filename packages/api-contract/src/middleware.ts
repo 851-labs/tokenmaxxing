@@ -4,6 +4,7 @@ import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
 import {
   BadRequest,
   InternalServerError,
+  PayloadTooLarge,
   ServiceUnavailable,
   Unauthorized,
   UnsupportedMediaType,
@@ -69,11 +70,13 @@ class CliAuth extends HttpApiMiddleware.Service<CliAuth, { provides: CurrentCliI
  * an unsupported request content-type into UnsupportedMediaType, and
  * unexpected server faults into InternalServerError, so these render as
  * typed `{ _tag, message }` bodies like every other contract error.
+ * PayloadTooLarge is declared here so clients decode it, but the server's
+ * body-limit middleware answers it before the endpoint reads the body.
  */
 class ErrorBoundary extends HttpApiMiddleware.Service<ErrorBoundary>()(
   "@tokenmaxxing/api/ErrorBoundary",
   {
-    error: [BadRequest, UnsupportedMediaType, InternalServerError],
+    error: [BadRequest, PayloadTooLarge, UnsupportedMediaType, InternalServerError],
   },
 ) {}
 

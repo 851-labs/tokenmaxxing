@@ -122,6 +122,25 @@
       ],
       "additionalProperties": false
     },
+    "PayloadTooLargeEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "PayloadTooLarge"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "message"
+      ],
+      "additionalProperties": false
+    },
     "ServiceUnavailableEncoded": {
       "type": "object",
       "properties": {
@@ -273,6 +292,16 @@
               }
             }
           },
+          "413": {
+            "description": "PayloadTooLarge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayloadTooLargeEncoded"
+                }
+              }
+            }
+          },
           "415": {
             "description": "UnsupportedMediaType",
             "content": {
@@ -382,6 +411,16 @@
               }
             }
           },
+          "413": {
+            "description": "PayloadTooLarge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayloadTooLargeEncoded"
+                }
+              }
+            }
+          },
           "415": {
             "description": "UnsupportedMediaType",
             "content": {
@@ -422,7 +461,8 @@
                   "deviceArch": {
                     "anyOf": [
                       {
-                        "type": "string"
+                        "type": "string",
+                        "maxLength": 64
                       },
                       {
                         "type": "null"
@@ -430,18 +470,22 @@
                     ]
                   },
                   "deviceId": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
                   },
                   "deviceName": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 256
                   },
                   "devicePlatform": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 64
                   },
                   "deviceVersion": {
                     "anyOf": [
                       {
-                        "type": "string"
+                        "type": "string",
+                        "maxLength": 64
                       },
                       {
                         "type": "null"
@@ -598,6 +642,16 @@
               }
             }
           },
+          "413": {
+            "description": "PayloadTooLarge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayloadTooLargeEncoded"
+                }
+              }
+            }
+          },
           "415": {
             "description": "UnsupportedMediaType",
             "content": {
@@ -628,7 +682,8 @@
                     "type": "object",
                     "properties": {
                       "deviceCode": {
-                        "type": "string"
+                        "type": "string",
+                        "maxLength": 128
                       }
                     },
                     "required": [
@@ -640,7 +695,8 @@
                     "type": "object",
                     "properties": {
                       "code": {
-                        "type": "string"
+                        "type": "string",
+                        "maxLength": 128
                       }
                     },
                     "required": [
@@ -707,6 +763,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedEncoded"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "PayloadTooLarge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayloadTooLargeEncoded"
                 }
               }
             }
@@ -801,7 +867,8 @@
                                   {
                                     "anyOf": [
                                       {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 256
                                       },
                                       {
                                         "type": "null"
@@ -818,7 +885,8 @@
                                   {
                                     "anyOf": [
                                       {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 256
                                       },
                                       {
                                         "type": "null"
@@ -835,7 +903,8 @@
                                   {
                                     "anyOf": [
                                       {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 256
                                       },
                                       {
                                         "type": "null"
@@ -872,7 +941,8 @@
                                   {
                                     "anyOf": [
                                       {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 256
                                       },
                                       {
                                         "type": "null"
@@ -889,7 +959,8 @@
                                   {
                                     "anyOf": [
                                       {
-                                        "type": "string"
+                                        "type": "string",
+                                        "maxLength": 256
                                       },
                                       {
                                         "type": "null"
@@ -967,7 +1038,8 @@
                       "backend": {
                         "anyOf": [
                           {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 256
                           },
                           {
                             "type": "null"
@@ -997,7 +1069,8 @@
                       "repairAttemptedAt": {
                         "anyOf": [
                           {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 256
                           },
                           {
                             "type": "null"
@@ -1007,7 +1080,8 @@
                       "repairCompletedAt": {
                         "anyOf": [
                           {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 256
                           },
                           {
                             "type": "null"
@@ -1058,7 +1132,8 @@
                       "runnerTarget": {
                         "anyOf": [
                           {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 256
                           },
                           {
                             "type": "null"
@@ -1068,7 +1143,8 @@
                       "runnerVersion": {
                         "anyOf": [
                           {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 256
                           },
                           {
                             "type": "null"
@@ -1217,6 +1293,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedEncoded"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "PayloadTooLarge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayloadTooLargeEncoded"
                 }
               }
             }
@@ -1479,6 +1565,16 @@
               }
             }
           },
+          "413": {
+            "description": "PayloadTooLarge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayloadTooLargeEncoded"
+                }
+              }
+            }
+          },
           "415": {
             "description": "UnsupportedMediaType",
             "content": {
@@ -1520,64 +1616,7 @@
                     "type": "array",
                     "items": {
                       "type": "object",
-                      "properties": {
-                        "cacheCreationTokens": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "cacheReadTokens": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "costUsd": {
-                          "type": "number",
-                          "minimum": 0
-                        },
-                        "date": {
-                          "type": "string",
-                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
-                        },
-                        "inputTokens": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "model": {
-                          "type": "string",
-                          "maxLength": 256
-                        },
-                        "outputTokens": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "source": {
-                          "type": "string",
-                          "enum": [
-                            "claude",
-                            "codex",
-                            "opencode",
-                            "gemini",
-                            "copilot",
-                            "hermes",
-                            "pi"
-                          ]
-                        },
-                        "totalTokens": {
-                          "type": "integer",
-                          "minimum": 0
-                        }
-                      },
-                      "required": [
-                        "cacheCreationTokens",
-                        "cacheReadTokens",
-                        "costUsd",
-                        "date",
-                        "inputTokens",
-                        "model",
-                        "outputTokens",
-                        "source",
-                        "totalTokens"
-                      ],
-                      "additionalProperties": false
+                      "description": "A UsageDayInput row; rows that fail to decode are dropped individually."
                     },
                     "maxItems": 1000
                   },
@@ -1715,6 +1754,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedEncoded"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "PayloadTooLarge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayloadTooLargeEncoded"
                 }
               }
             }
