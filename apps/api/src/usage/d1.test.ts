@@ -1,4 +1,10 @@
-import type { UsageDayInput } from "@tokenmaxxing/api-contract";
+import {
+  DeviceId,
+  type RawUsageReportInput,
+  TokenId,
+  type UsageDayInput,
+  UserId,
+} from "@tokenmaxxing/api-contract";
 import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -7,7 +13,7 @@ import { buildService } from "../testing/effect";
 import { makeMemoryBucket, type MemoryBucket } from "../testing/r2";
 import { seedUsage } from "../testing/seed";
 import { UsageRepositoryLive } from "./d1";
-import { type StoredRawUsageReport, UsageRepository } from "./service";
+import { makeUsageService, type StoredRawUsageReport, UsageRepository } from "./service";
 
 describe("D1 usage repository", () => {
   let database: TestDatabase;
@@ -107,6 +113,107 @@ describe("D1 usage repository", () => {
       );
 
       expect(database.sqlite.prepare("select model from usage_days").all()).toEqual([]);
+    });
+  });
+
+  describe("trailing-window re-sync", () => {
+    const identity = {
+      deviceId: DeviceId.make("device"),
+      tokenId: TokenId.make("token"),
+      user: { avatarUrl: null, id: UserId.make("user"), login: "alex", name: null },
+    };
+    const device = { name: "Mac.localdomain", platform: "darwin" };
+
+    function claudeReport(days: ReadonlyArray<[string, ReadonlyArray<[string, number]>]>) {
+      return {
+        command: ["ccusage@^20.0.19", "claude", "daily", "--json", "--breakdown"],
+        payload: {
+          daily: days.map(([date, models]) => ({
+            date,
+            modelBreakdowns: models.map(([modelName, cost]) => ({
+              cost,
+              inputTokens: 10,
+              modelName,
+              outputTokens: 20,
+            })),
+          })),
+        },
+        reportKind: "daily",
+        source: "claude",
+      } satisfies RawUsageReportInput;
+    }
+
+    function spendByDeviceDay() {
+      return database.sqlite
+        .prepare(
+          `select device_id as deviceId, date, round(sum(cost_usd), 2) as costUsd,
+             count(*) as models
+           from usage_days
+           group by device_id, date
+           order by device_id, date`,
+        )
+        .all();
+    }
+
+    it("corrects re-sent days without touching other devices or days outside the window", async () => {
+      seedUsage(database.sqlite, {
+        costUsd: 209.07,
+        date: "2026-09-15",
+        deviceId: "other-device",
+        model: "claude-opus-5",
+        source: "claude",
+        syncedAt: 1,
+        userId: "user",
+      });
+      let clock = Date.parse("2026-09-15T23:40:00.000Z");
+      const service = await Effect.runPromise(
+        makeUsageService({ now: () => new Date((clock += 60_000)) }).pipe(
+          Effect.provide(UsageRepositoryLive),
+          Effect.provide(Layer.merge(database.drizzleLayer, bucket.layer)),
+        ),
+      );
+
+      // Incremental runs on 09-14 and 09-15 while ccusage still dropped a model.
+      await Effect.runPromise(
+        service.ingestRaw(identity, device, [claudeReport([["2026-09-14", [["opus", 3.57]]]])]),
+      );
+      await Effect.runPromise(
+        service.ingestRaw(identity, device, [
+          claudeReport([
+            [
+              "2026-09-15",
+              [
+                ["opus", 1.56],
+                ["stale", 0.99],
+              ],
+            ],
+          ]),
+        ]),
+      );
+
+      // A later reconciliation window starts at 09-15 and sees the full day.
+      clock = Date.parse("2026-09-22T23:40:00.000Z");
+      const window = claudeReport([
+        [
+          "2026-09-15",
+          [
+            ["opus", 1.56],
+            ["fable", 268.19],
+          ],
+        ],
+        ["2026-09-22", [["fable", 301.76]]],
+      ]);
+      await Effect.runPromise(service.ingestRaw(identity, device, [window]));
+      const afterFirst = spendByDeviceDay();
+      await Effect.runPromise(service.ingestRaw(identity, device, [window]));
+
+      expect(afterFirst).toEqual([
+        { costUsd: 3.57, date: "2026-09-14", deviceId: "device", models: 1 },
+        { costUsd: 269.75, date: "2026-09-15", deviceId: "device", models: 2 },
+        { costUsd: 301.76, date: "2026-09-22", deviceId: "device", models: 1 },
+        { costUsd: 209.07, date: "2026-09-15", deviceId: "other-device", models: 1 },
+      ]);
+      expect(spendByDeviceDay()).toEqual(afterFirst);
     });
   });
 

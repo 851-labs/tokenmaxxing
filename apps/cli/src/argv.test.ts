@@ -98,10 +98,19 @@ function makeSandbox() {
 
 const bun = process.platform === "win32" ? "" : bunPath();
 
-function runCli(args: readonly string[], options: { ccusage?: "empty" | "fail" | "partial" } = {}) {
+interface RunCliOptions {
+  ccusage?: "empty" | "fail" | "partial";
+  env?: Record<string, string>;
+  serviceState?: Record<string, unknown>;
+}
+
+function runCli(args: readonly string[], options: RunCliOptions = {}) {
   const root = makeSandbox();
   const configDir = join(root, "config");
   const callsLog = join(root, "calls.log");
+  if (options.serviceState !== undefined) {
+    writeFileSync(join(configDir, "service-state.json"), JSON.stringify(options.serviceState));
+  }
 
   return new Promise<CliRun>((resolvePromise) => {
     execFile(
@@ -120,6 +129,7 @@ function runCli(args: readonly string[], options: { ccusage?: "empty" | "fail" |
           TOKENMAXXING_API_URL: "http://127.0.0.1:9",
           TOKENMAXXING_CONFIG_DIR: configDir,
           TOKENMAXXING_WWW_URL: "http://127.0.0.1:9",
+          ...options.env,
         },
         timeout: 30_000,
       },
@@ -134,6 +144,20 @@ function runCli(args: readonly string[], options: { ccusage?: "empty" | "fail" |
       },
     );
   });
+}
+
+function readServiceState(run: CliRun): Record<string, unknown> {
+  return JSON.parse(readFileSync(join(run.configDir, "service-state.json"), "utf8"));
+}
+
+function localDateKey(daysAgo: number): string {
+  const now = new Date();
+  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 function expectParsed(run: CliRun) {
@@ -184,6 +208,53 @@ describe.skipIf(process.platform === "win32").concurrent("CLI argv parsing", () 
       expect(existsSync(join(run.configDir, "service-state.json"))).toBe(true);
     },
   );
+
+  // Logged out, the run fails at auth, but the window it would have synced is
+  // already recorded as lastSince.
+  it(
+    "re-sends a trailing window on the first scheduled run after upgrading",
+    { timeout: 30_000 },
+    async () => {
+      const run = await runCli(["service", "run", "--scheduled"], {
+        serviceState: {
+          lastSuccessAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+          usageReplacementBackfillVersion: 1,
+          version: 1,
+        },
+      });
+
+      expectParsed(run);
+      expect(readServiceState(run)).toMatchObject({ lastSince: localDateKey(20) });
+    },
+  );
+
+  it("honours TOKENMAXXING_SYNC_WINDOW_DAYS for scheduled runs", { timeout: 30_000 }, async () => {
+    const run = await runCli(["service", "run", "--scheduled"], {
+      env: { TOKENMAXXING_SYNC_WINDOW_DAYS: "7" },
+      serviceState: { usageReplacementBackfillVersion: 1, version: 1 },
+    });
+
+    expectParsed(run);
+    expect(readServiceState(run)).toMatchObject({ lastSince: localDateKey(6) });
+  });
+
+  it("syncs incrementally between reconciliations", { timeout: 30_000 }, async () => {
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const run = await runCli(["service", "run", "--scheduled"], {
+      serviceState: {
+        lastReconcileAt: recent,
+        lastSuccessAt: new Date().toISOString(),
+        usageReplacementBackfillVersion: 1,
+        version: 1,
+      },
+    });
+
+    expectParsed(run);
+    expect(readServiceState(run)).toMatchObject({
+      lastReconcileAt: recent,
+      lastSince: localDateKey(0),
+    });
+  });
 
   it("still honours explicit boolean flags", { timeout: 30_000 }, async () => {
     const run = await runCli(["--verbose", "whoami", "--json"]);

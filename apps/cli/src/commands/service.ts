@@ -82,6 +82,17 @@ const SERVICE_VERSION_TIMEOUT_MS = 30 * 1000;
 const SERVICE_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const SERVICE_LOG_ROTATIONS = 3;
 const USAGE_REPLACEMENT_BACKFILL_VERSION = 1;
+// Scheduled runs normally only re-send days since the last success, so usage
+// that changes for an already-synced day (a ccusage upgrade that starts
+// counting a new model, a source that failed while others succeeded, logs
+// copied in later) would never reach the server. Every few hours a scheduled
+// run re-sends a trailing window instead. Keep the default inside Claude
+// Code's 30-day transcript retention: re-sending a day whose logs were
+// partially pruned would lower it on the server.
+const SERVICE_RECONCILE_WINDOW_DAYS = 21;
+const SERVICE_RECONCILE_WINDOW_MAX_DAYS = 90;
+const SERVICE_RECONCILE_WINDOW_ENV = "TOKENMAXXING_SYNC_WINDOW_DAYS";
+const SERVICE_RECONCILE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const NPM_LATEST_URL = "https://registry.npmjs.org/@851-labs%2Ftokenmaxxing/latest";
 const SERVICE_UPLOAD_RETRY_POLICY: UploadRetryPolicy = {
   attempts: 3,
@@ -244,6 +255,7 @@ interface ServiceState {
   lastSyncStatus?: SyncStatus;
   lastSuccessAt?: string;
   lastSuccessDate?: string;
+  lastReconcileAt?: string;
   lastUpserted?: number;
   reloadRequired?: boolean;
   usageReplacementBackfillVersion?: number;
@@ -901,6 +913,7 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
         lastRepairError: state?.lastRepairError ?? null,
         lastRepairReason: state?.lastRepairReason ?? null,
         lastRepairStatus: state?.lastRepairStatus ?? null,
+        lastReconcileAt: state?.lastReconcileAt ?? null,
         lastRows: state?.lastRows ?? null,
         lastSchedulerActive: state?.lastSchedulerActive ?? null,
         lastSince: state?.lastSince ?? null,
@@ -953,6 +966,7 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
         if (status.lastSince !== null) {
           console.log(`Last since: ${status.lastSince}`);
         }
+        console.log(`Last reconcile: ${status.lastReconcileAt ?? "never"}`);
         if (status.lastUpserted !== null) {
           console.log(`Last upserted: ${status.lastUpserted}`);
         }
@@ -1192,9 +1206,14 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       currentState,
       options.scheduled,
     );
+    const reconcile =
+      !usageReplacementBackfill && serviceReconcileDue(currentState, startedAt, options.scheduled);
+    const incrementalSince = serviceScheduledSyncSince(currentState, startedAt, options.scheduled);
     const scheduledSince = usageReplacementBackfill
       ? undefined
-      : serviceScheduledSyncSince(currentState, startedAt, options.scheduled);
+      : reconcile
+        ? earliestDateKey(incrementalSince, serviceReconcileSince(startedAt))
+        : incrementalSince;
     const metadata = yield* readServiceMetadata(paths.metadataPath);
     const nativeStatus = yield* readNativeSchedulerStatus(paths);
     const reloadRequired = serviceReloadRequired(metadata, currentState);
@@ -1330,6 +1349,7 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       durationMs: Date.now() - startedAtMs,
       reloadRequired,
       result: result.value,
+      reconciledAt: reconcile ? startedAtIso : undefined,
       schedulerActive: nativeStatus.active,
       since: scheduledSince,
       successAt,
@@ -1836,6 +1856,7 @@ function serviceRunSuccessState(
     attemptAt: string;
     autoUpdate: ServiceAutoUpdateReport;
     durationMs: number;
+    reconciledAt?: string | undefined;
     reloadRequired?: boolean | undefined;
     result: SyncResult;
     schedulerActive?: boolean | undefined;
@@ -1858,6 +1879,10 @@ function serviceRunSuccessState(
     lastSchedulerActive: input.schedulerActive,
     lastSince: input.since,
     lastSources: serviceSourcesForState(input.result),
+    lastReconcileAt:
+      input.result.status === "error" || input.reconciledAt === undefined
+        ? currentState.lastReconcileAt
+        : input.reconciledAt,
     lastSuccessAt: input.result.status === "error" ? currentState.lastSuccessAt : input.successAt,
     lastSyncStatus: input.result.status,
     lastUpserted: input.result.upserted ?? 0,
@@ -2009,6 +2034,42 @@ function serviceScheduledSyncSince(
   }
 
   return previousLocalDateKey(now);
+}
+
+function serviceReconcileDue(state: ServiceState, now: Date, scheduled: boolean): boolean {
+  if (!scheduled) {
+    return false;
+  }
+
+  const lastReconcileAt =
+    state.lastReconcileAt === undefined ? Number.NaN : Date.parse(state.lastReconcileAt);
+  if (Number.isNaN(lastReconcileAt) || lastReconcileAt > now.getTime()) {
+    return true;
+  }
+
+  return now.getTime() - lastReconcileAt >= SERVICE_RECONCILE_INTERVAL_MS;
+}
+
+function serviceReconcileSince(
+  now: Date,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const days = serviceReconcileWindowDays(env);
+
+  return localDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1)));
+}
+
+function serviceReconcileWindowDays(env: Record<string, string | undefined> = process.env): number {
+  const raw = env[SERVICE_RECONCILE_WINDOW_ENV]?.trim();
+  const days = raw === undefined || !/^\d+$/.test(raw) ? Number.NaN : Number(raw);
+
+  return Number.isInteger(days) && days >= 1 && days <= SERVICE_RECONCILE_WINDOW_MAX_DAYS
+    ? days
+    : SERVICE_RECONCILE_WINDOW_DAYS;
+}
+
+function earliestDateKey(first: string | undefined, second: string): string {
+  return first !== undefined && first < second ? first : second;
 }
 
 function serviceNeedsUsageReplacementBackfill(state: ServiceState, scheduled: boolean): boolean {
@@ -2271,6 +2332,7 @@ function serviceStateJson(state: ServiceState): Partial<ServiceState> {
     ...(state.lastRepairReason === undefined ? {} : { lastRepairReason: state.lastRepairReason }),
     ...(state.lastRepairStatus === undefined ? {} : { lastRepairStatus: state.lastRepairStatus }),
     ...(state.lastRows === undefined ? {} : { lastRows: state.lastRows }),
+    ...(state.lastReconcileAt === undefined ? {} : { lastReconcileAt: state.lastReconcileAt }),
     ...(state.lastSchedulerActive === undefined
       ? {}
       : { lastSchedulerActive: state.lastSchedulerActive }),
@@ -4210,6 +4272,7 @@ function capturedServiceEnv(
     "TOKENMAXXING_ENV",
     "TOKENMAXXING_API_URL",
     "TOKENMAXXING_WWW_URL",
+    SERVICE_RECONCILE_WINDOW_ENV,
   ]) {
     const value = env[key];
     if (value !== undefined && value !== "") {
@@ -4509,6 +4572,9 @@ export {
   serviceRunnerTargetCandidates,
   serviceCompletedUsageReplacementBackfill,
   serviceNeedsUsageReplacementBackfill,
+  serviceReconcileDue,
+  serviceReconcileSince,
+  serviceReconcileWindowDays,
   serviceScheduledSyncSince,
   serviceCommand,
   serviceInstallProgram,

@@ -55,6 +55,9 @@ import {
   serviceRunnerTarget,
   serviceCompletedUsageReplacementBackfill,
   serviceNeedsUsageReplacementBackfill,
+  serviceReconcileDue,
+  serviceReconcileSince,
+  serviceReconcileWindowDays,
   serviceScheduledSyncSince,
   serviceInstallProgram,
   serviceLockStatus,
@@ -1396,6 +1399,68 @@ describe("serviceScheduledSyncSince", () => {
   });
 });
 
+describe("scheduled reconciliation window", () => {
+  const localDateTime = (year: number, month: number, day: number, hour = 12, minute = 0): Date =>
+    new Date(year, month - 1, day, hour, minute);
+  const now = localDateTime(2026, 9, 22, 16, 45);
+
+  it("reconciles on the first scheduled run after upgrading", () => {
+    expect(
+      serviceReconcileDue(
+        { lastSuccessAt: localDateTime(2026, 9, 22, 16, 40).toISOString(), version: 1 },
+        now,
+        true,
+      ),
+    ).toBe(true);
+  });
+
+  it("reconciles again once the interval has elapsed", () => {
+    const reconciledAt = (hoursAgo: number) =>
+      new Date(now.getTime() - hoursAgo * 60 * 60 * 1000).toISOString();
+
+    expect(serviceReconcileDue({ lastReconcileAt: reconciledAt(1), version: 1 }, now, true)).toBe(
+      false,
+    );
+    expect(serviceReconcileDue({ lastReconcileAt: reconciledAt(5.9), version: 1 }, now, true)).toBe(
+      false,
+    );
+    expect(serviceReconcileDue({ lastReconcileAt: reconciledAt(6), version: 1 }, now, true)).toBe(
+      true,
+    );
+  });
+
+  it("treats unreadable or future markers as due", () => {
+    expect(serviceReconcileDue({ lastReconcileAt: "not-a-date", version: 1 }, now, true)).toBe(
+      true,
+    );
+    expect(
+      serviceReconcileDue(
+        { lastReconcileAt: localDateTime(2026, 9, 23).toISOString(), version: 1 },
+        now,
+        true,
+      ),
+    ).toBe(true);
+  });
+
+  it("never reconciles manual service runs, which already sync everything", () => {
+    expect(serviceReconcileDue({ version: 1 }, now, false)).toBe(false);
+  });
+
+  it("re-sends a trailing window of local days including today", () => {
+    expect(serviceReconcileSince(now, {})).toBe("2026-09-02");
+    expect(serviceReconcileSince(now, { TOKENMAXXING_SYNC_WINDOW_DAYS: "1" })).toBe("2026-09-22");
+    expect(serviceReconcileSince(now, { TOKENMAXXING_SYNC_WINDOW_DAYS: "14" })).toBe("2026-09-09");
+    expect(serviceReconcileSince(localDateTime(2026, 3, 10), {})).toBe("2026-02-18");
+  });
+
+  it("falls back to the default window for invalid overrides", () => {
+    for (const value of ["", "0", "-3", "7.5", "abc", "91"]) {
+      expect(serviceReconcileWindowDays({ TOKENMAXXING_SYNC_WINDOW_DAYS: value })).toBe(21);
+    }
+    expect(serviceReconcileWindowDays({ TOKENMAXXING_SYNC_WINDOW_DAYS: " 90 " })).toBe(90);
+  });
+});
+
 describe("usage replacement backfill", () => {
   it("runs once on a scheduled service after upgrading", () => {
     expect(serviceNeedsUsageReplacementBackfill({ version: 1 }, true)).toBe(true);
@@ -1520,6 +1585,51 @@ describe("service run state", () => {
       },
       { source: "gemini", status: "skipped" },
     ]);
+  });
+
+  it("records a completed reconciliation", () => {
+    const state = serviceRunSuccessState(
+      { lastReconcileAt: "2026-06-16T02:00:00.000Z", version: 1 },
+      {
+        arch: "arm64",
+        attemptAt: "2026-06-16T10:00:00.000Z",
+        autoUpdate: autoUpdateReport(),
+        durationMs: 1234,
+        reconciledAt: "2026-06-16T10:00:00.000Z",
+        result: syncResult,
+        since: "2026-05-27",
+        successAt: "2026-06-16T10:00:01.000Z",
+        version: "0.6.1",
+      },
+    );
+
+    expect(state.lastReconcileAt).toBe("2026-06-16T10:00:00.000Z");
+    expect(serviceStateJson(state)).toMatchObject({
+      lastReconcileAt: "2026-06-16T10:00:00.000Z",
+    });
+  });
+
+  it("keeps the previous reconciliation marker for incremental or failed runs", () => {
+    const base = {
+      arch: "arm64",
+      attemptAt: "2026-06-16T10:00:00.000Z",
+      autoUpdate: autoUpdateReport(),
+      durationMs: 1234,
+      successAt: "2026-06-16T10:00:01.000Z",
+      version: "0.6.1",
+    };
+    const current = { lastReconcileAt: "2026-06-16T02:00:00.000Z", version: 1 as const };
+
+    expect(serviceRunSuccessState(current, { ...base, result: syncResult }).lastReconcileAt).toBe(
+      "2026-06-16T02:00:00.000Z",
+    );
+    expect(
+      serviceRunSuccessState(current, {
+        ...base,
+        reconciledAt: "2026-06-16T10:00:00.000Z",
+        result: { ...syncResult, rows: 0, status: "error" },
+      }).lastReconcileAt,
+    ).toBe("2026-06-16T02:00:00.000Z");
   });
 
   it("records source collection failures without advancing the last success", () => {
