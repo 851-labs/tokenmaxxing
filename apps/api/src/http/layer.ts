@@ -19,9 +19,11 @@ import {
   CurrentCliIdentity,
   CurrentUser,
   DEFAULT_LEADERBOARD_METRIC,
+  BadRequest,
   DEFAULT_LEADERBOARD_WINDOW,
   InternalServerError,
   MethodNotAllowed,
+  PayloadTooLarge,
   RouteNotFound,
   TokenmaxxingApi,
 } from "@tokenmaxxing/api-contract";
@@ -415,6 +417,9 @@ const corsLayer = Layer.unwrap(
 
 const OPENAPI_PATH = "/openapi.json";
 
+/** Client ids are echoed and logged, so only short, header-safe ones are kept. */
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+
 /**
  * Mints/propagates x-request-id (logs carry it via annotations) and renders
  * whatever the routes left unanswered in the contract's error envelope: an
@@ -430,7 +435,11 @@ const requestIdLayer = HttpRouter.middleware(
   (httpApp) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const requestId = request.headers["x-request-id"] ?? crypto.randomUUID();
+      const incoming = request.headers["x-request-id"];
+      const requestId =
+        incoming !== undefined && REQUEST_ID_PATTERN.test(incoming)
+          ? incoming
+          : crypto.randomUUID();
       const response = yield* httpApp.pipe(
         Effect.catchCause((cause) => unansweredResponse(request, cause)),
         Effect.annotateLogs("requestId", requestId),
@@ -500,11 +509,18 @@ function allowedMethods(pathname: string): string[] {
   return [...methods].sort();
 }
 
-type RequestError = InternalServerError | MethodNotAllowed | RouteNotFound;
+type RequestError =
+  | BadRequest
+  | InternalServerError
+  | MethodNotAllowed
+  | PayloadTooLarge
+  | RouteNotFound;
 
 const REQUEST_ERROR_STATUS = {
+  BadRequest: 400,
   InternalServerError: 500,
   MethodNotAllowed: 405,
+  PayloadTooLarge: 413,
   RouteNotFound: 404,
 } as const satisfies Record<RequestError["_tag"], number>;
 
@@ -515,6 +531,100 @@ function errorResponse(error: RequestError) {
     { status: REQUEST_ERROR_STATUS[error._tag] },
   );
 }
+
+/**
+ * Request body caps, enforced before anything reads the body. Usage uploads
+ * carry whole ccusage histories (a heavy multi-source user is a few MB);
+ * every other body — including the unauthenticated CLI login endpoints — is
+ * a small JSON object.
+ */
+const MAX_BODY_BYTES = 64 * 1024;
+const MAX_USAGE_UPLOAD_BYTES = 16 * 1024 * 1024;
+const USAGE_UPLOAD_PATHS = new Set(["/usage/ingest", "/usage/sync"]);
+
+function maxBodyBytes(url: string): number {
+  return USAGE_UPLOAD_PATHS.has(url.split("?", 1)[0]!) ? MAX_USAGE_UPLOAD_BYTES : MAX_BODY_BYTES;
+}
+
+function payloadTooLarge(limit: number) {
+  return errorResponse(
+    new PayloadTooLarge({ message: `Request body exceeds the ${limit}-byte limit.` }),
+  );
+}
+
+/** The whole stream, or `undefined` as soon as it grows past `limit`. */
+function readBodyUpTo(stream: ReadableStream<Uint8Array>, limit: number) {
+  return Effect.tryPromise(async () => {
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      size += value.byteLength;
+      if (size > limit) {
+        await reader.cancel();
+        return undefined;
+      }
+      chunks.push(value);
+    }
+
+    const body = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return body;
+  });
+}
+
+/**
+ * Rejects oversized bodies with 413 PayloadTooLarge (in the contract's error
+ * envelope; CORS and x-request-id are added by the outer middleware). A
+ * declared Content-Length is checked
+ * without reading; a body without one (chunked) is buffered up to the limit
+ * and handed on as a fresh request.
+ */
+const bodyLimitLayer = HttpRouter.middleware(
+  (httpApp) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const limit = maxBodyBytes(request.url);
+      const declared = request.headers["content-length"];
+      if (declared !== undefined) {
+        return Number(declared) <= limit ? yield* httpApp : payloadTooLarge(limit);
+      }
+
+      const source = request.source;
+      if (!(source instanceof Request) || source.body === null) {
+        return yield* httpApp;
+      }
+
+      const body = yield* readBodyUpTo(source.body, limit).pipe(Effect.option);
+      if (Option.isNone(body)) {
+        return errorResponse(new BadRequest({ message: "Could not read the request body." }));
+      }
+      if (body.value === undefined) {
+        return payloadTooLarge(limit);
+      }
+
+      const buffered = new Request(source.url, {
+        body: body.value,
+        headers: source.headers,
+        method: source.method,
+      });
+      return yield* httpApp.pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(buffered),
+        ),
+      );
+    }),
+  { global: true },
+);
 
 const HttpPlatformStub = Layer.succeed(HttpPlatform.HttpPlatform, {
   platform: "web",
@@ -550,6 +660,7 @@ const ApiLive = Layer.mergeAll(
 ).pipe(
   Layer.provide(HandlersLive),
   Layer.provide(Layer.mergeAll(AuthorizationLive, CliAuthLive, ErrorBoundaryLive)),
+  Layer.provide(bodyLimitLayer),
   Layer.provide(requestIdLayer),
   Layer.provide(corsLayer),
   HttpRouter.provideRequest(RequestServices),

@@ -114,6 +114,37 @@ describe("D1 usage repository", () => {
 
       expect(database.sqlite.prepare("select model from usage_days").all()).toEqual([]);
     });
+
+    // Regression: `notInArray` bound one parameter per model, so a day with
+    // more than ~96 models broke D1's 100-parameter statement limit.
+    it("keeps a day's full model list within D1's bound-parameter limit", async () => {
+      const models = Array.from({ length: 256 }, (_, index) => `model-${index}`);
+      for (const model of [...models, "stale"]) {
+        seedUsage(database.sqlite, {
+          date: "2026-07-21",
+          deviceId: "device",
+          model,
+          syncedAt: 500,
+          userId: "user",
+        });
+      }
+
+      const repository = await makeRepository();
+      await Effect.runPromise(
+        repository.pruneChunk(
+          "device",
+          [{ date: "2026-07-21", models, source: "codex" }],
+          new Date(1_000),
+        ),
+      );
+
+      const remaining = database.sqlite.prepare("select model from usage_days").all();
+      expect(remaining).toHaveLength(256);
+      expect(remaining).not.toContainEqual({ model: "stale" });
+      expect(Math.max(...database.executed.map((query) => query.parameters.length))).toBeLessThan(
+        10,
+      );
+    });
   });
 
   describe("trailing-window re-sync", () => {

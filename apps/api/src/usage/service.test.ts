@@ -420,6 +420,78 @@ describe("UsageService.ingestRaw", () => {
   });
 });
 
+describe("UsageService invalid legacy rows", () => {
+  const identity = {
+    deviceId: DeviceId.make("device_123"),
+    tokenId: TokenId.make("token_123"),
+    user,
+  };
+
+  // 0.2.x CLIs resend their whole history on every sync: one bad row must not
+  // reject the upload, or the device could never sync again.
+  it("drops rows that fail to decode and keeps the rest", async () => {
+    const { repository, upsertChunk } = makeRepository();
+    const service = await makeService(repository, () => new Date("2026-06-21T12:00:00.000Z"));
+
+    const result = await Effect.runPromise(
+      service.syncBatch(identity, device, [
+        usageDay,
+        { ...usageDay, date: "2026-02-30" },
+        { ...usageDay, date: "0000-01-01" },
+        { ...usageDay, inputTokens: -1 },
+        { ...usageDay, outputTokens: 1.5 },
+        { ...usageDay, model: "m".repeat(257) },
+        { ...usageDay, source: "openclaw" },
+        { ...usageDay, projectPath: "/Users/alex/secret-client" },
+        { date: "2026-06-16" },
+      ]),
+    );
+
+    expect(result).toMatchObject({ received: 9, upserted: 1 });
+    expect(upsertChunk).toHaveBeenCalledWith(
+      "user_123",
+      "device_123",
+      [usageDay],
+      expect.any(Date),
+    );
+  });
+
+  it("drops raw report days before the ingest floor without covering them", async () => {
+    const { pruneChunk, repository, upsertChunk } = makeRepository();
+    const service = await makeService(repository, () => new Date("2026-06-21T12:00:00.000Z"));
+
+    const result = await Effect.runPromise(
+      service.ingestRaw(identity, device, [
+        {
+          command: ["ccusage@^20", "codex", "daily", "--json"],
+          payload: {
+            daily: [
+              { costUSD: 1, date: "0000-01-01", totalTokens: 10 },
+              { costUSD: 1, date: "2023-12-31", totalTokens: 10 },
+              { costUSD: 1, date: "2024-01-01", totalTokens: 10 },
+            ],
+          },
+          reportKind: "daily",
+          source: "codex",
+        },
+      ]),
+    );
+
+    expect(result.upserted).toBe(1);
+    expect(upsertChunk).toHaveBeenCalledWith(
+      "user_123",
+      "device_123",
+      [expect.objectContaining({ date: "2024-01-01" })],
+      expect.any(Date),
+    );
+    expect(pruneChunk).toHaveBeenCalledWith(
+      "device_123",
+      [{ date: "2024-01-01", models: ["unknown"], source: "codex" }],
+      expect.any(Date),
+    );
+  });
+});
+
 describe("UsageService future-dated usage", () => {
   // 23:30 UTC on 06-15: a UTC+14 device is already on 06-16, never 06-17.
   const now = () => new Date("2026-06-15T23:30:00.000Z");

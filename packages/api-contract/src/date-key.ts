@@ -100,4 +100,19 @@ const DateKey = Schema.String.check(
   Schema.makeFilter((value: string) => isDateKey(value) || "expected a calendar date"),
 );
 
-export { DateKey, isDateKey, shiftDayKey, utcDayKey };
+/**
+ * Earliest day usage ingest accepts. No supported agent logged usage before
+ * 2024, so older keys (e.g. `0000-01-01`) are bogus and would only skew
+ * all-time stats; ingest drops them. Rows already stored are left alone.
+ * Keys are fixed-width, so string order is calendar order.
+ */
+const MIN_USAGE_DATE_KEY = "2024-01-01";
+
+/** {@link DateKey} for ingested usage days: no earlier than {@link MIN_USAGE_DATE_KEY}. */
+const UsageDateKey = DateKey.check(
+  Schema.makeFilter(
+    (value: string) => value >= MIN_USAGE_DATE_KEY || `expected ${MIN_USAGE_DATE_KEY} or later`,
+  ),
+);
+
+export { DateKey, isDateKey, MIN_USAGE_DATE_KEY, shiftDayKey, UsageDateKey, utcDayKey };

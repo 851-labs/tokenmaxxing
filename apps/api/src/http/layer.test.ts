@@ -129,8 +129,37 @@ describe("api error responses through the worker bridge", () => {
       expect(response.headers.get("x-request-id")).toBe("req-err");
       expect(await response.json()).toMatchObject({ _tag: expect.any(String) });
     }
+
+    const tooLarge = await serve(
+      fetch,
+      new Request("https://api.tokenmaxxing.sh/cli/login/start", {
+        body: "{}",
+        headers: {
+          "content-length": String(64 * 1024 + 1),
+          "content-type": "application/json",
+          host: "api.tokenmaxxing.sh",
+          origin: "https://tokenmaxxing.sh",
+          "x-request-id": "req-err",
+        },
+        method: "POST",
+      }),
+    );
+
+    expect(tooLarge.status).toBe(413);
+    expect(tooLarge.headers.get("access-control-allow-origin")).toBe("https://tokenmaxxing.sh");
+    expect(tooLarge.headers.get("x-request-id")).toBe("req-err");
+    expect(await tooLarge.json()).toMatchObject({ _tag: "PayloadTooLarge" });
   });
 });
+
+async function expectEnvelope(response: Response, status: number, tag: string) {
+  expect(response.status).toBe(status);
+  expect(response.headers.get("content-type")).toContain("application/json");
+  expect(response.headers.get("x-request-id")).toEqual(expect.any(String));
+  const body = (await response.json()) as { _tag: string; message: string };
+  expect(body).toEqual({ _tag: tag, message: expect.any(String) });
+  return body;
+}
 
 describe("API HTTP responses", () => {
   let app: TestApp | undefined;
@@ -191,15 +220,6 @@ describe("API HTTP responses", () => {
 
   describe("error envelope", () => {
     /** Every non-2xx answer: a JSON `{ _tag, message }` body with a request id. */
-    async function expectEnvelope(response: Response, status: number, tag: string) {
-      expect(response.status).toBe(status);
-      expect(response.headers.get("content-type")).toContain("application/json");
-      expect(response.headers.get("x-request-id")).toEqual(expect.any(String));
-      const body = (await response.json()) as { _tag: string; message: string };
-      expect(body).toEqual({ _tag: tag, message: expect.any(String) });
-      return body;
-    }
-
     function post(path: string, body: string | null, contentType = "application/json") {
       return new Request(`https://api.tokenmaxxing.sh${path}`, {
         body,
@@ -366,6 +386,94 @@ describe("API HTTP responses", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-request-id")).toBe("req-1");
+  });
+
+  it("replaces an oversized or odd x-request-id with a minted one", async () => {
+    app = await makeTestApp();
+
+    for (const requestId of ["r".repeat(129), "has space", "<script>", "a/b", "caf\u00e9"]) {
+      const response = await app.fetch(
+        new Request("https://api.tokenmaxxing.sh/health", {
+          headers: { "x-request-id": requestId },
+        }),
+      );
+
+      const echoed = response.headers.get("x-request-id");
+      expect(echoed).not.toBe(requestId);
+      expect(echoed).toMatch(/^[0-9a-f-]{36}$/);
+    }
+  });
+
+  describe("request body limits", () => {
+    const start = (body: string, headers: Record<string, string> = {}) =>
+      new Request("https://api.tokenmaxxing.sh/cli/login/start", {
+        body,
+        headers: { "content-type": "application/json", ...headers },
+        method: "POST",
+      });
+
+    it("rejects a declared Content-Length over the limit without reading the body", async () => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(start("{}", { "content-length": String(64 * 1024 + 1) }));
+
+      expect(await expectEnvelope(response, 413, "PayloadTooLarge")).toEqual({
+        _tag: "PayloadTooLarge",
+        message: "Request body exceeds the 65536-byte limit.",
+      });
+    });
+
+    it("caps bodies without a Content-Length while streaming them", async () => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(start(JSON.stringify({ padding: "x".repeat(64 * 1024) })));
+
+      await expectEnvelope(response, 413, "PayloadTooLarge");
+    });
+
+    it("passes bodies within the limit through to the handler", async () => {
+      app = await makeTestApp({
+        cliLogin: {
+          start: () =>
+            Effect.succeed({
+              code: "ABCD-1234",
+              expiresAt: "2026-06-21T18:10:00.000Z",
+              intervalSeconds: 2,
+              userCode: "ABCD-1234",
+              verificationUri: "https://tokenmaxxing.sh/login/cli?code=ABCD-1234",
+            }),
+        },
+      });
+      const body = JSON.stringify({
+        deviceId: "7d0f3a52-5f0a-4f39-9d7c-3b8f1c2a9e11",
+        deviceName: "fixture-host",
+        devicePlatform: "darwin",
+      });
+
+      const headerSets: Array<Record<string, string>> = [
+        {},
+        { "content-length": String(body.length) },
+      ];
+      for (const headers of headerSets) {
+        expect((await app.fetch(start(body, headers))).status).toBe(200);
+      }
+    });
+
+    it("lets usage uploads through well past the default limit", async () => {
+      app = await makeTestApp();
+      const upload = (headers: Record<string, string>) =>
+        app!.fetch(
+          new Request("https://api.tokenmaxxing.sh/usage/ingest", {
+            body: JSON.stringify({ padding: "x".repeat(1024 * 1024) }),
+            headers: { "content-type": "application/json", ...headers },
+            method: "POST",
+          }),
+        );
+
+      // Past the body limit, the request reaches CLI auth (401), not a 413.
+      expect((await upload({})).status).toBe(401);
+      expect((await upload({ "content-length": String(16 * 1024 * 1024 + 1) })).status).toBe(413);
+    });
   });
 });
 

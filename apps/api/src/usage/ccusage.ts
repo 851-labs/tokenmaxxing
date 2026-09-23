@@ -1,6 +1,7 @@
 import {
-  DateKey,
+  MAX_REPORT_DAYS,
   TokenCount,
+  UsageDateKey,
   UsdAmount,
   type RawUsageReportInput,
   type SourceUsageStatsInput,
@@ -11,8 +12,6 @@ import { Effect, Option, Schema } from "effect";
 
 const PARSER_VERSION = "ccusage-v20-raw-5";
 
-/** ~27 years of daily rows; anything larger is not a real ccusage report. */
-const MAX_REPORT_DAYS = 10_000;
 const MAX_MODELS_PER_DAY = 256;
 
 const CcusageModelName = Schema.String.check(Schema.isMaxLength(256));
@@ -42,7 +41,7 @@ const CcusageDay = Schema.Struct({
   cacheCreationTokens: Schema.optional(TokenCount),
   cacheReadTokens: Schema.optional(TokenCount),
   costUSD: Schema.optional(UsdAmount),
-  date: DateKey,
+  date: UsageDateKey,
   inputTokens: Schema.optional(TokenCount),
   modelBreakdowns: Schema.optional(
     Schema.Array(CcusageModelBreakdown).check(Schema.isMaxLength(MAX_MODELS_PER_DAY)),
@@ -62,7 +61,10 @@ const CcusageDay = Schema.Struct({
 
 type CcusageDay = typeof CcusageDay.Type;
 
-/** Days are decoded one by one so a single malformed day cannot sink a report. */
+/**
+ * Days are decoded one by one so a single malformed day cannot sink a report.
+ * The contract already rejects reports over the day cap; this is a backstop.
+ */
 const CcusageDailyReport = Schema.Struct({
   daily: Schema.Array(Schema.Unknown).check(Schema.isMaxLength(MAX_REPORT_DAYS)),
 });

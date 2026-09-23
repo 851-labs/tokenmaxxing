@@ -5,7 +5,7 @@ import {
   usageSourceStats,
   type NewDevice,
 } from "@tokenmaxxing/db";
-import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { Effect, Layer } from "effect";
 
 import { batchNonEmpty, Drizzle } from "../database";
@@ -81,19 +81,22 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
 
         yield* database.use((db) => {
           const statements = scopes.map((scope) =>
-            db
-              .delete(usageDays)
-              .where(
-                and(
-                  eq(usageDays.deviceId, deviceId),
-                  eq(usageDays.date, scope.date),
-                  eq(usageDays.source, scope.source),
-                  lt(usageDays.syncedAt, syncedAt),
-                  ...(scope.models.length === 0
-                    ? []
-                    : [notInArray(usageDays.model, [...scope.models])]),
-                ),
+            db.delete(usageDays).where(
+              and(
+                eq(usageDays.deviceId, deviceId),
+                eq(usageDays.date, scope.date),
+                eq(usageDays.source, scope.source),
+                lt(usageDays.syncedAt, syncedAt),
+                // One JSON-array parameter instead of one per model: a day
+                // may carry hundreds of models, and D1 caps a statement at
+                // 100 bound parameters.
+                ...(scope.models.length === 0
+                  ? []
+                  : [
+                      sql`${usageDays.model} not in (select value from json_each(${JSON.stringify(scope.models)}))`,
+                    ]),
               ),
+            ),
           );
           return batchNonEmpty(db, statements);
         });

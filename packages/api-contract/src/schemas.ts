@@ -1,7 +1,8 @@
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 
-import { DateKey } from "./date-key";
+import { UsageDateKey } from "./date-key";
 
 /**
  * Wire schemas. Conventions:
@@ -24,9 +25,56 @@ const DeviceId = Schema.String.pipe(Schema.brand("DeviceId"));
 
 type DeviceId = typeof DeviceId.Type;
 
+/**
+ * Every released CLI mints its device id with `crypto.randomUUID()`, so new
+ * devices must present a UUID. Responses keep the plain {@link DeviceId}.
+ */
+const NewDeviceId = DeviceId.check(
+  Schema.isPattern(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/),
+);
+
+type NewDeviceId = typeof NewDeviceId.Type;
+
 const TokenId = Schema.String.pipe(Schema.brand("TokenId"));
 
 type TokenId = typeof TokenId.Type;
+
+const boundedString = (maxLength: number) => Schema.String.check(Schema.isMaxLength(maxLength));
+
+const boundedArray = <S extends Schema.Top>(item: S, maxLength: number) =>
+  Schema.Array(item).check(Schema.isMaxLength(maxLength));
+
+/**
+ * Free text the server stores but never needs whole (error messages): longer
+ * values are cut on decode instead of failing the request, so a released CLI
+ * reporting a long error still checks in. Encoding is unconstrained.
+ */
+const truncatedString = (maxLength: number) =>
+  Schema.String.pipe(
+    Schema.decodeTo(
+      Schema.String,
+      SchemaTransformation.transform({
+        decode: (value) => truncate(value, maxLength),
+        encode: (value) => value,
+      }),
+    ),
+  );
+
+function truncate(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  // Never leave a lone high surrogate at the cut.
+  const code = value.charCodeAt(maxLength - 1);
+  return value.slice(0, code >= 0xd800 && code <= 0xdbff ? maxLength - 1 : maxLength);
+}
+
+/** Device identity strings, shared by login and usage payloads. */
+const MAX_DEVICE_NAME_LENGTH = 256;
+const MAX_DEVICE_FIELD_LENGTH = 64;
+/** Login codes are short; anything longer cannot match a stored one. */
+const MAX_LOGIN_CODE_LENGTH = 128;
 
 const HealthResponse = Schema.Struct({
   ok: Schema.Boolean,
@@ -147,11 +195,11 @@ type CliLoginFlow = typeof CliLoginFlow.Type;
  * becomes the device row id.
  */
 const CliLoginStartInput = Schema.Struct({
-  deviceArch: Schema.optional(Schema.String),
-  deviceId: DeviceId,
-  deviceName: Schema.String,
-  devicePlatform: Schema.String,
-  deviceVersion: Schema.optional(Schema.String),
+  deviceArch: Schema.optional(boundedString(MAX_DEVICE_FIELD_LENGTH)),
+  deviceId: NewDeviceId,
+  deviceName: boundedString(MAX_DEVICE_NAME_LENGTH),
+  devicePlatform: boundedString(MAX_DEVICE_FIELD_LENGTH),
+  deviceVersion: Schema.optional(boundedString(MAX_DEVICE_FIELD_LENGTH)),
   flow: Schema.optional(CliLoginFlow),
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
@@ -173,7 +221,7 @@ const CliLoginStartResponse = Schema.Struct({
 type CliLoginStartResponse = typeof CliLoginStartResponse.Type;
 
 const CliLoginDeviceCodePollInput = Schema.Struct({
-  deviceCode: Schema.String,
+  deviceCode: boundedString(MAX_LOGIN_CODE_LENGTH),
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
@@ -182,7 +230,7 @@ type CliLoginDeviceCodePollInput = typeof CliLoginDeviceCodePollInput.Type;
 
 /** Pre-device-code CLIs poll with the user code; see the legacy sunset. */
 const CliLoginLegacyPollInput = Schema.Struct({
-  code: Schema.String,
+  code: boundedString(MAX_LOGIN_CODE_LENGTH),
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
@@ -220,7 +268,7 @@ const CliLoginRequestSummary = Schema.Struct({
 type CliLoginRequestSummary = typeof CliLoginRequestSummary.Type;
 
 const CliLoginApproveInput = Schema.Struct({
-  code: Schema.String,
+  code: boundedString(MAX_LOGIN_CODE_LENGTH),
 }).annotate({
   parseOptions: { onExcessProperty: "error" },
 });
@@ -255,14 +303,11 @@ const UsdAmount = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
 
 type UsdAmount = typeof UsdAmount.Type;
 
-const boundedString = (maxLength: number) => Schema.String.check(Schema.isMaxLength(maxLength));
-
-const boundedArray = <S extends Schema.Top>(item: S, maxLength: number) =>
-  Schema.Array(item).check(Schema.isMaxLength(maxLength));
-
 const MAX_MODEL_NAME_LENGTH = 256;
 /** Legacy `/usage/sync` clients upload in chunks of 1000 rows. */
 const MAX_SYNC_DAYS = 1_000;
+/** ~27 years of daily entries; anything larger is not a real ccusage report. */
+const MAX_REPORT_DAYS = 10_000;
 /** One daily plus one legacy session report per source, with headroom. */
 const MAX_RAW_REPORTS = 64;
 const MAX_SOURCE_STATS = 64;
@@ -270,10 +315,10 @@ const MAX_COMMAND_ARGS = 32;
 const MAX_COMMAND_ARG_LENGTH = 256;
 
 const UsageDeviceInput = Schema.Struct({
-  arch: Schema.optional(boundedString(64)),
-  name: boundedString(256),
-  platform: boundedString(64),
-  version: Schema.optional(boundedString(64)),
+  arch: Schema.optional(boundedString(MAX_DEVICE_FIELD_LENGTH)),
+  name: boundedString(MAX_DEVICE_NAME_LENGTH),
+  platform: boundedString(MAX_DEVICE_FIELD_LENGTH),
+  version: Schema.optional(boundedString(MAX_DEVICE_FIELD_LENGTH)),
 });
 
 type UsageDeviceInput = typeof UsageDeviceInput.Type;
@@ -287,7 +332,7 @@ const UsageDayInput = Schema.Struct({
   cacheCreationTokens: TokenCount,
   cacheReadTokens: TokenCount,
   costUsd: UsdAmount,
-  date: DateKey,
+  date: UsageDateKey,
   inputTokens: TokenCount,
   model: boundedString(MAX_MODEL_NAME_LENGTH),
   outputTokens: TokenCount,
@@ -317,10 +362,27 @@ type UsageRawReportKind = typeof UsageRawReportKind.Type;
 /**
  * `payload` is raw ccusage JSON in one of several per-source dialects; the
  * API decodes it leniently (and day by day) after the envelope is accepted.
+ * Only the size of a `daily` array is checked up front, so an oversized
+ * report is rejected like every other capped field instead of being dropped.
  */
+const RawUsageReportPayload = Schema.Unknown.check(
+  Schema.makeFilter(
+    (payload: unknown) =>
+      !isDailyPayloadOverCap(payload) || `expected at most ${MAX_REPORT_DAYS} daily entries`,
+  ),
+);
+
+function isDailyPayloadOverCap(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null || !("daily" in payload)) {
+    return false;
+  }
+
+  return Array.isArray(payload.daily) && payload.daily.length > MAX_REPORT_DAYS;
+}
+
 const RawUsageReportInput = Schema.Struct({
   command: boundedArray(boundedString(MAX_COMMAND_ARG_LENGTH), MAX_COMMAND_ARGS),
-  payload: Schema.Unknown,
+  payload: RawUsageReportPayload,
   reportKind: UsageRawReportKind,
   source: UsageSource,
 }).annotate({
@@ -357,14 +419,26 @@ const ServiceAutoUpdateReason = Schema.Literals([
 
 type ServiceAutoUpdateReason = typeof ServiceAutoUpdateReason.Type;
 
+/**
+ * Service telemetry bounds. Identifiers, versions and timestamps are short in
+ * every released CLI, so oversized values are rejected; error messages come
+ * from `String(cause)` and are truncated instead (see {@link truncatedString}).
+ */
+const MAX_TELEMETRY_FIELD_LENGTH = 256;
+const MAX_TELEMETRY_ERROR_LENGTH = 4_096;
+
+const TelemetryField = boundedString(MAX_TELEMETRY_FIELD_LENGTH);
+
+const TelemetryError = truncatedString(MAX_TELEMETRY_ERROR_LENGTH);
+
 const ServiceAutoUpdate = Schema.Struct({
-  attemptedAt: Schema.optional(Schema.NullOr(Schema.String)),
-  completedAt: Schema.optional(Schema.NullOr(Schema.String)),
-  currentVersion: Schema.optional(Schema.NullOr(Schema.String)),
+  attemptedAt: Schema.optional(Schema.NullOr(TelemetryField)),
+  completedAt: Schema.optional(Schema.NullOr(TelemetryField)),
+  currentVersion: Schema.optional(Schema.NullOr(TelemetryField)),
   enabled: Schema.Boolean,
-  error: Schema.optional(Schema.NullOr(Schema.String)),
-  installedVersion: Schema.optional(Schema.NullOr(Schema.String)),
-  latestVersion: Schema.optional(Schema.NullOr(Schema.String)),
+  error: Schema.optional(Schema.NullOr(TelemetryError)),
+  installedVersion: Schema.optional(Schema.NullOr(TelemetryField)),
+  latestVersion: Schema.optional(Schema.NullOr(TelemetryField)),
   manager: Schema.NullOr(ServiceAutoUpdateManager),
   reason: Schema.NullOr(ServiceAutoUpdateReason),
   status: ServiceAutoUpdateStatus,
@@ -387,16 +461,16 @@ type ServiceRepairStatus = typeof ServiceRepairStatus.Type;
 
 const ServiceCheckInInput = Schema.Struct({
   autoUpdate: Schema.optional(ServiceAutoUpdate),
-  backend: Schema.optional(Schema.String),
-  error: Schema.optional(Schema.String),
+  backend: Schema.optional(TelemetryField),
+  error: Schema.optional(TelemetryError),
   reloadRequired: Schema.optional(Schema.Boolean),
-  repairAttemptedAt: Schema.optional(Schema.String),
-  repairCompletedAt: Schema.optional(Schema.String),
-  repairError: Schema.optional(Schema.String),
+  repairAttemptedAt: Schema.optional(TelemetryField),
+  repairCompletedAt: Schema.optional(TelemetryField),
+  repairError: Schema.optional(TelemetryError),
   repairReason: Schema.optional(ServiceRepairReason),
   repairStatus: Schema.optional(ServiceRepairStatus),
-  runnerTarget: Schema.optional(Schema.String),
-  runnerVersion: Schema.optional(Schema.String),
+  runnerTarget: Schema.optional(TelemetryField),
+  runnerVersion: Schema.optional(TelemetryField),
   schedulerActive: Schema.optional(Schema.Boolean),
   status: ServiceCheckInStatus,
   templateVersion: Schema.optional(Schema.Number),
@@ -429,8 +503,20 @@ const IngestUsageInput = Schema.Struct({
 
 type IngestUsageInput = typeof IngestUsageInput.Type;
 
+/**
+ * Legacy `/usage/sync` rows are decoded one by one on the server (as
+ * {@link UsageDayInput}) and invalid rows are dropped: 0.2.x CLIs resend their
+ * whole history on every sync, so rejecting the upload for one bad row would
+ * block that device forever. The envelope itself stays strict.
+ */
+const SyncUsageDayInput = Schema.Record(Schema.String, Schema.Unknown).annotate({
+  description: "A UsageDayInput row; rows that fail to decode are dropped individually.",
+});
+
+type SyncUsageDayInput = typeof SyncUsageDayInput.Type;
+
 const SyncUsageInput = Schema.Struct({
-  days: boundedArray(UsageDayInput, MAX_SYNC_DAYS),
+  days: boundedArray(SyncUsageDayInput, MAX_SYNC_DAYS),
   device: UsageDeviceInput,
   sourceStats: Schema.optional(boundedArray(SourceUsageStatsInput, MAX_SOURCE_STATS)),
 }).annotate({
@@ -809,7 +895,9 @@ export {
   ListAccountsResponse,
   ListDevicesResponse,
   ListTokensResponse,
+  MAX_REPORT_DAYS,
   MeResponse,
+  NewDeviceId,
   OAuthProviderId,
   OkResponse,
   ProfileDailyGroupBy,
@@ -839,6 +927,7 @@ export {
   StatsTotals,
   StatsWindow,
   StatsWindowId,
+  SyncUsageDayInput,
   SyncUsageInput,
   SyncUsageResponse,
   TokenCount,
