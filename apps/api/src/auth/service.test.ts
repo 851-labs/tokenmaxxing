@@ -41,6 +41,32 @@ describe("AuthService provider linking", () => {
     expect(result.user.login).toBe("alex-4");
   });
 
+  it("never mints a login that a site route owns", async () => {
+    const { service, store } = await makeTestAuth();
+    store.users.set("stats-2", currentUser({ id: "stats-2", login: "stats-2" }));
+
+    const stats = await Effect.runPromise(
+      service.signInWithProvider(githubProfile({ login: "Stats", providerAccountId: "1" })),
+    );
+    const settings = await Effect.runPromise(
+      service.signInWithProvider(googleProfile({ email: "settings@example.com" })),
+    );
+
+    expect(stats.user.login).toBe("stats-3");
+    expect(settings.user.login).toBe("settings-2");
+  });
+
+  it("treats a taken login as taken whatever its case", async () => {
+    const { service, store } = await makeTestAuth();
+    store.users.set("legacy", currentUser({ id: "legacy", login: "Alex" }));
+
+    const result = await Effect.runPromise(
+      service.signInWithProvider(googleProfile({ email: "alex@example.com" })),
+    );
+
+    expect(result.user.login).toBe("alex-2");
+  });
+
   it("auto-links a verified email when it belongs to exactly one existing user", async () => {
     const { service, store } = await makeTestAuth();
     const user = currentUser({ id: UserId.make("user_github"), login: "alex" });
@@ -237,7 +263,11 @@ async function makeTestAuth() {
       Effect.sync(() =>
         [...store.users.values()]
           .map((user) => user.login)
-          .filter((login) => login === base || login.startsWith(`${base}-`)),
+          // Case-insensitive, like the D1 repository's LIKE.
+          .filter((login) => {
+            const lower = login.toLowerCase();
+            return lower === base || lower.startsWith(`${base}-`);
+          }),
       ),
     linkAccount: (userId, profile) =>
       Effect.sync(() => {

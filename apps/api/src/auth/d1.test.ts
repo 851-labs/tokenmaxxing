@@ -185,6 +185,30 @@ describe("D1 mergeUsers", () => {
   });
 });
 
+describe("D1 listLoginsLike", () => {
+  let database: TestDatabase;
+
+  beforeEach(() => {
+    database = makeTestDatabase();
+    for (const login of ["Alex", "alex-2", "alexa", "alex_b", "bob"]) {
+      seedUser(database.sqlite, { id: login, login });
+    }
+  });
+
+  afterEach(() => database.close());
+
+  it("finds the base and its suffixed forms regardless of case", async () => {
+    const repository = await buildService(
+      AuthRepository,
+      AuthRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
+    );
+
+    const logins = await Effect.runPromise(repository.listLoginsLike("alex"));
+
+    expect(logins.toSorted()).toEqual(["Alex", "alex-2"]);
+  });
+});
+
 function mapValues(
   record: Record<string, number>,
   map: (value: number, key: string) => number,

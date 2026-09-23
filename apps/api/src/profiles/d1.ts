@@ -1,5 +1,5 @@
 import { usageDays, usageSourceStats, users } from "@tokenmaxxing/db";
-import { and, asc, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { Effect, Layer, Option } from "effect";
 
 import { DEFAULT_LEADERBOARD_METRIC } from "@tokenmaxxing/api-contract";
@@ -21,7 +21,9 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
           db
             .select({ shadowBannedAt: users.shadowBannedAt, user: authUserColumns })
             .from(users)
-            .where(eq(users.login, login))
+            // Logins are minted lowercase (slugifyLogin), so lowercasing the
+            // requested one makes lookups case-insensitive on the unique index.
+            .where(eq(users.login, login.toLowerCase()))
             .limit(1),
         );
 
@@ -139,12 +141,6 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
       Effect.gen(function* () {
         const key = query.groupBy === "source" ? usageDays.source : usageDays.model;
 
-        const conditions: SQL[] = [eq(usageDays.userId, userId)];
-        if (query.since !== undefined) {
-          conditions.push(gte(usageDays.date, query.since));
-        }
-        conditions.push(lte(usageDays.date, query.until));
-
         const rows = yield* database.use((db) =>
           db
             .select({
@@ -155,7 +151,13 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
               totalTokens: sql<number>`sum(${usageDays.totalTokens})`,
             })
             .from(usageDays)
-            .where(and(...conditions))
+            .where(
+              and(
+                eq(usageDays.userId, userId),
+                gte(usageDays.date, query.since),
+                lte(usageDays.date, query.until),
+              ),
+            )
             .groupBy(usageDays.date, sql`group_key`)
             .orderBy(asc(usageDays.date), asc(sql`group_key`)),
         );

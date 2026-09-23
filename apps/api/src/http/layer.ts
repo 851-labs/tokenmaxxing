@@ -460,8 +460,11 @@ function unansweredResponse(
     error.value.reason._tag === "RouteNotFound"
   ) {
     const allowed = allowedMethods(new URL(request.url, "http://localhost").pathname);
+    // These patterns ignore the router's param limits (100 chars): a path
+    // they match for the request's own method was rejected for its params,
+    // not its method, so it is still an unknown route.
     return Effect.succeed(
-      allowed.length === 0
+      allowed.length === 0 || allowed.includes(request.method)
         ? errorResponse(new RouteNotFound())
         : HttpServerResponse.setHeader(
             errorResponse(new MethodNotAllowed()),

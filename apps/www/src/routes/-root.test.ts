@@ -1,8 +1,11 @@
+import { QueryClient } from "@tanstack/react-query";
+import { createMemoryHistory, createRouter } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SITE_OG_IMAGE_URL } from "../lib/og";
 import { DEFAULT_FAVICON_URL, faviconUrlFromMatches } from "../lib/favicon";
-import { DEFAULT_OG_IMAGE_URL, rootHead } from "./__root";
+import { routeTree } from "../routeTree.gen";
+import { DEFAULT_OG_IMAGE_URL, NOT_FOUND_TITLE, rootHead } from "./__root";
 
 describe("root metadata", () => {
   it("keeps the touch icon in route metadata and the favicon in one reactive slot", () => {
@@ -33,6 +36,45 @@ describe("root metadata", () => {
     expect(linkHref(head.links, "canonical")).toBeUndefined();
   });
 });
+
+describe("not-found metadata", () => {
+  it("titles the 404 page and keeps it out of search results", () => {
+    const head = rootHead({ notFound: true });
+
+    expect(titleOf(head.meta)).toBe("Page not found — tokenmaxxing.sh");
+    expect(metaContent(head.meta, "name", "robots")).toBe("noindex");
+    expect(metaContent(rootHead().meta, "name", "robots")).toBeUndefined();
+  });
+
+  it("applies when the router renders its not-found page", async () => {
+    // `$user` takes one segment, so two segments match no route.
+    expect(await loadedTitles("/not/a-page")).toEqual([NOT_FOUND_TITLE]);
+    expect(await loadedTitles("/privacy")).not.toContain(NOT_FOUND_TITLE);
+  });
+});
+
+/** Every <title> the real router's matches carry after loading `href`. */
+async function loadedTitles(href: string): Promise<string[]> {
+  const router = createRouter({
+    context: { queryClient: new QueryClient() },
+    history: createMemoryHistory({ initialEntries: [href] }),
+    routeTree,
+  });
+  await router.load();
+
+  return router.state.matches.flatMap((match) =>
+    (match.meta ?? []).flatMap((entry) =>
+      entry !== undefined && "title" in entry && typeof entry.title === "string"
+        ? [entry.title]
+        : [],
+    ),
+  );
+}
+
+function titleOf(meta: ReturnType<typeof rootHead>["meta"]): string | undefined {
+  const match = meta.find((entry) => "title" in entry);
+  return match === undefined || !("title" in match) ? undefined : match.title;
+}
 
 function linkHref(links: ReturnType<typeof rootHead>["links"], rel: string): string | undefined {
   return links.find((entry) => entry.rel === rel)?.href;

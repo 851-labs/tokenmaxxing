@@ -26,6 +26,7 @@ const loginRedirectSchema = Schema.Unknown.pipe(
 /** Codes the API's OAuth callback redirects back with (apps/api/src/http/routes/oauth.ts). */
 const LOGIN_ERROR_CODES = [
   "oauth_account_conflict",
+  "oauth_cancelled",
   "oauth_failed",
   "oauth_state_mismatch",
 ] as const;
@@ -87,6 +88,8 @@ function loginErrorMessage(error: LoginErrorCode, provider?: LoginProvider): str
   switch (error) {
     case "oauth_account_conflict":
       return `That ${label ?? "provider"} account is already connected to another tokenmaxxing profile.`;
+    case "oauth_cancelled":
+      return `${label ?? "Provider"} sign-in was cancelled.`;
     case "oauth_failed":
       return `${label ?? "Provider"} sign-in failed; try again.`;
     case "oauth_state_mismatch":

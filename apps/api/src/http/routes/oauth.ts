@@ -29,7 +29,11 @@ import { resolveViewer } from "../viewer";
  * `error` code instead of stranding the user on a raw JSON body.
  */
 
-type OAuthCallbackError = "oauth_account_conflict" | "oauth_failed" | "oauth_state_mismatch";
+type OAuthCallbackError =
+  | "oauth_account_conflict"
+  | "oauth_cancelled"
+  | "oauth_failed"
+  | "oauth_state_mismatch";
 
 const OAUTH_ROUNDTRIP_MAX_AGE_SECONDS = 600;
 
@@ -78,6 +82,17 @@ function oauthCallbackRoute(providerId: OAuthProviderId) {
       // Only trust the redirect embedded in OUR cookie copy of the state.
       const redirectPath =
         expectedState === null ? null : redirectPathFromOAuthState(expectedState);
+      // The provider redirects back with `error` (and no code) when the user
+      // declines or it cannot authorize; that is not a stale sign-in.
+      const providerError = url.searchParams.get("error");
+      if (providerError !== null) {
+        return oauthErrorRedirect(
+          deployment,
+          providerError === "access_denied" ? "oauth_cancelled" : "oauth_failed",
+          providerId,
+          redirectPath,
+        );
+      }
       if (
         code === null ||
         state === null ||

@@ -1,3 +1,6 @@
+import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import { describe, expect, it } from "vite-plus/test";
 import * as Contract from "@tokenmaxxing/api-contract";
 import {
@@ -9,10 +12,11 @@ import {
   LoginCodeExpired,
   ServiceUnavailable,
   Unauthorized,
+  TokenmaxxingApi,
   UserNotFound,
 } from "@tokenmaxxing/api-contract";
 
-import { errorMessage, isApiError, isRetryableApiError } from "./api";
+import { errorMessage, isApiError, isNotFoundApiError, isRetryableApiError } from "./api";
 
 describe("API error classification", () => {
   it("never retries deliberate contract failures", () => {
@@ -55,6 +59,65 @@ describe("API error classification", () => {
     if (isApiError(error, "UserNotFound")) {
       expect(error.login).toBe("ghost");
     }
+  });
+});
+
+describe("isNotFoundApiError", () => {
+  /** What the derived client rejects with when the API answers `response`. */
+  async function profileFailure(response: Response): Promise<unknown> {
+    const program = Effect.gen(function* () {
+      const client = yield* HttpApiClient.make(TokenmaxxingApi, {
+        baseUrl: "https://api.tokenmaxxing.sh",
+      });
+      return yield* client.profiles.get({ params: { login: "a".repeat(101) } });
+    }).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(
+        FetchHttpClient.Fetch,
+        (async () => response) as unknown as typeof fetch,
+      ),
+    );
+
+    return Effect.runPromise(program).then(
+      () => {
+        throw new Error("expected the call to fail");
+      },
+      (error: unknown) => error,
+    );
+  }
+
+  it("recognises a typed UserNotFound", async () => {
+    const error = await profileFailure(
+      Response.json(
+        { _tag: "UserNotFound", login: "ghost", message: "User not found." },
+        { status: 404 },
+      ),
+    );
+
+    expect(isApiError(error, "UserNotFound")).toBe(true);
+    expect(isNotFoundApiError(error)).toBe(true);
+  });
+
+  it("recognises the router's RouteNotFound 404 and never retries it", async () => {
+    // Effect's router caps params at 100 chars; the API answers longer logins
+    // with the RouteNotFound envelope, which the profile endpoints declare.
+    const error = await profileFailure(
+      Response.json({ _tag: "RouteNotFound", message: "No such endpoint." }, { status: 404 }),
+    );
+
+    expect(isApiError(error, "RouteNotFound")).toBe(true);
+    expect(isNotFoundApiError(error)).toBe(true);
+    expect(isRetryableApiError(error)).toBe(false);
+  });
+
+  it("leaves other failures alone", async () => {
+    const error = await profileFailure(
+      Response.json({ _tag: "InternalServerError", message: "Boom." }, { status: 500 }),
+    );
+
+    expect(isNotFoundApiError(error)).toBe(false);
+    expect(isRetryableApiError(error)).toBe(true);
+    expect(isNotFoundApiError(new TypeError("fetch failed"))).toBe(false);
   });
 });
 

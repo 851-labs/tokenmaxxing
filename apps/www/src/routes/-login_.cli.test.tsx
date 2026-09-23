@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { runApi } from "../lib/api";
-import { CliLoginApproval } from "./login_.cli";
+import { CliLoginApproval, cliLoginHead } from "./login_.cli";
 
 vi.mock("../lib/api", () => ({
   errorMessage: (_error: unknown, fallback: string) => fallback,
@@ -89,6 +89,21 @@ async function settle() {
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
 }
+
+describe("CLI login head", () => {
+  it("has its own title and stays out of search results", () => {
+    const head = cliLoginHead();
+
+    expect(head.meta).toContainEqual({ title: "Connect your CLI — tokenmaxxing.sh" });
+    expect(head.meta).toContainEqual({ content: "noindex, follow", name: "robots" });
+    // og:url never carries the one-time code, and there is no canonical link.
+    expect(head.meta).toContainEqual({
+      content: "https://tokenmaxxing.sh/login/cli",
+      property: "og:url",
+    });
+    expect(head.links).toEqual([]);
+  });
+});
 
 function approveButton(): HTMLButtonElement | undefined {
   return [...container.querySelectorAll("button")].find((button) =>

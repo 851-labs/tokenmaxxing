@@ -305,7 +305,11 @@ describe("future-dated usage rows", () => {
       totalTokens: 1,
     });
     const daily = await Effect.runPromise(
-      profiles.daily("timetraveler", { groupBy: "model", until: "2026-09-23" }),
+      profiles.daily("timetraveler", {
+        groupBy: "model",
+        since: "2026-01-01",
+        until: "2026-09-23",
+      }),
     );
     expect(daily.map((row) => row.date)).toEqual(["2026-09-20"]);
   });

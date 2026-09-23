@@ -6,11 +6,13 @@ import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import { DateKey } from "./date-key";
 import {
   AdminUserNotFound,
+  BadRequest,
   CliUpgradeRequired,
   DeviceNotFound,
   Forbidden,
   LoginCodeExpired,
   LoginCodeNotFound,
+  RouteNotFound,
   TokenDeviceUnbound,
   TokenNotFound,
   UserNotFound,
@@ -185,6 +187,12 @@ class StatsGroup extends HttpApiGroup.make("stats").add(
   }),
 ) {}
 
+/**
+ * `:login` comes straight from a profile URL. The router caps path params at
+ * 100 characters and answers longer ones with RouteNotFound before any
+ * handler runs, so each profile read declares it next to UserNotFound; an
+ * undeclared tag would not decode into a typed error on the client.
+ */
 class ProfilesGroup extends HttpApiGroup.make("profiles")
   .add(
     HttpApiEndpoint.get("identity", "/profiles/:login/identity", {
@@ -192,7 +200,7 @@ class ProfilesGroup extends HttpApiGroup.make("profiles")
         login: Schema.String,
       },
       success: ProfileIdentityResponse,
-      error: UserNotFound,
+      error: [UserNotFound, RouteNotFound],
     }),
   )
   .add(
@@ -201,7 +209,7 @@ class ProfilesGroup extends HttpApiGroup.make("profiles")
         login: Schema.String,
       },
       success: ProfileResponse,
-      error: UserNotFound,
+      error: [UserNotFound, RouteNotFound],
     }),
   )
   .add(
@@ -215,7 +223,8 @@ class ProfilesGroup extends HttpApiGroup.make("profiles")
         until: Schema.optional(DateKey),
       },
       success: ProfileDailyResponse,
-      error: UserNotFound,
+      // BadRequest: `since` after the (ceiling-capped) `until`.
+      error: [UserNotFound, RouteNotFound, BadRequest],
     }),
   ) {}
 

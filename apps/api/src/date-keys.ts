@@ -18,7 +18,12 @@ function trailingWindowStart(days: number, now: Date): string {
 
 /** Jan 1 of `now`'s UTC year: the inclusive lower bound of year-to-date windows. */
 function yearStartDayKey(now: Date): string {
-  return `${utcDayKey(now).slice(0, 4)}-01-01`;
+  return yearStartOf(utcDayKey(now));
+}
+
+/** Jan 1 of the year a day key falls in. */
+function yearStartOf(key: string): string {
+  return `${key.slice(0, 4)}-01-01`;
 }
 
 /** Inclusive upper bound for usage day keys accepted at ingest and read back. */
@@ -33,4 +38,5 @@ export {
   trailingWindowStart,
   utcDayKey,
   yearStartDayKey,
+  yearStartOf,
 };

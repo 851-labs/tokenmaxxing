@@ -4,7 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { UserNotFound } from "@tokenmaxxing/api-contract";
+import { MIN_USAGE_DATE_KEY, UserNotFound } from "@tokenmaxxing/api-contract";
 
 import { AdminService } from "../admin/service";
 import { SESSION_COOKIE } from "../auth/cookies";
@@ -14,6 +14,7 @@ import { CliLoginService } from "../clilogin/service";
 import { AppConfig, type AppConfigShape } from "../config";
 import { LeaderboardService } from "../leaderboard/service";
 import { OAuthProviders } from "../oauth/registry";
+import { latestUsageDateKey } from "../date-keys";
 import { ProfilesService } from "../profiles/service";
 import { ServicesLive } from "../services";
 import { StatsService } from "../stats/service";
@@ -333,6 +334,18 @@ describe("API HTTP responses", () => {
       expect(response.headers.get("allow")).toBeNull();
     });
 
+    it("answers a path rejected for an over-long param with a 404, not a 405", async () => {
+      app = await makeTestApp();
+
+      // The router caps params at 100 chars; GET is still the right method.
+      const response = await app.fetch(
+        new Request(`https://api.tokenmaxxing.sh/profiles/${"a".repeat(101)}`),
+      );
+
+      await expectEnvelope(response, 404, "RouteNotFound");
+      expect(response.headers.get("allow")).toBeNull();
+    });
+
     it.each([
       ["GET", "/cli/login/poll", "POST"],
       ["DELETE", "/health", "GET, HEAD"],
@@ -549,6 +562,35 @@ describe("api wiring over real services", () => {
     expect(response.status).toBe(302);
     expect(location.pathname).toBe("/login");
     expect(location.searchParams.get("error")).toBe("oauth_state_mismatch");
+  });
+
+  it("finds profiles whatever the login's case", async () => {
+    const response = await serve(fetch, apiRequest("/profiles/ALEX"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ user: { login: "alex" } });
+  });
+
+  it("clamps profile daily ranges and rejects inverted ones as 400s", async () => {
+    const ceiling = latestUsageDateKey(new Date());
+    const absurd = await serve(
+      fetch,
+      apiRequest("/profiles/alex/daily?since=0001-01-01&until=9999-12-31"),
+    );
+    const inverted = await serve(
+      fetch,
+      apiRequest("/profiles/alex/daily?since=2026-06-02&until=2026-06-01"),
+    );
+
+    expect(absurd.status).toBe(200);
+    expect(await absurd.json()).toMatchObject({
+      range: { firstDate: MIN_USAGE_DATE_KEY, lastDate: ceiling },
+    });
+    expect(inverted.status).toBe(400);
+    expect(await inverted.json()).toEqual({
+      _tag: "BadRequest",
+      message: "Invalid date range: `since` (2026-06-02) is after `until` (2026-06-01).",
+    });
   });
 
   it("clears the session cookie on sign-out", async () => {

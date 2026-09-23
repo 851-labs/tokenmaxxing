@@ -40,6 +40,9 @@ describe("login search", () => {
         redirect: "/.//evil.com",
       }),
     ).toEqual({ error: "oauth_account_conflict", provider: "google", redirect: undefined });
+    expect(parse({ error: "oauth_cancelled", provider: "github" })).toMatchObject({
+      error: "oauth_cancelled",
+    });
     expect(parse({ error: "<script>", provider: "evil" })).toEqual({
       error: undefined,
       provider: undefined,
@@ -53,5 +56,7 @@ describe("login search", () => {
     );
     expect(loginErrorMessage("oauth_failed", "github")).toBe("GitHub sign-in failed; try again.");
     expect(loginErrorMessage("oauth_state_mismatch")).toBe("Sign-in expired; try again.");
+    expect(loginErrorMessage("oauth_cancelled", "github")).toBe("GitHub sign-in was cancelled.");
+    expect(loginErrorMessage("oauth_cancelled")).toBe("Provider sign-in was cancelled.");
   });
 });

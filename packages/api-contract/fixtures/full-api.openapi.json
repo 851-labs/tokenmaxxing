@@ -4911,11 +4911,18 @@
             }
           },
           "404": {
-            "description": "UserNotFound",
+            "description": "UserNotFound | RouteNotFound",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserNotFoundEncoded"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/UserNotFoundEncoded"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RouteNotFoundEncoded"
+                    }
+                  ]
                 }
               }
             }
@@ -5293,11 +5300,18 @@
             }
           },
           "404": {
-            "description": "UserNotFound",
+            "description": "UserNotFound | RouteNotFound",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserNotFoundEncoded"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/UserNotFoundEncoded"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RouteNotFoundEncoded"
+                    }
+                  ]
                 }
               }
             }
@@ -5515,11 +5529,18 @@
             }
           },
           "404": {
-            "description": "UserNotFound",
+            "description": "UserNotFound | RouteNotFound",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserNotFoundEncoded"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/UserNotFoundEncoded"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RouteNotFoundEncoded"
+                    }
+                  ]
                 }
               }
             }
@@ -7730,6 +7751,25 @@
         "required": [
           "_tag",
           "login",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "RouteNotFoundEncoded": {
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": [
+              "RouteNotFound"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "_tag",
           "message"
         ],
         "additionalProperties": false

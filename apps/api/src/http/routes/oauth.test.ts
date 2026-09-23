@@ -165,6 +165,30 @@ describe("oauth routes", () => {
     expect(calls.exchanges).toEqual([]);
   });
 
+  it("reports a declined authorization as cancelled, not as an expired sign-in", async () => {
+    const { calls, handler } = oauthHandler();
+    const state = encodeOAuthState("nonce", "/settings");
+    const cookies = { tmx_oauth_pkce: "verifier-123", tmx_oauth_state: state };
+
+    const cancelled = await handler(
+      callbackRequest(`error=access_denied&error_description=denied&state=${state}`, cookies),
+    );
+    const location = new URL(cancelled.headers.get("location") ?? "");
+    const failed = await handler(callbackRequest(`error=server_error&state=${state}`, cookies));
+
+    expect(cancelled.status).toBe(302);
+    expect(location.origin + location.pathname).toBe("https://tokenmaxxing.sh/login");
+    expect(location.searchParams.get("error")).toBe("oauth_cancelled");
+    expect(location.searchParams.get("provider")).toBe("github");
+    expect(location.searchParams.get("redirect")).toBe("/settings");
+    expectCleared(setCookies(cancelled), "tmx_oauth_state");
+    expectCleared(setCookies(cancelled), "tmx_oauth_pkce");
+    expect(new URL(failed.headers.get("location") ?? "").searchParams.get("error")).toBe(
+      "oauth_failed",
+    );
+    expect(calls.exchanges).toEqual([]);
+  });
+
   it("redirects provider failures and link conflicts to www login", async () => {
     const state = encodeOAuthState("nonce", null);
     const cookies = { tmx_oauth_pkce: "verifier-123", tmx_oauth_state: state };
