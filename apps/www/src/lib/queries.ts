@@ -1,7 +1,7 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import type { LeaderboardMetric, LeaderboardWindow } from "@tokenmaxxing/api-contract";
 
-import { runApi } from "./api";
+import { fetchViewer, runApi } from "./api";
 
 /**
  * queryOptions for every server read — components compose these with
@@ -25,12 +25,25 @@ const queryKeys = {
   tokens: ["me", "tokens"],
 } as const;
 
+/** The signed-in viewer; `null` when signed out. The root loader resolves it during SSR. */
 const meQueryOptions = queryOptions({
   queryKey: queryKeys.me,
-  queryFn: () => runApi((client) => client.me.me()),
+  queryFn: fetchViewer,
   retry: false,
   staleTime: 60_000,
 });
+
+/**
+ * The viewer for a signed-in-only page. A cached signed-in answer is trusted
+ * (the API rejects an expired session anyway), but a cached "signed out" is
+ * re-checked, since signing in happens in another tab or a full-page OAuth
+ * round trip.
+ */
+function ensureViewer(queryClient: QueryClient) {
+  return queryClient.getQueryData(queryKeys.me) === null
+    ? queryClient.fetchQuery({ ...meQueryOptions, staleTime: 0 })
+    : queryClient.ensureQueryData(meQueryOptions);
+}
 
 const devicesQueryOptions = queryOptions({
   queryKey: queryKeys.devices,
@@ -105,6 +118,7 @@ export {
   adminUsersQueryOptions,
   cliLoginRequestQueryOptions,
   devicesQueryOptions,
+  ensureViewer,
   invalidatePublicViews,
   leaderboardQueryOptions,
   meQueryOptions,

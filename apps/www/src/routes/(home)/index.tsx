@@ -100,7 +100,7 @@ function LeaderboardPage() {
                 Leaderboard
               </h2>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <SegmentedControl
                 label="Rank by"
                 onChange={(value) =>

@@ -1,11 +1,19 @@
 import { useMemo } from "react";
 
-import { cn } from "../../lib/cn";
 import { formatUsd } from "../../lib/format";
-import { ChartGrid, ColumnHitArea } from "./axis";
-import { barCenter, barLayout, barX, CHART_WIDTH, linearScale, maxValue, niceMax } from "./scale";
+import { BarChart, ColumnSpotlight } from "./axis";
+import {
+  barCenter,
+  barLayout,
+  barX,
+  CHART_WIDTH,
+  linearScale,
+  maxValue,
+  niceMax,
+  round2,
+} from "./scale";
 import { anchorLeft, ChartLiveRegion, ChartTooltip } from "./tooltip";
-import { CHART_FOCUS_CLASS_NAME, useChartCursor } from "./use-chart-cursor";
+import { useChartCursor } from "./use-chart-cursor";
 
 /** Spend bucketed by weekday (Monday-first); hovering a bar dims the others. */
 
@@ -28,58 +36,54 @@ function WeekdayBars({ spend }: { spend: readonly number[] }) {
 
   const y = linearScale(max, BAR_AREA);
   const layout = barLayout(WEEKDAY_LABELS.length, 0.55, 64);
+  const centerOf = (index: number) => barCenter(layout, index) / CHART_WIDTH;
 
   return (
-    <div className="relative">
-      <svg
-        aria-label="Spend by weekday"
-        className={cn("block w-full select-none", CHART_FOCUS_CLASS_NAME)}
-        role="img"
-        viewBox={`0 0 ${CHART_WIDTH} ${HEIGHT + 24}`}
-        {...cursor.surfaceProps}
-      >
-        <ChartGrid baseline={HEIGHT} format={formatUsd} max={max} y={y} />
-        {WEEKDAY_LABELS.map((label, index) => {
-          const value = spend[index] ?? 0;
-          const height = Math.max(y(value), 2);
-          return (
-            <g key={`${label}-${index}`} onPointerEnter={() => cursor.setActive(index)}>
-              <ColumnHitArea height={HEIGHT} index={index} layout={layout} />
-              <rect
-                fill={ACCENT}
-                height={height}
-                opacity={hovered === null || hovered === index ? 1 : 0.45}
-                width={layout.barWidth}
-                x={barX(layout, index)}
-                y={HEIGHT - height}
-              />
-              <text
-                className="fill-current opacity-45"
-                fontSize={10}
-                textAnchor="middle"
-                x={barCenter(layout, index)}
-                y={HEIGHT + 16}
-              >
-                {label}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-      <ChartLiveRegion>
-        {hovered === null ? null : (
-          <ChartTooltip
-            className="w-56 -translate-y-full"
-            style={{
-              left: anchorLeft(barCenter(layout, hovered) / CHART_WIDTH, 11),
-              top: `${HEIGHT - y(spend[hovered] ?? 0) - 12}px`,
-            }}
-            subtitle={`${formatUsd(spend[hovered] ?? 0)} total`}
-            title={WEEKDAY_NAMES[hovered]}
+    <BarChart
+      ariaLabel="Spend by weekday"
+      columns={WEEKDAY_LABELS.length}
+      format={formatUsd}
+      height={HEIGHT}
+      labels={WEEKDAY_NAMES.map((name, index) => ({
+        center: centerOf(index),
+        key: name,
+        label: WEEKDAY_LABELS[index] ?? name,
+      }))}
+      max={max}
+      onColumn={cursor.setActive}
+      overlay={
+        <ChartLiveRegion>
+          {hovered === null ? null : (
+            <ChartTooltip
+              className="w-56 -translate-y-full"
+              style={{
+                left: anchorLeft(centerOf(hovered), 11),
+                top: `${HEIGHT - y(spend[hovered] ?? 0) - 12}px`,
+              }}
+              subtitle={`${formatUsd(spend[hovered] ?? 0)} total`}
+              title={WEEKDAY_NAMES[hovered]}
+            />
+          )}
+        </ChartLiveRegion>
+      }
+      surfaceProps={cursor.surfaceProps}
+      y={y}
+    >
+      {WEEKDAY_NAMES.map((name, index) => {
+        const height = Math.max(y(spend[index] ?? 0), 2);
+        return (
+          <rect
+            fill={ACCENT}
+            height={round2(height)}
+            key={name}
+            width={round2(layout.barWidth)}
+            x={round2(barX(layout, index))}
+            y={round2(HEIGHT - height)}
           />
-        )}
-      </ChartLiveRegion>
-    </div>
+        );
+      })}
+      <ColumnSpotlight active={hovered} height={HEIGHT} slot={layout.slot} />
+    </BarChart>
   );
 }
 

@@ -204,6 +204,7 @@ function ProfileDashboard({
           <Heatmap
             byDate={charts.spendByDate}
             first={charts.heatmap.first}
+            focus={charts.heatmap.focus}
             last={charts.heatmap.last}
             segmentsByDate={charts.segmentsByDate}
           />

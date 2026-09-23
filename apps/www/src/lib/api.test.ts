@@ -16,7 +16,13 @@ import {
   UserNotFound,
 } from "@tokenmaxxing/api-contract";
 
-import { errorMessage, isApiError, isNotFoundApiError, isRetryableApiError } from "./api";
+import {
+  errorMessage,
+  hasSessionCookie,
+  isApiError,
+  isNotFoundApiError,
+  isRetryableApiError,
+} from "./api";
 
 describe("API error classification", () => {
   it("never retries deliberate contract failures", () => {
@@ -141,5 +147,18 @@ describe("errorMessage", () => {
     expect(errorMessage(new Error("socket hang up"), "fallback")).toBe("fallback");
     expect(errorMessage({ _tag: "UserNotFound", message: "spoofed" }, "fallback")).toBe("fallback");
     expect(errorMessage(undefined, "fallback")).toBe("fallback");
+  });
+});
+
+describe("hasSessionCookie", () => {
+  it("finds the API session cookie among others", () => {
+    expect(hasSessionCookie("theme=dark; tmx_session=abc; other=1")).toBe(true);
+    expect(hasSessionCookie("tmx_session=abc")).toBe(true);
+  });
+
+  it("is false without it, including for look-alike names", () => {
+    expect(hasSessionCookie(undefined)).toBe(false);
+    expect(hasSessionCookie("")).toBe(false);
+    expect(hasSessionCookie("tmx_oauth_state=x; not_tmx_session=y")).toBe(false);
   });
 });

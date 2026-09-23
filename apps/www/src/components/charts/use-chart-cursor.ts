@@ -9,6 +9,14 @@ import { useState, type KeyboardEvent } from "react";
 /** Index delta per key; charts laid out in a grid (the heatmap) override it. */
 type CursorSteps = Partial<Record<string, number>>;
 
+/** Props that make an element the chart's single keyboard/pointer surface. */
+interface ChartSurfaceProps {
+  onBlur: () => void;
+  onKeyDown: (event: KeyboardEvent) => void;
+  onPointerLeave: () => void;
+  tabIndex: number;
+}
+
 const LINEAR_STEPS: CursorSteps = {
   ArrowDown: 1,
   ArrowLeft: -1,
@@ -61,18 +69,16 @@ function useChartCursor(count: number, steps?: CursorSteps) {
     setActive(next);
   };
 
-  return {
-    active,
-    setActive,
-    surfaceProps: {
-      onBlur: () => setActive(null),
-      onKeyDown,
-      onPointerLeave: () => setActive(null),
-      tabIndex: 0,
-    },
+  const surfaceProps: ChartSurfaceProps = {
+    onBlur: () => setActive(null),
+    onKeyDown,
+    onPointerLeave: () => setActive(null),
+    tabIndex: 0,
   };
+
+  return { active, setActive, surfaceProps };
 }
 
 export { CHART_FOCUS_CLASS_NAME, nextCursorIndex, useChartCursor };
 
-export type { CursorSteps };
+export type { ChartSurfaceProps, CursorSteps };

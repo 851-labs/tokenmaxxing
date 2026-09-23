@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
+
 interface StatCardProps {
   label: string;
-  value: string;
+  value: ReactNode;
 }
 
 /** A borderless stat cell — meant to sit inside a hairline (`gap-px`) grid where

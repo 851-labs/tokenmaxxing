@@ -1,3 +1,5 @@
+import { STATS_CHART_MODEL_LIMIT, STATS_OTHER_MODEL_KEY } from "@tokenmaxxing/api-contract";
+
 /**
  * Model-series selection and the pure transforms that turn daily usage rows
  * into stacked-chart days, month buckets, legends, and tooltip rows.
@@ -52,8 +54,9 @@ interface SeriesRow {
   key: string;
 }
 
-const MODEL_SERIES_LIMIT = 10;
-const OTHER_MODEL_SERIES = "Other";
+/** The API keeps enough models per stats chart for exactly this many series. */
+const MODEL_SERIES_LIMIT = STATS_CHART_MODEL_LIMIT;
+const OTHER_MODEL_SERIES = STATS_OTHER_MODEL_KEY;
 const OTHER_MODEL_SERIES_COLOR = "#9ca3af";
 
 const DYNAMIC_SERIES_COLORS = [
@@ -74,7 +77,8 @@ const DYNAMIC_SERIES_COLORS = [
 /**
  * Keep the highest-value raw model names and collapse only the remaining long
  * tail. Ranking across the full chart range keeps stack positions stable from
- * day to day.
+ * day to day. Rows already keyed "Other" (the API pre-collapses the stats
+ * long tail) are never ranked as a model and always make the tail visible.
  */
 function selectModelSeries<Row extends { key: string }>(
   rows: readonly Row[],
@@ -82,8 +86,13 @@ function selectModelSeries<Row extends { key: string }>(
   limit = MODEL_SERIES_LIMIT,
 ): ModelSeriesSelection {
   const valueByModel = new Map<string, number>();
+  let hasCollapsedTail = false;
   for (const row of rows) {
-    valueByModel.set(row.key, (valueByModel.get(row.key) ?? 0) + value(row));
+    if (row.key === OTHER_MODEL_SERIES) {
+      hasCollapsedTail = true;
+    } else {
+      valueByModel.set(row.key, (valueByModel.get(row.key) ?? 0) + value(row));
+    }
   }
 
   const ranked = [...valueByModel.entries()]
@@ -93,16 +102,13 @@ function selectModelSeries<Row extends { key: string }>(
     )
     .map(([model]) => model);
   const safeLimit = Math.max(Math.floor(limit), 1);
-  const hasOverflow = ranked.length > safeLimit;
+  const hasOverflow = hasCollapsedTail || ranked.length > safeLimit;
   const visible = ranked.slice(0, hasOverflow ? safeLimit - 1 : safeLimit);
   const visibleSet = new Set(visible);
-  const order = hasOverflow
-    ? [...visible.filter((model) => model !== OTHER_MODEL_SERIES), OTHER_MODEL_SERIES]
-    : visible;
 
   return {
     label: (model) => (visibleSet.has(model) ? model : OTHER_MODEL_SERIES),
-    order,
+    order: hasOverflow ? [...visible, OTHER_MODEL_SERIES] : visible,
   };
 }
 

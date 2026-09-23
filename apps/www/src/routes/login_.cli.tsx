@@ -53,9 +53,10 @@ function CliLoginPage() {
 
 function CliLoginApproval({ code }: { code: string }) {
   const me = useQuery(meQueryOptions);
+  const viewer = me.data?.user ?? null;
   const request = useQuery({
     ...cliLoginRequestQueryOptions(code),
-    enabled: code !== "" && me.isSuccess,
+    enabled: code !== "" && viewer !== null,
   });
   const approve = useMutation({
     mutationFn: () => runApi((client) => client.me.approveCliLogin({ payload: { code } })),
@@ -73,7 +74,7 @@ function CliLoginApproval({ code }: { code: string }) {
           </p>
         ) : me.isPending ? (
           <p className="mt-2 text-sm text-muted-foreground">Checking your session…</p>
-        ) : me.isError ? (
+        ) : viewer === null ? (
           <>
             <p className="mt-2 text-sm text-muted-foreground">
               Log in to review code <Code>{code}</Code>.
@@ -110,9 +111,8 @@ function CliLoginApproval({ code }: { code: string }) {
         ) : (
           <>
             <p className="mt-2 text-sm text-muted-foreground">
-              A device is asking to sign in as{" "}
-              <span className="font-medium">{me.data.user.login}</span> with code{" "}
-              <Code>{request.data.code}</Code>.
+              A device is asking to sign in as <span className="font-medium">{viewer.login}</span>{" "}
+              with code <Code>{request.data.code}</Code>.
             </p>
             <CliLoginDeviceDetails request={request.data} />
             <p className="mt-4 flex items-start gap-2 text-left text-xs text-muted-foreground">

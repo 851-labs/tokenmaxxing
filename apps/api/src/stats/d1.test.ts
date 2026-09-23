@@ -46,45 +46,58 @@ describe("D1 stats snapshot", () => {
       stats.snapshot({
         limit,
         until: "2026-12-31",
-        windows: { allTime: null, last30d: "2026-07-01", ytd: "2026-01-01" },
+        windows: { last30d: "2026-07-01", ytd: "2026-01-01" },
       }),
     );
   }
 
-  it("limits and tie-breaks top users by ascending user id", async () => {
-    usage("charlie", "2026-07-02", "gpt-5", 5, 50);
-    usage("alpha", "2026-07-02", "gpt-5", 5, 50);
-    usage("bravo", "2026-07-02", "gpt-5", 5, 50);
-
-    const result = await snapshot(2);
-
-    expect(result.topUsers.bySpend.map((row) => row.user.login)).toEqual(["alpha", "bravo"]);
-    expect(result.topUsers.byTokens.map((row) => row.user.login)).toEqual(["alpha", "bravo"]);
-  });
-
-  it("splits all-time, last-30-day and year-to-date windows", async () => {
+  it("splits last-30-day and year-to-date windows", async () => {
     usage("alpha", "2025-12-31", "legacy", 100, 1_000);
     usage("alpha", "2026-06-30", "gpt-5", 10, 100);
     usage("bravo", "2026-07-01", "opus", 1, 10);
 
     const result = await snapshot(10);
 
-    const { allTime, last30d, ytd } = result.windows;
-    expect([allTime.totals.spendUsd, ytd.totals.spendUsd, last30d.totals.spendUsd]).toEqual([
-      111, 11, 1,
-    ]);
-    expect([allTime.since, last30d.since, ytd.since]).toEqual([null, "2026-07-01", "2026-01-01"]);
-    expect(allTime.totals).toMatchObject({
-      firstDate: "2025-12-31",
+    const { last30d, ytd } = result.windows;
+    expect([ytd.totals.spendUsd, last30d.totals.spendUsd]).toEqual([11, 1]);
+    expect([last30d.since, ytd.since]).toEqual(["2026-07-01", "2026-01-01"]);
+    expect(ytd.totals).toMatchObject({
+      firstDate: "2026-06-30",
       lastDate: "2026-07-01",
       userCount: 2,
     });
-    expect(allTime.modelsBySpend.map((row) => row.key)).toEqual(["legacy", "gpt-5", "opus"]);
     expect(ytd.modelsBySpend.map((row) => row.key)).toEqual(["gpt-5", "opus"]);
     expect(last30d.modelsBySpend.map((row) => row.key)).toEqual(["opus"]);
-    // Each window pairs its own sources and token ranking with its totals.
+    // Each window pairs its own sources, token ranking and chart rows with its totals.
     expect(last30d.modelsByTokens.map((row) => row.key)).toEqual(["opus"]);
     expect(last30d.sources.map((row) => row.totalTokens)).toEqual([10]);
-    expect(result.peaks.spend).toMatchObject({ date: "2025-12-31", spendUsd: 100 });
+    expect(ytd.dailyByModel).toEqual([
+      { date: "2026-06-30", key: "gpt-5", rowCount: 1, spendUsd: 10, totalTokens: 100 },
+      { date: "2026-07-01", key: "opus", rowCount: 1, spendUsd: 1, totalTokens: 10 },
+    ]);
+    expect(last30d.dailyByModel.map((row) => row.key)).toEqual(["opus"]);
+  });
+
+  it("charts a 30-day window that starts before year-to-date", async () => {
+    usage("alpha", "2025-12-20", "gpt-5", 3, 30);
+    usage("alpha", "2026-01-02", "gpt-5", 4, 40);
+
+    const stats = await buildService(
+      StatsRepository,
+      StatsRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
+    );
+    const result = await Effect.runPromise(
+      stats.snapshot({
+        limit: 10,
+        until: "2026-01-06",
+        windows: { last30d: "2025-12-08", ytd: "2026-01-01" },
+      }),
+    );
+
+    expect(result.windows.last30d.dailyByModel.map((row) => row.date)).toEqual([
+      "2025-12-20",
+      "2026-01-02",
+    ]);
+    expect(result.windows.ytd.dailyByModel.map((row) => row.date)).toEqual(["2026-01-02"]);
   });
 });

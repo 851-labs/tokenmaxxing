@@ -199,7 +199,8 @@ describe("API HTTP responses", () => {
       const allowedHeaders = (response.headers.get("access-control-allow-headers") ?? "")
         .split(",")
         .map((header) => header.trim().toLowerCase());
-      expect(allowedHeaders).toEqual(expect.arrayContaining(requestedHeaders));
+      expect(allowedHeaders).toEqual(expect.arrayContaining(requestedHeaders)); // Browsers cache the preflight rather than repeating it per request.
+      expect(response.headers.get("access-control-max-age")).toBe("7200");
     });
 
     it("does not grant unknown origins", async () => {

@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react";
 
-import { cn } from "../../lib/cn";
 import { formatDay, formatMonth, formatPercent, percentOf } from "../../lib/format";
-import { ChartGrid, ColumnHitArea } from "./axis";
+import { BarChart, ColumnSpotlight, type AxisLabel } from "./axis";
 import {
   barCenter,
   barLayout,
@@ -11,11 +10,11 @@ import {
   linearScale,
   maxValue,
   niceMax,
-  slotX,
+  round2,
 } from "./scale";
 import { segmentTooltipRows, type LegendEntry, type StackedDay } from "./series";
 import { anchorBesideBar, ChartLiveRegion, ChartTooltip } from "./tooltip";
-import { CHART_FOCUS_CLASS_NAME, useChartCursor } from "./use-chart-cursor";
+import { useChartCursor } from "./use-chart-cursor";
 
 /**
  * Daily metric, one bar per day stacked by model. Hover (or arrow keys)
@@ -25,10 +24,52 @@ import { CHART_FOCUS_CLASS_NAME, useChartCursor } from "./use-chart-cursor";
 type ValueFormatter = (value: number) => string;
 type StackedBarsMode = "absolute" | "share";
 
+interface SeriesPath {
+  color: string;
+  /** Every non-empty segment of the series as one path. */
+  d: string;
+  series: string;
+}
+
 const HEIGHT = 280;
 const TOP_PADDING = 14;
 const PLOT_HEIGHT = HEIGHT - TOP_PADDING;
 const PERCENT_MAX = 100;
+
+/**
+ * One path per series rather than one rect per (day, series): a year of
+ * daily bars is a few dozen elements instead of thousands, which keeps the
+ * server-rendered HTML small and hover cheap.
+ */
+function seriesPaths(
+  days: readonly StackedDay[],
+  mode: StackedBarsMode,
+  y: (value: number) => number,
+  layout: ReturnType<typeof barLayout>,
+): SeriesPath[] {
+  const paths = new Map<string, SeriesPath>();
+  const width = round2(layout.barWidth);
+  days.forEach((day, index) => {
+    const x = round2(barX(layout, index));
+    let stackTop = HEIGHT;
+    for (const segment of day.segments) {
+      if (segment.value <= 0) {
+        continue;
+      }
+      const height = y(mode === "share" ? percentOf(segment.value, day.total) : segment.value);
+      stackTop -= height;
+      const path = paths.get(segment.series) ?? {
+        color: segment.color,
+        d: "",
+        series: segment.series,
+      };
+      path.d += `M${x} ${round2(stackTop)}h${width}v${round2(height)}h-${width}z`;
+      paths.set(segment.series, path);
+    }
+  });
+
+  return [...paths.values()];
+}
 
 function StackedBars({
   ariaLabel,
@@ -50,16 +91,25 @@ function StackedBars({
     () => (mode === "share" ? PERCENT_MAX : niceMax(maxValue(days, (day) => day.total))),
     [days, mode],
   );
-  const y = linearScale(max, PLOT_HEIGHT);
-  const layout = barLayout(days.length, 0.72, 16, 1.25);
+  const y = useMemo(() => linearScale(max, PLOT_HEIGHT), [max]);
+  const layout = useMemo(() => barLayout(days.length, 0.72, 16, 1.25), [days.length]);
   const axisFormatter = mode === "share" ? formatPercentAxis : valueFormatter;
+  const paths = useMemo(() => seriesPaths(days, mode, y, layout), [days, layout, mode, y]);
 
-  const monthStarts = useMemo(
-    () =>
+  const monthLabels = useMemo(
+    (): AxisLabel[] =>
       days.flatMap((day, index) =>
-        day.date.endsWith("-01") || index === 0 ? [{ date: day.date, index }] : [],
+        day.date.endsWith("-01") || index === 0
+          ? [
+              {
+                center: barCenter(layout, index) / CHART_WIDTH,
+                key: day.date,
+                label: formatMonth(day.date),
+              },
+            ]
+          : [],
       ),
-    [days],
+    [days, layout],
   );
 
   const active = hovered === null ? undefined : days[hovered];
@@ -76,78 +126,47 @@ function StackedBars({
         })();
 
   return (
-    <div className="relative">
-      <svg
-        aria-label={ariaLabel}
-        className={cn("block w-full select-none", CHART_FOCUS_CLASS_NAME)}
-        role="img"
-        viewBox={`0 0 ${CHART_WIDTH} ${HEIGHT + 24}`}
-        {...cursor.surfaceProps}
-      >
-        <ChartGrid baseline={HEIGHT} format={axisFormatter} max={max} y={y} />
-
-        {days.map((day, index) => {
-          const x = barX(layout, index);
-          let stackTop = HEIGHT;
-          return (
-            <g key={day.date} onPointerEnter={() => cursor.setActive(index)}>
-              <ColumnHitArea height={HEIGHT} index={index} layout={layout} />
-              {day.segments.map((segment) => {
-                const chartValue =
-                  mode === "share" ? percentOf(segment.value, day.total) : segment.value;
-                const height = y(chartValue);
-                stackTop -= height;
-                const dimmedBySeries = highlight !== null && segment.series !== highlight;
-                const dimmedByDay = hovered !== null && hovered !== index;
-                return (
-                  <rect
-                    fill={segment.color}
-                    height={Math.max(height, 0)}
-                    key={segment.series}
-                    opacity={dimmedBySeries ? 0.12 : dimmedByDay ? 0.45 : 1}
-                    width={layout.barWidth}
-                    x={x}
-                    y={stackTop}
-                  />
-                );
-              })}
-            </g>
-          );
-        })}
-
-        {monthStarts.map(({ date, index }) => (
-          <text
-            className="fill-current opacity-45"
-            fontSize={10}
-            key={date}
-            textAnchor="middle"
-            x={slotX(layout, index) + layout.slot / 2}
-            y={HEIGHT + 16}
-          >
-            {formatMonth(date)}
-          </text>
-        ))}
-      </svg>
-
-      <ChartLiveRegion>
-        {active !== undefined && activePosition !== null ? (
-          <ChartTooltip
-            className="w-56 -translate-y-1/2"
-            rows={segmentTooltipRows(active.segments, (segment) =>
-              mode === "share"
-                ? formatPercent(percentOf(segment.value, active.total))
-                : valueFormatter(segment.value),
-            )}
-            style={{
-              left: anchorBesideBar(activePosition.center, activePosition.edge),
-              top: "50%",
-            }}
-            subtitle={`${valueFormatter(active.total)} total`}
-            title={formatDay(active.date)}
-          />
-        ) : null}
-      </ChartLiveRegion>
-    </div>
+    <BarChart
+      ariaLabel={ariaLabel}
+      columns={days.length}
+      format={axisFormatter}
+      height={HEIGHT}
+      labels={monthLabels}
+      max={max}
+      onColumn={cursor.setActive}
+      overlay={
+        <ChartLiveRegion>
+          {active !== undefined && activePosition !== null ? (
+            <ChartTooltip
+              className="w-56 -translate-y-1/2"
+              rows={segmentTooltipRows(active.segments, (segment) =>
+                mode === "share"
+                  ? formatPercent(percentOf(segment.value, active.total))
+                  : valueFormatter(segment.value),
+              )}
+              style={{
+                left: anchorBesideBar(activePosition.center, activePosition.edge),
+                top: "50%",
+              }}
+              subtitle={`${valueFormatter(active.total)} total`}
+              title={formatDay(active.date)}
+            />
+          ) : null}
+        </ChartLiveRegion>
+      }
+      surfaceProps={cursor.surfaceProps}
+      y={y}
+    >
+      {paths.map((path) => (
+        <path
+          d={path.d}
+          fill={path.color}
+          key={path.series}
+          opacity={highlight !== null && path.series !== highlight ? 0.12 : undefined}
+        />
+      ))}
+      <ColumnSpotlight active={hovered} height={HEIGHT} slot={layout.slot} />
+    </BarChart>
   );
 }
 

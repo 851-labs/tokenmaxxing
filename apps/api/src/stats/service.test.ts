@@ -28,17 +28,19 @@ const emptyTotals: StatsTotals = {
   userCount: 0,
 };
 
-function emptyWindow(since: string | null): StatsWindow {
-  return { modelsBySpend: [], modelsByTokens: [], since, sources: [], totals: emptyTotals };
+function emptyWindow(since: string): StatsWindow {
+  return {
+    dailyByModel: [],
+    modelsBySpend: [],
+    modelsByTokens: [],
+    since,
+    sources: [],
+    totals: emptyTotals,
+  };
 }
 
 const emptySnapshot: StatsSnapshot = {
-  daily: [],
-  dailyByModel: [],
-  peaks: { spend: null, tokens: null },
-  topUsers: { bySpend: [], byTokens: [] },
   windows: {
-    allTime: emptyWindow(null),
     last30d: emptyWindow("2026-06-10"),
     ytd: emptyWindow("2026-01-01"),
   },
@@ -47,7 +49,6 @@ const emptySnapshot: StatsSnapshot = {
 describe("statsWindowStarts", () => {
   it("derives year-to-date from the current UTC year instead of a fixed year", () => {
     expect(statsWindowStarts(new Date("2027-01-05T12:00:00.000Z"))).toEqual({
-      allTime: null,
       last30d: "2026-12-07",
       ytd: "2027-01-01",
     });
@@ -77,11 +78,11 @@ describe("StatsService.getStats", () => {
       {
         limit: 10,
         until: "2026-07-10",
-        windows: { allTime: null, last30d: "2026-06-10", ytd: "2026-01-01" },
+        windows: { last30d: "2026-06-10", ytd: "2026-01-01" },
       },
     ]);
     expect(response.generatedAt).toBe("2026-07-09T20:00:00.000Z");
-    expect(response.windows.allTime.totals.totalTokens).toBe(0);
+    expect(response.windows.ytd.totals.totalTokens).toBe(0);
   });
 
   it("serves repeat reads from the edge cache without touching D1", async () => {

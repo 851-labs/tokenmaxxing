@@ -2,6 +2,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import { createIsomorphicFn } from "@tanstack/react-start";
 import {
@@ -10,7 +11,7 @@ import {
   ServiceUnavailable,
   TokenmaxxingApi,
 } from "@tokenmaxxing/api-contract";
-import type { ApiError, ApiErrorTag } from "@tokenmaxxing/api-contract";
+import type { ApiError, ApiErrorTag, MeResponse } from "@tokenmaxxing/api-contract";
 
 import { resolveApiUrl } from "./config";
 
@@ -25,6 +26,9 @@ import { resolveApiUrl } from "./config";
  */
 
 type TokenmaxxingApiClient = HttpApiClient.ForApi<typeof TokenmaxxingApi>;
+
+/** The API's session cookie name (`SESSION_COOKIE` in apps/api auth/cookies.ts). */
+const SESSION_COOKIE = "tmx_session";
 
 class SignOutFailed extends Data.TaggedError("SignOutFailed")<{
   message: string;
@@ -68,8 +72,41 @@ async function runApi<A, E>(
   const [client, init] = await Promise.all([apiClient(resolveApiUrl()), requestInit()]);
 
   return runtime.runPromise(
-    call(client).pipe(Effect.provideService(FetchHttpClient.RequestInit, init)),
+    call(client).pipe(
+      Effect.provideService(FetchHttpClient.RequestInit, init),
+      // Nothing here traces, and traceparent/b3 headers would make every
+      // cross-origin GET a CORS preflight plus the request itself.
+      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+    ),
   );
+}
+
+function hasSessionCookie(cookieHeader: string | undefined): boolean {
+  return (
+    cookieHeader?.split(";").some((pair) => pair.trim().startsWith(`${SESSION_COOKIE}=`)) ?? false
+  );
+}
+
+/**
+ * The signed-in viewer, or null when signed out — an expected answer rather
+ * than an error, so it caches and dehydrates with the SSR page like any other
+ * read. During SSR a request without a session cookie is signed out without
+ * asking the API.
+ */
+async function fetchViewer(): Promise<MeResponse | null> {
+  if (typeof window === "undefined" && !hasSessionCookie(await requestCookie())) {
+    return null;
+  }
+
+  try {
+    return await runApi((client) => client.me.me());
+  } catch (error) {
+    if (isApiError(error, "Unauthorized")) {
+      return null;
+    }
+
+    throw error;
+  }
 }
 
 /**
@@ -130,6 +167,8 @@ async function signOut(): Promise<void> {
 
 export {
   errorMessage,
+  fetchViewer,
+  hasSessionCookie,
   isApiError,
   isNotFoundApiError,
   isRetryableApiError,

@@ -1,6 +1,4 @@
-import { Toggle } from "@base-ui/react/toggle";
-import { ToggleGroup } from "@base-ui/react/toggle-group";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { cn } from "../../lib/cn";
 
@@ -24,11 +22,38 @@ interface IndicatorBox {
   width: number;
 }
 
+/** Arrow keys step through options (wrapping); Home/End jump to the ends. */
+const KEY_STEPS: Partial<Record<string, "first" | "last" | 1 | -1>> = {
+  ArrowDown: 1,
+  ArrowLeft: -1,
+  ArrowRight: 1,
+  ArrowUp: -1,
+  End: "last",
+  Home: "first",
+};
+
+/** The option index a key moves selection to, or null for keys it ignores. */
+function nextSegmentIndex(current: number, count: number, key: string): number | null {
+  const step = KEY_STEPS[key];
+  if (step === undefined || count === 0) {
+    return null;
+  }
+  if (step === "first") {
+    return 0;
+  }
+  if (step === "last") {
+    return count - 1;
+  }
+
+  return (current + step + count) % count;
+}
+
 /**
  * A segmented control: pick exactly one option from a small inline set. It is
- * a labelled group of pressed/unpressed toggle buttons (not tabs — nothing
- * here owns a panel). The active pill slides between options once measured;
- * until then (SSR, hydration) the pressed button paints it itself.
+ * a WAI-ARIA radio group — one tab stop on the selected option, and arrow
+ * keys move selection with focus (not tabs: nothing here owns a panel). The
+ * active pill slides between options once measured; until then (SSR,
+ * hydration) the checked option paints it itself.
  */
 function SegmentedControl<Value extends string>({
   label,
@@ -38,6 +63,7 @@ function SegmentedControl<Value extends string>({
 }: SegmentedControlProps<Value>) {
   const groupRef = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState<IndicatorBox | null>(null);
+  const selectedIndex = options.findIndex((option) => option.value === value);
 
   useLayoutEffect(() => {
     const group = groupRef.current;
@@ -46,15 +72,15 @@ function SegmentedControl<Value extends string>({
     }
 
     const measure = () => {
-      const pressed = group.querySelector<HTMLElement>("[data-pressed]");
+      const checked = group.querySelector<HTMLElement>('[aria-checked="true"]');
       setIndicator(
-        pressed === null
+        checked === null
           ? null
           : {
-              height: pressed.offsetHeight,
-              left: pressed.offsetLeft,
-              top: pressed.offsetTop,
-              width: pressed.offsetWidth,
+              height: checked.offsetHeight,
+              left: checked.offsetLeft,
+              top: checked.offsetTop,
+              width: checked.offsetWidth,
             },
       );
     };
@@ -65,19 +91,27 @@ function SegmentedControl<Value extends string>({
     return () => observer.disconnect();
   }, [value]);
 
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const next = nextSegmentIndex(Math.max(selectedIndex, 0), options.length, event.key);
+    const option = next === null ? undefined : options[next];
+    if (next === null || option === undefined) {
+      return;
+    }
+
+    event.preventDefault();
+    groupRef.current?.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus();
+    if (option.value !== value) {
+      onChange(option.value);
+    }
+  };
+
   return (
-    <ToggleGroup
+    <div
       aria-label={label}
-      className="relative inline-flex border border-border p-0.5"
-      onValueChange={(next) => {
-        // Pressing the active option would clear the group; keep one selected.
-        const selected = next[0];
-        if (selected !== undefined) {
-          onChange(selected);
-        }
-      }}
+      className="relative inline-flex shrink-0 border border-border p-0.5"
+      onKeyDown={onKeyDown}
       ref={groupRef}
-      value={[value]}
+      role="radiogroup"
     >
       {indicator === null ? null : (
         <span
@@ -86,24 +120,38 @@ function SegmentedControl<Value extends string>({
           style={indicator}
         />
       )}
-      {options.map((option) => (
-        <Toggle
-          className={cn(
-            "relative z-10 px-2.5 py-1 text-xs font-medium transition-colors",
-            "text-muted-foreground hover:text-foreground",
-            "data-pressed:text-background data-pressed:hover:text-background",
-            indicator === null && "data-pressed:bg-foreground",
-          )}
-          key={option.value}
-          value={option.value}
-        >
-          {option.label}
-        </Toggle>
-      ))}
-    </ToggleGroup>
+      {options.map((option, index) => {
+        const checked = option.value === value;
+        // Roving tabindex: the selected option is the group's one tab stop
+        // (the first, if the value matches none).
+        const tabbable = selectedIndex === -1 ? index === 0 : checked;
+        return (
+          <button
+            aria-checked={checked}
+            className={cn(
+              "relative z-10 whitespace-nowrap px-2.5 py-1 text-xs font-medium outline-none transition-colors",
+              "text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent",
+              "aria-checked:text-background aria-checked:hover:text-background",
+              indicator === null && "aria-checked:bg-foreground",
+            )}
+            key={option.value}
+            onClick={() => {
+              if (!checked) {
+                onChange(option.value);
+              }
+            }}
+            role="radio"
+            tabIndex={tabbable ? 0 : -1}
+            type="button"
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
-export { SegmentedControl };
+export { nextSegmentIndex, SegmentedControl };
 
 export type { SegmentedOption };

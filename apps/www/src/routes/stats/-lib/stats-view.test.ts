@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { StatsResponse, StatsTotals, StatsWindow } from "@tokenmaxxing/api-contract";
+import type {
+  StatsChartPoint,
+  StatsResponse,
+  StatsTotals,
+  StatsWindow,
+} from "@tokenmaxxing/api-contract";
 
 import {
   deriveAggregateCharts,
@@ -101,18 +106,21 @@ describe("selectStatsWindow", () => {
   });
 });
 
-function row(date: string, spendUsd: number): StatsResponse["dailyByModel"][number] {
-  return { date, key: "claude-opus", outputTokens: 0, rowCount: 1, spendUsd, totalTokens: 10 };
+function row(date: string, spendUsd: number): StatsChartPoint {
+  return { date, key: "claude-opus", rowCount: 1, spendUsd, totalTokens: 10 };
 }
 
 function stats({
   rows,
   totals = {},
 }: {
-  rows: StatsResponse["dailyByModel"];
+  rows: StatsChartPoint[];
   totals?: Partial<StatsTotals>;
 }): StatsResponse {
-  const window = (since: string | null): StatsWindow => ({
+  // The API slices chart rows per window; hand each window the whole list so
+  // these tests pin the client-side bounds too.
+  const window = (since: string): StatsWindow => ({
+    dailyByModel: rows,
     modelsBySpend: [],
     modelsByTokens: [],
     since,
@@ -135,13 +143,8 @@ function stats({
   });
 
   return {
-    daily: [],
-    dailyByModel: rows,
     generatedAt: "2026-06-22T00:00:00.000Z",
-    peaks: { spend: null, tokens: null },
-    topUsers: { bySpend: [], byTokens: [] },
     windows: {
-      allTime: window(null),
       last30d: window("2026-05-24"),
       ytd: window("2026-01-01"),
     },

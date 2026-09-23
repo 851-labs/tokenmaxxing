@@ -36,6 +36,10 @@ const Route = createFileRoute("/_authed/settings")({
 
 function SettingsPage() {
   const { data: me } = useSuspenseQuery(meQueryOptions);
+  // Signed out from this page: `_authed` redirects once loaders re-run.
+  if (me === null) {
+    return null;
+  }
 
   return (
     <div className="flex flex-col gap-10 px-4 py-8">

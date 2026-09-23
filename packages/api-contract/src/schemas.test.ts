@@ -7,6 +7,7 @@ import {
   CliLoginPollInput,
   CliLoginStartInput,
   IngestUsageInput,
+  LeaderboardResponse,
   ProfileDailyGroupBy,
   ProfileDailyResponse,
   ProfileIdentityResponse,
@@ -224,13 +225,11 @@ describe("stats responses", () => {
       name: "Alexandru",
     },
   };
-  const peak = {
-    date: "2026-06-21",
-    spendUsd: 100,
-    totalTokens: 500,
-    userCount: 2,
-  };
-  const window = (since: string | null) => ({
+  const window = (since: string) => ({
+    dailyByModel: [
+      { date: "2026-06-21", key: "gpt-5.5", rowCount: 3, spendUsd: 100, totalTokens: 500 },
+      { date: "2026-06-21", key: "Other", rowCount: 1, spendUsd: 1, totalTokens: 5 },
+    ],
     modelsBySpend: [ranked],
     modelsByTokens: [ranked],
     since,
@@ -238,28 +237,8 @@ describe("stats responses", () => {
     totals,
   });
   const response = {
-    daily: [peak],
-    dailyByModel: [
-      {
-        date: "2026-06-21",
-        key: "gpt-5.5",
-        outputTokens: 20,
-        rowCount: 3,
-        spendUsd: 100,
-        totalTokens: 500,
-      },
-    ],
     generatedAt: "2026-06-21T20:00:00.000Z",
-    peaks: {
-      spend: peak,
-      tokens: peak,
-    },
-    topUsers: {
-      bySpend: [userMetric],
-      byTokens: [userMetric],
-    },
     windows: {
-      allTime: window(null),
       last30d: window("2026-05-23"),
       ytd: window("2026-01-01"),
     },
@@ -267,11 +246,11 @@ describe("stats responses", () => {
 
   it("carries every window with the same shape", async () => {
     await expect(Schema.decodeUnknownPromise(StatsResponse)(response)).resolves.toMatchObject({
-      topUsers: { bySpend: [{ user: { login: "pondorasti" } }] },
       windows: {
-        allTime: {
+        last30d: {
+          dailyByModel: [{ key: "gpt-5.5" }, { key: "Other" }],
           modelsByTokens: [{ key: "gpt-5.5" }],
-          since: null,
+          since: "2026-05-23",
           totals: { spendUsd: 123.45 },
         },
         ytd: { since: "2026-01-01", sources: [{ key: "gpt-5.5" }] },
@@ -279,7 +258,7 @@ describe("stats responses", () => {
     });
   });
 
-  it("requires all three windows", async () => {
+  it("requires both windows", async () => {
     const { ytd: _ytd, ...windows } = response.windows;
 
     await expect(
@@ -287,16 +266,14 @@ describe("stats responses", () => {
     ).rejects.toThrow();
   });
 
-  it("strips internal user ids from public users when the server encodes", async () => {
-    const encoded = await Schema.encodeUnknownPromise(StatsResponse)({
-      ...response,
-      topUsers: {
-        bySpend: [{ ...userMetric, user: { ...userMetric.user, id: "user_123" } }],
-        byTokens: [],
-      },
+  it("strips internal user ids from leaderboard users when the server encodes", async () => {
+    const encoded = await Schema.encodeUnknownPromise(LeaderboardResponse)({
+      entries: [{ ...userMetric, rank: 1, user: { ...userMetric.user, id: "user_123" } }],
+      metric: "spend",
+      window: "30d",
     });
 
-    expect(encoded.topUsers.bySpend[0]?.user).toEqual(userMetric.user);
+    expect(encoded.entries[0]?.user).toEqual(userMetric.user);
   });
 });
 
