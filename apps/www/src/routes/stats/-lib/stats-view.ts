@@ -24,15 +24,19 @@ const STATS_TAB_WINDOWS = {
 
 type StatsTab = keyof typeof STATS_TAB_WINDOWS;
 
-/** `?window=` values; `2026` links predate year-to-date and now open `ytd`. */
+/**
+ * `?window=` values. `2026` links predate year-to-date and now open `ytd`;
+ * TanStack's default search parser JSON-parses a bare `2026` into a number,
+ * so the legacy value arrives as either type.
+ */
 const StatsTabParam = Schema.Union([
   Schema.Literals(["30d", "ytd"]),
-  Schema.Literal("2026").pipe(
+  Schema.Literals(["2026", 2026]).pipe(
     Schema.decodeTo(
       Schema.Literal("ytd"),
-      SchemaTransformation.transform({
-        decode: () => "ytd" as const,
-        encode: () => "2026" as const,
+      SchemaTransformation.transform<"ytd", "2026" | 2026>({
+        decode: () => "ytd",
+        encode: () => "2026",
       }),
     ),
   ),

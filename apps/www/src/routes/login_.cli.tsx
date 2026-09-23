@@ -11,6 +11,7 @@ import { Code } from "../components/ui/code";
 import { errorMessage, runApi } from "../lib/api";
 import { cliLoginRequestQueryOptions, meQueryOptions } from "../lib/queries";
 import { searchParam } from "../lib/search";
+import { pageHead } from "../lib/seo";
 
 /**
  * Approval screen for `tokenmaxxing login`. Approving hands the requesting
@@ -27,8 +28,22 @@ const cliLoginSearchSchema = Schema.toStandardSchemaV1(
 
 const Route = createFileRoute("/login_/cli")({
   validateSearch: cliLoginSearchSchema,
+  head: cliLoginHead,
   component: CliLoginPage,
 });
+
+/**
+ * Codes are one-time and per-device: keep the page out of search results and
+ * its code out of og:url.
+ */
+function cliLoginHead() {
+  return pageHead({
+    description: "Approve a tokenmaxxing CLI sign-in for your account.",
+    noindex: true,
+    path: "/login/cli",
+    title: "Connect your CLI — tokenmaxxing.sh",
+  });
+}
 
 function CliLoginPage() {
   const { code } = Route.useSearch();
@@ -154,4 +169,4 @@ function cliLoginRedirectPath(code: string): string {
   return `/login/cli?${new URLSearchParams({ code }).toString()}`;
 }
 
-export { CliLoginApproval, Route };
+export { CliLoginApproval, cliLoginHead, Route };

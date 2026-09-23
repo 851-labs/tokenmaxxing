@@ -1,5 +1,6 @@
 import { Context, Data, Effect, Option } from "effect";
 
+import { isReservedLogin } from "@tokenmaxxing/api-contract";
 import type { AuthUser, OAuthProviderId, UserAccountSummary } from "@tokenmaxxing/api-contract";
 
 import { type DatabaseError, firstRow } from "../database";
@@ -210,12 +211,15 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
     });
   }
 
+  /** `base`, else `base-2`, `base-3`, … — skipping taken and reserved logins. */
   function nextAvailableLogin(base: string) {
     return Effect.gen(function* () {
-      const taken = new Set(yield* repository.listLoginsLike(base));
+      const taken = new Set(
+        (yield* repository.listLoginsLike(base)).map((login) => login.toLowerCase()),
+      );
       for (let suffix = 1; suffix < 10_000; suffix += 1) {
         const candidate = suffix === 1 ? base : `${base}-${suffix}`;
-        if (!taken.has(candidate)) {
+        if (!taken.has(candidate) && !isReservedLogin(candidate)) {
           return candidate;
         }
       }

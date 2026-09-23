@@ -1,38 +1,114 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Result } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { UserId, UserNotFound } from "@tokenmaxxing/api-contract";
+import { BadRequest, MIN_USAGE_DATE_KEY, UserId, UserNotFound } from "@tokenmaxxing/api-contract";
 
-import { yearStartDayKey } from "../date-keys";
-import { makeProfilesService, profileDailyRange, ProfilesRepository } from "./service";
+import { shiftDayKey } from "../date-keys";
+import {
+  makeProfilesService,
+  MAX_DAILY_RANGE_DAYS,
+  profileDailyBounds,
+  profileDailyRange,
+  ProfilesRepository,
+} from "./service";
+
+describe("profileDailyBounds", () => {
+  const now = new Date("2026-06-21T23:30:00.000Z");
+  const bounds = (query: { since?: string; until?: string }, at = now) =>
+    Effect.runSync(Effect.result(profileDailyBounds(query, at)));
+
+  it("defaults to the UTC year to date, read up to the ingest ceiling", () => {
+    expect(bounds({})).toEqual(Result.succeed({ since: "2026-01-01", until: "2026-06-22" }));
+    // On Dec 31 UTC the ceiling is already next year; the default stays on this one.
+    expect(bounds({}, new Date("2026-12-31T12:00:00.000Z"))).toEqual(
+      Result.succeed({ since: "2026-01-01", until: "2027-01-01" }),
+    );
+  });
+
+  it("passes explicit bounds within the ceiling through unchanged", () => {
+    expect(bounds({ since: "2026-06-20", until: "2026-06-22" })).toEqual(
+      Result.succeed({ since: "2026-06-20", until: "2026-06-22" }),
+    );
+  });
+
+  it("defaults `since` to the start of an explicit past `until`'s year", () => {
+    expect(bounds({ until: "2025-03-01" })).toEqual(
+      Result.succeed({ since: "2025-01-01", until: "2025-03-01" }),
+    );
+  });
+
+  it("clamps an absurd range to the ceiling and the ingest floor", () => {
+    expect(bounds({ since: "0001-01-01", until: "9999-12-31" })).toEqual(
+      Result.succeed({ since: MIN_USAGE_DATE_KEY, until: "2026-06-22" }),
+    );
+    // A range wholly before the floor collapses onto its `until`, still ordered.
+    expect(bounds({ until: "2020-06-01" })).toEqual(
+      Result.succeed({ since: "2020-06-01", until: "2020-06-01" }),
+    );
+  });
+
+  it("caps the span once the floor is further back than the maximum", () => {
+    const later = new Date("2031-06-21T12:00:00.000Z");
+
+    expect(bounds({ since: "2024-01-01" }, later)).toEqual(
+      Result.succeed({
+        since: shiftDayKey("2031-06-22", -(MAX_DAILY_RANGE_DAYS - 1)),
+        until: "2031-06-22",
+      }),
+    );
+  });
+
+  it("rejects an inverted range, including one that starts past the ceiling", () => {
+    expect(bounds({ since: "2026-06-10", until: "2026-06-01" })).toEqual(
+      Result.fail(
+        new BadRequest({
+          message: "Invalid date range: `since` (2026-06-10) is after `until` (2026-06-01).",
+        }),
+      ),
+    );
+    expect(bounds({ since: "9999-01-01" })).toEqual(
+      Result.fail(
+        new BadRequest({
+          message: "Invalid date range: `since` (9999-01-01) is after `until` (2026-06-22).",
+        }),
+      ),
+    );
+  });
+});
 
 describe("profileDailyRange", () => {
   const now = new Date("2026-06-21T23:30:00.000Z");
+  const bounds = { since: "2026-01-01", until: "2026-06-22" };
 
-  it("defaults profile charts to the current UTC year to date", () => {
-    expect(profileDailyRange({}, now)).toEqual({
+  it("ends on UTC today when no row is ahead of it", () => {
+    expect(profileDailyRange({}, bounds, [{ date: "2026-06-20" }], now)).toEqual({
       firstDate: "2026-01-01",
       lastDate: "2026-06-21",
     });
-    expect(profileDailyRange({}, new Date("2027-01-03T12:00:00.000Z"))).toEqual({
-      firstDate: "2027-01-01",
-      lastDate: "2027-01-03",
+  });
+
+  it("extends to a row dated on a local day already ahead of UTC", () => {
+    expect(
+      profileDailyRange({}, bounds, [{ date: "2026-06-21" }, { date: "2026-06-22" }], now),
+    ).toEqual({ firstDate: "2026-01-01", lastDate: "2026-06-22" });
+  });
+
+  it("never ends before it starts", () => {
+    expect(profileDailyRange({}, { since: "2026-06-22", until: "2026-06-22" }, [], now)).toEqual({
+      firstDate: "2026-06-22",
+      lastDate: "2026-06-22",
     });
   });
 
-  it("uses explicit query bounds as the response chart range", () => {
+  it("echoes an explicit `until` (already capped)", () => {
     expect(
       profileDailyRange(
-        {
-          since: "2026-06-20",
-          until: "2026-06-22",
-        },
+        { until: "2026-06-22" },
+        { since: "2026-06-20", until: "2026-06-22" },
+        [],
         now,
       ),
-    ).toEqual({
-      firstDate: "2026-06-20",
-      lastDate: "2026-06-22",
-    });
+    ).toEqual({ firstDate: "2026-06-20", lastDate: "2026-06-22" });
   });
 });
 
@@ -200,18 +276,41 @@ describe("ProfilesService shadow-ban visibility", () => {
 });
 
 describe("ProfilesService.getDaily", () => {
-  it("queries from the same default lower bound it reports as range.firstDate", async () => {
+  it("queries exactly the range it reports, from year start to the ceiling", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-21T23:30:00Z"));
     const queries: Array<{ since?: string | undefined; until?: string | undefined }> = [];
-    const service = await makeProfileService(false, undefined, (query) => queries.push(query));
 
-    const response = await Effect.runPromise(
-      service.getDaily("target", { groupBy: "model" }, null),
-    );
+    try {
+      const service = await makeProfileService(false, undefined, (query) => queries.push(query));
+      const response = await Effect.runPromise(
+        service.getDaily("target", { groupBy: "model" }, null),
+      );
 
-    const yearStart = yearStartDayKey(new Date());
-    expect(response.range.firstDate).toBe(yearStart);
-    // `until` is the ingest ceiling (UTC today + 1), applied by #83's cap.
-    expect(queries).toEqual([{ groupBy: "model", since: yearStart, until: expect.any(String) }]);
+      // The stub's only row is 2026-06-21 (UTC today), so the range ends there.
+      expect(response.range).toEqual({ firstDate: "2026-01-01", lastDate: "2026-06-21" });
+      expect(queries).toEqual([{ groupBy: "model", since: "2026-01-01", until: "2026-06-22" }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("covers a user whose local today is already ahead of UTC", async () => {
+    vi.useFakeTimers();
+    // 2026-06-20 UTC, but the stub's row is dated 2026-06-21 (e.g. UTC+12).
+    vi.setSystemTime(new Date("2026-06-20T18:00:00Z"));
+
+    try {
+      const service = await makeProfileService(false);
+      const response = await Effect.runPromise(
+        service.getDaily("target", { groupBy: "model" }, null),
+      );
+
+      expect(response.days.map((day) => day.date)).toEqual(["2026-06-21"]);
+      expect(response.range.lastDate).toBe("2026-06-21");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("passes explicit bounds through unchanged", async () => {
@@ -228,5 +327,21 @@ describe("ProfilesService.getDaily", () => {
 
     expect(response.range).toEqual({ firstDate: "2026-06-20", lastDate: "2026-06-22" });
     expect(queries).toEqual([{ groupBy: "model", since: "2026-06-20", until: "2026-06-22" }]);
+  });
+
+  it("fails an inverted range without querying", async () => {
+    const onDaily = vi.fn();
+    const service = await makeProfileService(false, undefined, onDaily);
+
+    await expect(
+      Effect.runPromise(
+        service.getDaily(
+          "target",
+          { groupBy: "model", since: "2026-06-22", until: "2026-06-20" },
+          null,
+        ),
+      ),
+    ).rejects.toBeInstanceOf(BadRequest);
+    expect(onDaily).not.toHaveBeenCalled();
   });
 });

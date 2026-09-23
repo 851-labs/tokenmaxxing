@@ -27,17 +27,21 @@ interface RouterContext {
 
 const DEFAULT_OG_IMAGE_URL = SITE_OG_IMAGE_URL;
 
+const NOT_FOUND_TITLE = `Page not found — ${SITE_NAME}`;
+
 /**
  * Site-wide defaults. Pages override these by name/property via `pageHead`;
  * og:url and the canonical link are deliberately absent here because only a
- * page knows its own URL.
+ * page knows its own URL. A not-found render gets its own title and stays out
+ * of search results: the root is its boundary, so no page head runs after it.
  */
-function rootHead() {
+function rootHead({ notFound = false }: { notFound?: boolean } = {}) {
   return {
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: SITE_NAME },
+      { title: notFound ? NOT_FOUND_TITLE : SITE_NAME },
+      ...(notFound ? [{ name: "robots", content: "noindex" }] : []),
       { name: "description", content: SITE_DESCRIPTION },
       { property: "og:site_name", content: SITE_NAME },
       { property: "og:title", content: SITE_NAME },
@@ -67,7 +71,10 @@ function rootHead() {
 }
 
 const Route = createRootRouteWithContext<RouterContext>()({
-  head: rootHead,
+  head: ({ matches }) =>
+    rootHead({
+      notFound: matches.some((match) => match._notFound === true || match.status === "notFound"),
+    }),
   component: RootDocument,
   notFoundComponent: NotFoundPage,
 });
@@ -110,6 +117,6 @@ function FaviconLink() {
   return <link rel="icon" href={href} type={FAVICON_MIME_TYPE} />;
 }
 
-export { DEFAULT_OG_IMAGE_URL, FaviconLink, rootHead, Route };
+export { DEFAULT_OG_IMAGE_URL, FaviconLink, NOT_FOUND_TITLE, rootHead, Route };
 
 export type { RouterContext };

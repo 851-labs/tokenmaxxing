@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LeaderboardResponse } from "@tokenmaxxing/api-contract";
+import { LeaderboardResponse, utcDayKey } from "@tokenmaxxing/api-contract";
 
 import { textResponse } from "../lib/http";
 import { fetchPublicJson } from "../lib/public-api";
@@ -9,6 +9,7 @@ type Leaderboard = typeof LeaderboardResponse.Type;
 
 interface SitemapRouteDeps {
   loadLeaderboard(): Promise<Leaderboard | null>;
+  now(): Date;
 }
 
 const SITEMAP_CACHE_CONTROL = "public, max-age=3600, stale-while-revalidate=86400";
@@ -18,6 +19,7 @@ const PARTIAL_SITEMAP_CACHE_CONTROL = "public, max-age=300";
 const defaultDeps: SitemapRouteDeps = {
   loadLeaderboard: () =>
     fetchPublicJson("/leaderboard?metric=spend&window=all", LeaderboardResponse),
+  now: () => new Date(),
 };
 
 function makeSitemapHandler(deps: SitemapRouteDeps = defaultDeps) {
@@ -25,10 +27,13 @@ function makeSitemapHandler(deps: SitemapRouteDeps = defaultDeps) {
     const pages: SitemapEntry[] = STATIC_SITEMAP_PATHS.map((path) => ({ path }));
     let profiles: SitemapEntry[] = [];
     let complete = true;
+    // `lastDate` is the user's local day, which can run a day ahead of UTC;
+    // a sitemap <lastmod> must not be in the future.
+    const today = utcDayKey(deps.now());
     try {
       const leaderboard = await deps.loadLeaderboard();
       profiles = (leaderboard?.entries ?? []).map((entry) => ({
-        lastModified: entry.lastDate,
+        lastModified: entry.lastDate !== null && entry.lastDate > today ? today : entry.lastDate,
         path: `/${encodeURIComponent(entry.user.login)}`,
       }));
     } catch (error) {

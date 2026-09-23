@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { LinkSimple } from "@phosphor-icons/react/ssr";
-import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, notFound } from "@tanstack/react-router";
+import { useSuspenseQuery, type QueryClient } from "@tanstack/react-query";
+import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import type { ProfileResponse } from "@tokenmaxxing/api-contract";
 
 import { Heatmap } from "../../components/charts/heatmap";
@@ -14,7 +14,7 @@ import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { Code } from "../../components/ui/code";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
-import { isApiError } from "../../lib/api";
+import { isNotFoundApiError } from "../../lib/api";
 import { formatInteger, formatTokens, formatUsd } from "../../lib/format";
 import { breadcrumbSchema, profilePageSchema } from "../../lib/jsonld";
 import {
@@ -26,31 +26,13 @@ import {
   profileUrl,
 } from "../../lib/og";
 import { deriveProfileCharts, type DailyRange, type DailyRow } from "./-lib/profile-charts";
-import { profileDailyQueryOptions, profileQueryOptions } from "../../lib/queries";
+import { profileDailyQueryOptions, profileQueryOptions, queryKeys } from "../../lib/queries";
 import { pageHead } from "../../lib/seo";
 
 type ProfileStats = (typeof ProfileResponse.Type)["stats"];
 
 const Route = createFileRoute("/$user")({
-  loader: async ({ context, params }) => {
-    try {
-      const [profile] = await Promise.all([
-        context.queryClient.ensureQueryData(profileQueryOptions(params.user)),
-        context.queryClient.ensureQueryData(profileDailyQueryOptions(params.user)),
-      ]);
-
-      // Only the (small) profile summary rides in loader data, for head tags
-      // and the favicon. The daily rows reach the client once, via the
-      // dehydrated query cache.
-      return { profile };
-    } catch (error) {
-      if (isApiError(error, "UserNotFound")) {
-        throw notFound();
-      }
-
-      throw error;
-    }
-  },
+  loader: ({ context, params }) => loadProfile(context.queryClient, params.user),
   head: ({ loaderData }) => {
     if (loaderData === undefined) {
       return {};
@@ -88,6 +70,40 @@ const Route = createFileRoute("/$user")({
   },
   component: ProfilePage,
 });
+
+/**
+ * Loads the profile summary and its daily rows in parallel, letting both
+ * settle before answering: a daily read still pending when the summary 404s
+ * would be dehydrated to the client and reject there, uncaught. Only the
+ * (small) summary rides in loader data, for head tags and the favicon; the
+ * daily rows reach the client once, via the dehydrated query cache.
+ */
+async function loadProfile(queryClient: QueryClient, login: string) {
+  const [profile, daily] = await Promise.allSettled([
+    queryClient.ensureQueryData(profileQueryOptions(login)),
+    queryClient.ensureQueryData(profileDailyQueryOptions(login)),
+  ]);
+  if (profile.status === "rejected") {
+    // The daily read fails alongside it and nothing on the error page reads it.
+    queryClient.removeQueries({ exact: true, queryKey: queryKeys.profileDaily(login) });
+    if (isNotFoundApiError(profile.reason)) {
+      throw notFound();
+    }
+
+    throw profile.reason;
+  }
+  if (daily.status === "rejected") {
+    throw daily.reason;
+  }
+
+  // Lookups are case-insensitive; every profile keeps one canonical URL.
+  const canonicalLogin = profile.value.user.login;
+  if (canonicalLogin !== login) {
+    throw redirect({ params: { user: canonicalLogin }, statusCode: 301, to: "/$user" });
+  }
+
+  return { profile: profile.value };
+}
 
 function ProfilePage() {
   const { user } = Route.useParams();
@@ -211,4 +227,4 @@ function ProfileDashboard({
   );
 }
 
-export { Route };
+export { loadProfile, Route };

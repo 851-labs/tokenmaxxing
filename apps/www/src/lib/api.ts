@@ -96,6 +96,15 @@ function errorMessage(error: unknown, fallback: string): string {
   return message === undefined || message.length === 0 ? fallback : message;
 }
 
+/**
+ * A profile that does not exist, as the API reports it: `UserNotFound`, or
+ * `RouteNotFound` when the router rejects the path before any handler runs
+ * (a `:login` past its 100-character param limit).
+ */
+function isNotFoundApiError(error: unknown): boolean {
+  return isApiError(error, "UserNotFound") || isApiError(error, "RouteNotFound");
+}
+
 /** Transport failures and 5xx are worth retrying; contract 4xx failures are not. */
 function isRetryableApiError(error: unknown): boolean {
   return (
@@ -119,4 +128,12 @@ async function signOut(): Promise<void> {
   }
 }
 
-export { errorMessage, isApiError, isRetryableApiError, runApi, SignOutFailed, signOut };
+export {
+  errorMessage,
+  isApiError,
+  isNotFoundApiError,
+  isRetryableApiError,
+  runApi,
+  SignOutFailed,
+  signOut,
+};

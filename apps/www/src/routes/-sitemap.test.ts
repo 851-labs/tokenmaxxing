@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { makeSitemapHandler } from "./sitemap[.]xml";
 import { buildRobotsTxt } from "./robots[.]txt";
@@ -32,6 +32,7 @@ describe("sitemap", () => {
         metric: "spend",
         window: "all",
       }),
+      now: () => new Date("2026-06-22T12:00:00.000Z"),
     })();
     const xml = await response.text();
 
@@ -42,15 +43,55 @@ describe("sitemap", () => {
     expect(xml).not.toContain("/settings");
   });
 
+  it("never dates a profile after UTC today", async () => {
+    const entry = (login: string, lastDate: string | null) => ({
+      activeDays: 1,
+      lastDate,
+      rank: 1,
+      spendUsd: 1,
+      totalTokens: 1,
+      user: { avatarUrl: null, login, name: null },
+    });
+    const response = await makeSitemapHandler({
+      loadLeaderboard: async () => ({
+        entries: [
+          // A user east of UTC is already on the 23rd.
+          entry("ahead", "2026-06-23"),
+          entry("today", "2026-06-22"),
+          entry("earlier", "2026-06-01"),
+          entry("idle", null),
+        ],
+        metric: "spend",
+        window: "all",
+      }),
+      now: () => new Date("2026-06-22T12:00:00.000Z"),
+    })();
+    const xml = await response.text();
+
+    expect(xml).toContain("<loc>https://tokenmaxxing.sh/ahead</loc><lastmod>2026-06-22</lastmod>");
+    expect(xml).toContain("<loc>https://tokenmaxxing.sh/today</loc><lastmod>2026-06-22</lastmod>");
+    expect(xml).toContain(
+      "<loc>https://tokenmaxxing.sh/earlier</loc><lastmod>2026-06-01</lastmod>",
+    );
+    expect(xml).toContain("<url><loc>https://tokenmaxxing.sh/idle</loc></url>");
+    expect(xml).not.toContain("2026-06-23");
+  });
+
   it("still lists the static pages when the leaderboard is unavailable", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warn.mockRestore());
     const response = await makeSitemapHandler({
       loadLeaderboard: async () => {
         throw new Error("API down");
       },
+      now: () => new Date("2026-06-22T12:00:00.000Z"),
     })();
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("public, max-age=300");
     expect(await response.text()).toContain("<loc>https://tokenmaxxing.sh/privacy</loc>");
+    expect(warn).toHaveBeenCalledExactlyOnceWith("Sitemap leaderboard load failed", {
+      error: expect.any(Error),
+    });
   });
 });

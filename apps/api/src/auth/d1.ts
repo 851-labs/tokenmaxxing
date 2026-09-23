@@ -120,12 +120,12 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
     listLoginsLike: (base) =>
       Effect.gen(function* () {
         // LIKE is case-insensitive and `_` is a wildcard, so this can
-        // over-match; callers compare exact strings.
+        // over-match; callers compare lowercased exact strings.
         const rows = yield* database.use((db) =>
           db
             .select({ login: users.login })
             .from(users)
-            .where(or(eq(users.login, base), like(users.login, `${base}-%`))),
+            .where(or(like(users.login, base), like(users.login, `${base}-%`))),
         );
 
         return rows.map((row) => row.login);
