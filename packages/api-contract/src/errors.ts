@@ -8,8 +8,14 @@ import { DeviceId, TokenId, UserId } from "./schemas";
  * Schema.TaggedError whose `httpApiStatus` annotation drives the
  * response status; the body is the encoded tagged struct ({ _tag, ...fields }).
  * Services fail with these directly — handlers declare them per endpoint and
- * pass them through untouched. Store/decode/infrastructure failures are NOT
- * here: those are defects (500) the services convert at their boundary.
+ * pass them through untouched. Store/decode/infrastructure failures are
+ * defects the services convert at their boundary; the server renders them as
+ * InternalServerError (or ServiceUnavailable while resolving credentials).
+ *
+ * The request-level errors (BadRequest, UnsupportedMediaType, RouteNotFound,
+ * MethodNotAllowed, InternalServerError, ServiceUnavailable) are produced by
+ * the server's HTTP stack rather than by services, so every non-2xx response
+ * shares the same `{ _tag, message }` envelope.
  *
  * Every error carries a human-readable `message`, defaulted per class so call
  * sites only override it when they know more. Adding it was safe for released
@@ -96,17 +102,71 @@ class TokenDeviceUnbound extends Schema.TaggedError<TokenDeviceUnbound>()(
   { httpApiStatus: 400 },
 ) {}
 
+/** A path parameter, header, query parameter or body failed to decode. The
+ * message names the failing field, never the decoder's internals. */
+class BadRequest extends Schema.TaggedError<BadRequest>()(
+  "BadRequest",
+  { message: message("Invalid request.") },
+  { httpApiStatus: 400 },
+) {}
+
+class UnsupportedMediaType extends Schema.TaggedError<UnsupportedMediaType>()(
+  "UnsupportedMediaType",
+  { message: message("Send the request body as application/json.") },
+  { httpApiStatus: 415 },
+) {}
+
+/** No route matches the request path under any method. */
+class RouteNotFound extends Schema.TaggedError<RouteNotFound>()(
+  "RouteNotFound",
+  { message: message("No such endpoint.") },
+  { httpApiStatus: 404 },
+) {}
+
+/** The path exists, but not for this method; the `allow` header lists the
+ * methods that do. */
+class MethodNotAllowed extends Schema.TaggedError<MethodNotAllowed>()(
+  "MethodNotAllowed",
+  { message: message("Method not allowed for this endpoint.") },
+  { httpApiStatus: 405 },
+) {}
+
+/** An unexpected server fault. Details are logged under the response's
+ * x-request-id, never sent. */
+class InternalServerError extends Schema.TaggedError<InternalServerError>()(
+  "InternalServerError",
+  { message: message("Something went wrong on our side; try again later.") },
+  { httpApiStatus: 500 },
+) {}
+
+/**
+ * A dependency (the database) failed while resolving credentials. Distinct
+ * from Unauthorized on purpose: clients must keep their token and retry,
+ * not treat an outage as a revoked login.
+ */
+class ServiceUnavailable extends Schema.TaggedError<ServiceUnavailable>()(
+  "ServiceUnavailable",
+  { message: message("Temporarily unavailable; try again shortly.") },
+  { httpApiStatus: 503 },
+) {}
+
 /** Every wire error class — the single source for the `ApiError` union. */
 const ApiErrors = [
   AdminUserNotFound,
+  BadRequest,
   CliUpgradeRequired,
   DeviceNotFound,
   Forbidden,
+  InternalServerError,
   LoginCodeExpired,
   LoginCodeNotFound,
+  MethodNotAllowed,
+  RouteNotFound,
+  ServiceUnavailable,
   TokenDeviceUnbound,
   TokenNotFound,
   Unauthorized,
+  UnsupportedMediaType,
   UserNotFound,
 ] as const;
 
@@ -117,14 +177,20 @@ type ApiErrorTag = ApiError["_tag"];
 export {
   AdminUserNotFound,
   ApiErrors,
+  BadRequest,
   CliUpgradeRequired,
   DeviceNotFound,
   Forbidden,
+  InternalServerError,
   LoginCodeExpired,
   LoginCodeNotFound,
+  MethodNotAllowed,
+  RouteNotFound,
+  ServiceUnavailable,
   TokenDeviceUnbound,
   TokenNotFound,
   Unauthorized,
+  UnsupportedMediaType,
   UserNotFound,
 };
 

@@ -1,8 +1,8 @@
 import * as Http from "alchemy/Http";
-import { Context, Effect, Layer, Scope } from "effect";
+import { Cause, Context, Effect, Layer, Scope } from "effect";
 import * as FileSystem from "effect/FileSystem";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { UserNotFound } from "@tokenmaxxing/api-contract";
 
@@ -107,6 +107,31 @@ describe("api cache headers", () => {
   });
 });
 
+describe("api error responses through the worker bridge", () => {
+  it("lets browsers read error envelopes (CORS applies to them too)", async () => {
+    // CORS headers ride on a pre-response handler, which only the web
+    // handler applies, so this goes through `serve`, not makeTestApp.
+    const fetch = await buildFetch(makeHarness().services);
+
+    for (const [path, status] of [
+      ["/leaderboard?metric=bogus", 400],
+      ["/profiles/missing/identity", 404],
+      ["/nope", 404],
+      ["/me", 401],
+    ] as const) {
+      const response = await serve(
+        fetch,
+        apiRequest(path, { origin: "https://tokenmaxxing.sh", "x-request-id": "req-err" }),
+      );
+
+      expect({ path, status: response.status }).toEqual({ path, status });
+      expect(response.headers.get("access-control-allow-origin")).toBe("https://tokenmaxxing.sh");
+      expect(response.headers.get("x-request-id")).toBe("req-err");
+      expect(await response.json()).toMatchObject({ _tag: expect.any(String) });
+    }
+  });
+});
+
 describe("API HTTP responses", () => {
   let app: TestApp | undefined;
 
@@ -164,30 +189,172 @@ describe("API HTTP responses", () => {
     });
   });
 
-  describe("defect recovery", () => {
+  describe("error envelope", () => {
+    /** Every non-2xx answer: a JSON `{ _tag, message }` body with a request id. */
+    async function expectEnvelope(response: Response, status: number, tag: string) {
+      expect(response.status).toBe(status);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(response.headers.get("x-request-id")).toEqual(expect.any(String));
+      const body = (await response.json()) as { _tag: string; message: string };
+      expect(body).toEqual({ _tag: tag, message: expect.any(String) });
+      return body;
+    }
+
+    function post(path: string, body: string | null, contentType = "application/json") {
+      return new Request(`https://api.tokenmaxxing.sh${path}`, {
+        body,
+        headers: body === null ? {} : { "content-type": contentType },
+        method: "POST",
+      });
+    }
+
     it("answers an unexpected defect with an opaque 500 and logs it", async () => {
       const defect = new Error("D1 exploded: secret-table");
       app = await makeTestApp({ stats: { getStats: () => Effect.die(defect) } });
 
       const response = await app.fetch(new Request("https://api.tokenmaxxing.sh/stats"));
 
-      expect(response.status).toBe(500);
-      expect(await response.text()).toBe("");
+      const body = await expectEnvelope(response, 500, "InternalServerError");
+      expect(JSON.stringify(body)).not.toContain("secret-table");
       expect(app.logs.entries).toEqual([
-        expect.objectContaining({ args: [defect], level: "Error", message: "request died" }),
+        expect.objectContaining({ level: "Error", message: "request died" }),
+      ]);
+      expect(Cause.squash(app.logs.entries[0]!.cause)).toBe(defect);
+    });
+
+    it("answers a response the contract cannot encode with a 500, not a 400", async () => {
+      app = await makeTestApp({
+        stats: { getStats: () => Effect.succeed({ bogus: true } as never) },
+      });
+
+      const response = await app.fetch(new Request("https://api.tokenmaxxing.sh/stats"));
+
+      await expectEnvelope(response, 500, "InternalServerError");
+      expect(app.logs.entries).toEqual([
+        expect.objectContaining({ level: "Error", message: "request died" }),
       ]);
     });
 
-    it("keeps schema decode failures as 400s", async () => {
+    it("answers a fault in a raw route with the same 500", async () => {
+      // makeTestApp's OAuth registry is an unstubbed Proxy: the route dies.
       app = await makeTestApp();
 
       const response = await app.fetch(
-        new Request("https://api.tokenmaxxing.sh/leaderboard?metric=bogus"),
+        new Request("https://api.tokenmaxxing.sh/auth/github/start"),
       );
 
-      expect(response.status).toBe(400);
+      await expectEnvelope(response, 500, "InternalServerError");
+      expect(app.logs.entries).toEqual([
+        expect.objectContaining({ level: "Error", message: "request died" }),
+      ]);
+    });
+
+    it.each([
+      ["/leaderboard?metric=bogus", "Invalid query parameter `metric`."],
+      ["/leaderboard?window=forever", "Invalid query parameter `window`."],
+      ["/profiles/alex/daily?since=2026-02-30", "Invalid query parameter `since`."],
+      ["/profiles/alex/daily?until=tomorrow", "Invalid query parameter `until`."],
+    ])("answers GET %s with a 400 naming the field", async (path, message) => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(new Request(`https://api.tokenmaxxing.sh${path}`));
+
+      expect(await expectEnvelope(response, 400, "BadRequest")).toEqual({
+        _tag: "BadRequest",
+        message,
+      });
       expect(app.logs.entries).toEqual([]);
     });
+
+    it.each([
+      ["malformed JSON", "{", "Invalid request body."],
+      ["an empty body", "", "Invalid request body."],
+      ["null", "null", "Invalid request body."],
+      ["an array", "[]", "Invalid request body."],
+      ["a wrongly typed field", '{"deviceName":1,"flow":"device_code"}', expect.any(String)],
+    ])("answers a CLI login start with %s with a 400", async (_name, body, message) => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(post("/cli/login/start", body));
+
+      expect(await expectEnvelope(response, 400, "BadRequest")).toEqual({
+        _tag: "BadRequest",
+        message,
+      });
+      expect(app.logs.entries).toEqual([]);
+    });
+
+    it("answers undeclared properties (the strict CLI re-decode) with a 400", async () => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(
+        post("/cli/login/poll", JSON.stringify({ deviceCode: "code", extra: true })),
+      );
+
+      const body = await expectEnvelope(response, 400, "BadRequest");
+      expect(body.message).toMatch(/^Invalid request body/);
+      expect(app.logs.entries).toEqual([]);
+    });
+
+    it("answers a non-JSON content-type with a 415", async () => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(post("/cli/login/poll", "deviceCode=code", "text/plain"));
+
+      await expectEnvelope(response, 415, "UnsupportedMediaType");
+    });
+
+    it("answers an unknown path with a 404", async () => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(new Request("https://api.tokenmaxxing.sh/nope"));
+
+      await expectEnvelope(response, 404, "RouteNotFound");
+      expect(response.headers.get("allow")).toBeNull();
+    });
+
+    it.each([
+      ["GET", "/cli/login/poll", "POST"],
+      ["DELETE", "/health", "GET, HEAD"],
+      ["POST", "/profiles/alex", "GET, HEAD"],
+      ["GET", "/auth/signout", "POST"],
+      ["POST", "/auth/github/start", "GET, HEAD"],
+      ["PUT", "/openapi.json", "GET, HEAD"],
+    ])("answers %s %s with a 405 listing the allowed methods", async (method, path, allow) => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(
+        new Request(`https://api.tokenmaxxing.sh${path}`, { method }),
+      );
+
+      await expectEnvelope(response, 405, "MethodNotAllowed");
+      expect(response.headers.get("allow")).toBe(allow);
+    });
+  });
+
+  it("serves the anonymous profile view when the viewer lookup fails", async () => {
+    const getIdentity = vi.fn((login: string, _viewerId: string | null) =>
+      Effect.succeed({ avatarUrl: null, login }),
+    );
+    app = await makeTestApp({
+      auth: { resolveSession: () => Effect.die(new Error("D1 down")) },
+      profiles: { getIdentity },
+    });
+
+    const response = await app.fetch(
+      new Request("https://api.tokenmaxxing.sh/profiles/alex/identity", {
+        headers: { cookie: `${SESSION_COOKIE}=session-token` },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(getIdentity).toHaveBeenCalledWith("alex", null);
+    expect(app.logs.entries).toEqual([
+      expect.objectContaining({
+        level: "Warn",
+        message: "viewer lookup failed; serving the anonymous view",
+      }),
+    ]);
   });
 
   it("echoes the caller's x-request-id", async () => {

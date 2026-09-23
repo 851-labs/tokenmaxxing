@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Contract from "@tokenmaxxing/api-contract";
 import {
+  BadRequest,
   DeviceId,
   DeviceNotFound,
   Forbidden,
+  InternalServerError,
   LoginCodeExpired,
+  ServiceUnavailable,
   Unauthorized,
   UserNotFound,
 } from "@tokenmaxxing/api-contract";
@@ -18,7 +21,7 @@ describe("API error classification", () => {
     expect(isRetryableApiError(new UserNotFound({ login: "ghost" }))).toBe(false);
   });
 
-  it("covers every error class the contract exports", () => {
+  it("covers every error class the contract exports: only 5xx are retried", () => {
     const errorClasses = Object.entries(Contract).filter(
       ([, value]) => typeof value === "function" && value.prototype instanceof Error,
     );
@@ -28,9 +31,15 @@ describe("API error classification", () => {
       const instance = Object.create((ErrorClass as { prototype: object }).prototype) as unknown;
       expect({ name, retryable: isRetryableApiError(instance) }).toEqual({
         name,
-        retryable: false,
+        retryable: name === "InternalServerError" || name === "ServiceUnavailable",
       });
     }
+  });
+
+  it("retries server-side contract failures", () => {
+    expect(isRetryableApiError(new ServiceUnavailable())).toBe(true);
+    expect(isRetryableApiError(new InternalServerError())).toBe(true);
+    expect(isRetryableApiError(new BadRequest())).toBe(false);
   });
 
   it("retries transport and unexpected failures", () => {

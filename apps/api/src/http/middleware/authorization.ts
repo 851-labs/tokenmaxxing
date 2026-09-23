@@ -11,7 +11,7 @@ import {
 import { sessionTokenFrom } from "../../auth/cookies";
 import type { AuthService } from "../../auth/service";
 import type { TokensService } from "../../tokens/service";
-import { resolveViewer } from "../viewer";
+import { credentialLookupUnavailable, resolveViewer } from "../viewer";
 
 /**
  * Request authentication for the session-guarded contract groups: the
@@ -37,7 +37,12 @@ const AuthorizationLive = Layer.effect(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const user = yield* resolveViewer(sessionTokenFrom(request), {
           allowCliToken: Context.get(endpoint.annotations, AllowCliToken),
-        }).pipe(Effect.provideContext(services));
+        }).pipe(
+          Effect.provideContext(services),
+          Effect.catchTag("CredentialLookupFailed", ({ defect }) =>
+            credentialLookupUnavailable(defect),
+          ),
+        );
         if (Option.isNone(user)) {
           return yield* Effect.fail(new Unauthorized({ message: "Sign in required." }));
         }

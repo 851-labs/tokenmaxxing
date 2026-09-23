@@ -4,7 +4,12 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import { createIsomorphicFn } from "@tanstack/react-start";
-import { ApiErrors, TokenmaxxingApi } from "@tokenmaxxing/api-contract";
+import {
+  ApiErrors,
+  InternalServerError,
+  ServiceUnavailable,
+  TokenmaxxingApi,
+} from "@tokenmaxxing/api-contract";
 import type { ApiError, ApiErrorTag } from "@tokenmaxxing/api-contract";
 
 import { resolveApiUrl } from "./config";
@@ -93,7 +98,11 @@ function errorMessage(error: unknown, fallback: string): string {
 
 /** Transport failures and 5xx are worth retrying; contract 4xx failures are not. */
 function isRetryableApiError(error: unknown): boolean {
-  return apiError(error) === null;
+  return (
+    apiError(error) === null ||
+    error instanceof InternalServerError ||
+    error instanceof ServiceUnavailable
+  );
 }
 
 /** Raw routes (OAuth signout) sit outside the derived client. */

@@ -1,15 +1,16 @@
-import { Effect, Layer, Option, Schema, Scope } from "effect";
+import { Cause, Effect, Layer, Option, Schema, Scope, type Types } from "effect";
 import * as Path from "effect/Path";
 import {
   HttpEffect,
   HttpMiddleware,
   HttpRouter,
   HttpServerRequest,
+  HttpServerError,
   HttpServerResponse,
-  HttpServerRespondable,
 } from "effect/unstable/http";
 import * as Etag from "effect/unstable/http/Etag";
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import type * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
@@ -19,6 +20,9 @@ import {
   CurrentUser,
   DEFAULT_LEADERBOARD_METRIC,
   DEFAULT_LEADERBOARD_WINDOW,
+  InternalServerError,
+  MethodNotAllowed,
+  RouteNotFound,
   TokenmaxxingApi,
 } from "@tokenmaxxing/api-contract";
 
@@ -35,7 +39,8 @@ import { TokensService } from "../tokens/service";
 import { UsageService } from "../usage/service";
 import { AuthorizationLive } from "./middleware/authorization";
 import { CliAuthLive } from "./middleware/cli-auth";
-import { OAuthRoutesLive } from "./routes/oauth";
+import { badRequest, ErrorBoundaryLive } from "./middleware/error-boundary";
+import { OAUTH_ROUTES, OAuthRoutesLive } from "./routes/oauth";
 import { resolveViewer } from "./viewer";
 
 /** Handler layers, one per contract group — pure pass-throughs over the
@@ -75,10 +80,12 @@ function rejectUndeclaredProperties(endpoint: { readonly payload: HttpApiEndpoin
     }
 
     const request = yield* HttpServerRequest.HttpServerRequest;
+    // The builder already decoded this body leniently, so it is valid JSON.
     const body = yield* request.json.pipe(Effect.orDie);
     yield* decode(body).pipe(
-      Effect.mapError((cause) => new HttpApiError.HttpApiSchemaError({ cause, kind: "Payload" })),
-      Effect.orDie,
+      Effect.mapError((cause) =>
+        badRequest(new HttpApiError.HttpApiSchemaError({ cause, kind: "Payload" })),
+      ),
     );
   });
 }
@@ -241,7 +248,14 @@ const leaderboardHandlers = HttpApiBuilder.group(TokenmaxxingApi, "leaderboard",
  * shadow-banned profile. */
 const viewerUserId = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const viewer = yield* resolveViewer(sessionTokenFrom(request), { allowCliToken: false });
+  const viewer = yield* resolveViewer(sessionTokenFrom(request), { allowCliToken: false }).pipe(
+    // Public reads degrade to the anonymous view rather than failing.
+    Effect.catchTag("CredentialLookupFailed", ({ defect }) =>
+      Effect.logWarning("viewer lookup failed; serving the anonymous view", defect).pipe(
+        Effect.as(Option.none()),
+      ),
+    ),
+  );
   return Option.getOrNull(Option.map(viewer, (user) => user.id));
 });
 
@@ -360,19 +374,16 @@ const HandlersLive = Layer.mergeAll(
 );
 
 /**
- * Schema decode failures respond with their own 400; every other defect
- * (store/decode faults died at the service boundary, bugs) is logged and
- * answered with an opaque 500 — internals never reach the wire.
+ * Last-resort guard outside the router (a fault in the global middleware
+ * itself): logged, answered with the same opaque 500 envelope.
  */
 function recoverDefects<E, R>(
   httpEffect: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
 ) {
   return Effect.catchDefect(httpEffect, (defect) =>
-    HttpApiError.HttpApiSchemaError.is(defect)
-      ? HttpServerRespondable.toResponse(defect)
-      : Effect.logError("request died", defect).pipe(
-          Effect.as(HttpServerResponse.empty({ status: 500 })),
-        ),
+    Effect.logError("request died", defect).pipe(
+      Effect.as(errorResponse(new InternalServerError())),
+    ),
   );
 }
 
@@ -402,17 +413,108 @@ const corsLayer = Layer.unwrap(
   }),
 );
 
-/** Mints/propagates x-request-id; logs carry it via annotations. */
+const OPENAPI_PATH = "/openapi.json";
+
+/**
+ * Mints/propagates x-request-id (logs carry it via annotations) and renders
+ * whatever the routes left unanswered in the contract's error envelope: an
+ * unknown path is 404 RouteNotFound, a known path with the wrong method 405
+ * MethodNotAllowed, and a fault in a raw route 500 InternalServerError.
+ * Contract endpoints answer their own errors (see ErrorBoundaryLive). CORS
+ * headers ride on a pre-response handler, so browsers can read these too.
+ *
+ * The cast: HttpRouter.middleware's types reject global middleware that
+ * handles errors; answering them here is the point.
+ */
 const requestIdLayer = HttpRouter.middleware(
   (httpApp) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const requestId = request.headers["x-request-id"] ?? crypto.randomUUID();
-      const response = yield* httpApp.pipe(Effect.annotateLogs("requestId", requestId));
+      const response = yield* httpApp.pipe(
+        Effect.catchCause((cause) => unansweredResponse(request, cause)),
+        Effect.annotateLogs("requestId", requestId),
+      );
       return HttpServerResponse.setHeader(response, "x-request-id", requestId);
-    }),
+    }) as Effect.Effect<HttpServerResponse.HttpServerResponse, Types.unhandled>,
   { global: true },
 );
+
+function unansweredResponse(
+  request: HttpServerRequest.HttpServerRequest,
+  cause: Cause.Cause<unknown>,
+) {
+  const error = Cause.findErrorOption(cause);
+  if (
+    error._tag === "Some" &&
+    HttpServerError.isHttpServerError(error.value) &&
+    error.value.reason._tag === "RouteNotFound"
+  ) {
+    const allowed = allowedMethods(new URL(request.url, "http://localhost").pathname);
+    return Effect.succeed(
+      allowed.length === 0
+        ? errorResponse(new RouteNotFound())
+        : HttpServerResponse.setHeader(
+            errorResponse(new MethodNotAllowed()),
+            "allow",
+            allowed.join(", "),
+          ),
+    );
+  }
+
+  if (Cause.hasInterruptsOnly(cause)) {
+    return Effect.failCause(cause);
+  }
+
+  return Effect.logError("request died", cause).pipe(
+    Effect.as(errorResponse(new InternalServerError())),
+  );
+}
+
+/** Every route the router serves: the contract, its OpenAPI document and the
+ * raw OAuth routes. Only used to tell 405 from 404. */
+const ROUTES = [...contractRoutes(), { method: "GET", path: OPENAPI_PATH }, ...OAUTH_ROUTES].map(
+  ({ method, path }) => ({
+    method,
+    pattern: new RegExp(`^${path.replaceAll(/:[^/]+/g, "[^/]+")}$`),
+  }),
+);
+
+function contractRoutes() {
+  const routes: Array<{ method: string; path: string }> = [];
+  HttpApi.reflect(TokenmaxxingApi, {
+    onEndpoint: ({ endpoint }) => routes.push({ method: endpoint.method, path: endpoint.path }),
+    onGroup: () => {},
+  });
+  return routes;
+}
+
+function allowedMethods(pathname: string): string[] {
+  const methods = new Set(
+    ROUTES.filter(({ pattern }) => pattern.test(pathname)).map(({ method }) => method),
+  );
+  if (methods.has("GET")) {
+    methods.add("HEAD");
+  }
+
+  return [...methods].sort();
+}
+
+type RequestError = InternalServerError | MethodNotAllowed | RouteNotFound;
+
+const REQUEST_ERROR_STATUS = {
+  InternalServerError: 500,
+  MethodNotAllowed: 405,
+  RouteNotFound: 404,
+} as const satisfies Record<RequestError["_tag"], number>;
+
+/** The `{ _tag, message }` body contract errors encode to. */
+function errorResponse(error: RequestError) {
+  return HttpServerResponse.jsonUnsafe(
+    { _tag: error._tag, message: error.message },
+    { status: REQUEST_ERROR_STATUS[error._tag] },
+  );
+}
 
 const HttpPlatformStub = Layer.succeed(HttpPlatform.HttpPlatform, {
   platform: "web",
@@ -443,11 +545,11 @@ const RequestServices = Layer.effectContext(Effect.context<ApiServices>());
 
 /** The whole HTTP surface: contract handlers, OAuth routes and middleware. */
 const ApiLive = Layer.mergeAll(
-  HttpApiBuilder.layer(TokenmaxxingApi, { openapiPath: "/openapi.json" }),
+  HttpApiBuilder.layer(TokenmaxxingApi, { openapiPath: OPENAPI_PATH }),
   OAuthRoutesLive,
 ).pipe(
   Layer.provide(HandlersLive),
-  Layer.provide(Layer.mergeAll(AuthorizationLive, CliAuthLive)),
+  Layer.provide(Layer.mergeAll(AuthorizationLive, CliAuthLive, ErrorBoundaryLive)),
   Layer.provide(requestIdLayer),
   Layer.provide(corsLayer),
   HttpRouter.provideRequest(RequestServices),

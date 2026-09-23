@@ -64,18 +64,35 @@ describe("CliAuth middleware", () => {
     expect(resolveCliToken).not.toHaveBeenCalled();
   });
 
-  it("rejects unknown tokens and failing lookups", async () => {
+  it("rejects unknown tokens", async () => {
     const unknown = await logout(
       { authorization: "Bearer tmx_unknown" },
       Effect.succeed(Option.none()),
     );
+
+    expect(unknown.status).toBe(401);
+    expect(unknown.body).toMatchObject({ _tag: "Unauthorized" });
+    expect(unknown.revokeToken).not.toHaveBeenCalled();
+  });
+
+  it("answers a failing lookup with 503, not 401, so the CLI keeps its token", async () => {
     const failing = await logout(
       { authorization: "Bearer tmx_token" },
       Effect.die(new Error("D1 down")),
     );
 
-    expect(unknown.status).toBe(401);
-    expect(failing.status).toBe(401);
-    expect(unknown.revokeToken).not.toHaveBeenCalled();
+    expect(failing.status).toBe(503);
+    expect(failing.body).toEqual({
+      _tag: "ServiceUnavailable",
+      message: "Could not verify your credentials; try again shortly.",
+    });
+    expect(failing.revokeToken).not.toHaveBeenCalled();
+    expect(app?.logs.entries).toEqual([
+      expect.objectContaining({
+        args: [new Error("D1 down")],
+        level: "Error",
+        message: "credential lookup failed",
+      }),
+    ]);
   });
 });

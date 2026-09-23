@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Context, Effect, Exit, Layer, Option, Schema, Scope } from "effect";
 import * as FileSystem from "effect/FileSystem";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   CliUpgradeRequired,
@@ -22,6 +22,7 @@ import { LeaderboardService } from "../leaderboard/service";
 import { OAuthProviders } from "../oauth/registry";
 import { ProfilesService } from "../profiles/service";
 import { StatsService } from "../stats/service";
+import { makeTestLogger, type TestLogger } from "../testing/logger";
 import { TokensService } from "../tokens/service";
 import { makeUsageService, UsageRepository, UsageService } from "../usage/service";
 import { makeApiHttpEffect } from "./layer";
@@ -147,6 +148,7 @@ const usageRepository = {
 
 let scope: Scope.Closeable;
 let handle: (request: Request) => Promise<Response>;
+let logs: TestLogger;
 
 beforeAll(async () => {
   const tokens = TokensService.of({
@@ -164,6 +166,12 @@ beforeAll(async () => {
           : rawToken === "tmx_no_device"
             ? Option.some({ deviceId: null, tokenId: TokenId.make("token_456"), user })
             : Option.none(),
+      ).pipe(
+        Effect.andThen((identity) =>
+          rawToken === "tmx_store_down"
+            ? Effect.die(new Error("D1 down"))
+            : Effect.succeed(identity),
+        ),
       ),
     revokeToken: () => Effect.void,
   });
@@ -234,8 +242,13 @@ beforeAll(async () => {
         ),
         Scope.provide(scope),
         Effect.map((response) => HttpServerResponse.toWeb(response)),
+        Effect.provide(logs.layer),
       ) as Effect.Effect<Response>,
     );
+});
+
+beforeEach(() => {
+  logs = makeTestLogger();
 });
 
 afterAll(() => Effect.runPromise(Scope.close(scope, Exit.void)));
@@ -312,6 +325,11 @@ describe("recorded CLI requests", () => {
         undeclaredProperty: true,
       });
 
+      // A union payload may name another member's missing field first.
+      expect(await response.json()).toEqual({
+        _tag: "BadRequest",
+        message: expect.stringMatching(/^Invalid request body field `\w+`\.$/),
+      });
       expect(response.status).toBe(400);
     },
   );
@@ -380,6 +398,90 @@ describe("CLI error responses", () => {
   });
 });
 
+/**
+ * Errors released CLIs have no decoder for. Their frozen clients fail these
+ * as a generic HTTP error (no decoder for the status, or one that rejects the
+ * body), exactly like the empty bodies these statuses used to have — the
+ * point is that none of them can be mistaken for a tag they branch on.
+ * Above all a failed credential lookup must not read as Unauthorized, on
+ * which interactive CLIs discard their token and restart browser login.
+ */
+describe("request-level errors", () => {
+  const byFile = (file: string) => fixtures.find((entry) => entry.file === file)!.fixture;
+
+  async function expectUnbranchedError(response: Response, status: number, tag: string) {
+    const body = (await response.json()) as { _tag?: unknown; message?: unknown };
+
+    expect({ status: response.status, tag: body._tag }).toEqual({ status, tag });
+    expect(typeof body.message).toBe("string");
+    expect(RELEASED_CLI_ERRORS[tag]).toBeUndefined();
+    for (const schema of Object.values(RELEASED_CLI_ERRORS)) {
+      expect(() => decodeReleased(schema, body)).toThrow();
+    }
+  }
+
+  // cliLogin.* runs before the CLI has a token.
+  it.each(fixtures.filter(({ fixture }) => !fixture.endpoint.startsWith("cliLogin.")))(
+    "$file with a failing token lookup is 503 ServiceUnavailable, not 401",
+    async ({ fixture }) => {
+      const response = await handle(
+        new Request(`https://api.tokenmaxxing.sh${fixture.path}`, {
+          body: fixture.body === undefined ? null : JSON.stringify(fixture.body),
+          headers: {
+            authorization: "Bearer tmx_store_down",
+            ...(fixture.body === undefined ? {} : { "content-type": "application/json" }),
+          },
+          method: fixture.method,
+        }),
+      );
+
+      await expectUnbranchedError(response, 503, "ServiceUnavailable");
+      expect(logs.entries).toEqual([
+        expect.objectContaining({ level: "Error", message: "credential lookup failed" }),
+      ]);
+    },
+  );
+
+  it("a malformed body is 400 BadRequest", async () => {
+    const poll = byFile("current/cliLogin.poll.json");
+    const response = await handle(
+      new Request(`https://api.tokenmaxxing.sh${poll.path}`, {
+        body: "{",
+        headers: { "content-type": "application/json" },
+        method: poll.method,
+      }),
+    );
+
+    await expectUnbranchedError(response, 400, "BadRequest");
+  });
+
+  it("a non-JSON body is 415 UnsupportedMediaType", async () => {
+    const poll = byFile("current/cliLogin.poll.json");
+    const response = await handle(
+      new Request(`https://api.tokenmaxxing.sh${poll.path}`, {
+        body: "deviceCode=x",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        method: poll.method,
+      }),
+    );
+
+    await expectUnbranchedError(response, 415, "UnsupportedMediaType");
+  });
+
+  it("an unknown path is 404 RouteNotFound and a wrong method 405 MethodNotAllowed", async () => {
+    await expectUnbranchedError(
+      await handle(new Request("https://api.tokenmaxxing.sh/cli/unknown", { method: "POST" })),
+      404,
+      "RouteNotFound",
+    );
+    await expectUnbranchedError(
+      await handle(new Request("https://api.tokenmaxxing.sh/cli/logout")),
+      405,
+      "MethodNotAllowed",
+    );
+  });
+});
+
 describe("ingest boundary", () => {
   const ingest = fixtures.find(({ file }) => file === "current/usage.ingest.json")!.fixture;
   const body = ingest.body as { reports: Array<Record<string, unknown>> };
@@ -393,7 +495,12 @@ describe("ingest boundary", () => {
       { ...body, sourceStats: [{ sessionCount: "NaN", source: "codex" }] },
       { ...body, reports: Array(65).fill(report) },
     ]) {
-      expect((await send(ingest, invalid)).status).toBe(400);
+      const response = await send(ingest, invalid);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        _tag: "BadRequest",
+        message: expect.stringMatching(/^Invalid request body/),
+      });
     }
   });
 

@@ -193,6 +193,77 @@ describe("oauth routes", () => {
     // A link conflict is an expected outcome, not an incident.
     expect(conflicting.logs.entries).toEqual([]);
   });
+
+  it("fails the callback when the prior session cannot be checked", async () => {
+    // Reading a lookup fault as signed out would sign in fresh instead of
+    // linking the provider to the signed-in account.
+    const state = encodeOAuthState("nonce", null);
+    const { calls, handler, logs } = oauthHandler({ resolveSession: "fail" });
+
+    const response = await handler(
+      callbackRequest(`code=abc&state=${state}`, {
+        tmx_oauth_pkce: "verifier-123",
+        tmx_oauth_state: state,
+        tmx_session: "old-session",
+      }),
+    );
+
+    expect(new URL(response.headers.get("location") ?? "").searchParams.get("error")).toBe(
+      "oauth_failed",
+    );
+    expect(calls.exchanges).toEqual([]);
+    expect(logs.entries).toEqual([
+      expect.objectContaining({ level: "Error", message: "github oauth callback failed" }),
+    ]);
+  });
+});
+
+describe("sign-out", () => {
+  function signout(headers: Record<string, string>) {
+    const oauth = oauthHandler();
+    const response = oauth.handler(
+      new Request("https://api.tokenmaxxing.sh/auth/signout", {
+        headers: { cookie: "tmx_session=old-session", host: "api.tokenmaxxing.sh", ...headers },
+        method: "POST",
+      }),
+    );
+
+    return { calls: oauth.calls, response };
+  }
+
+  it.each([
+    ["www", { origin: "https://tokenmaxxing.sh" }],
+    ["the API itself", { origin: "https://api.tokenmaxxing.sh" }],
+    ["a same-site request without Origin", { "sec-fetch-site": "same-site" }],
+    ["a non-browser client", {}],
+  ])("signs out a request from %s", async (_from, headers) => {
+    const { calls, response } = signout(headers);
+    const signedOut = await response;
+
+    expect(signedOut.status).toBe(200);
+    expect(await signedOut.json()).toEqual({ ok: true });
+    expectCleared(setCookies(signedOut), "tmx_session");
+    expect(calls.signOuts).toEqual(["old-session"]);
+  });
+
+  it.each([
+    ["another origin", { origin: "https://evil.example" }],
+    ["an opaque origin", { origin: "null" }],
+    ["a look-alike subdomain", { origin: "https://tokenmaxxing.sh.evil.example" }],
+    ["a cross-site request without Origin", { "sec-fetch-site": "cross-site" }],
+  ])("refuses a cross-site sign-out from %s", async (_from, headers) => {
+    const { calls, response } = signout(headers);
+    const refused = await response;
+
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("content-type")).toContain("application/json");
+    expect(await refused.json()).toEqual({
+      _tag: "Forbidden",
+      message: "Cross-site sign-out is not allowed.",
+    });
+    expect(refused.headers.get("set-cookie")).toBeNull();
+    expect(calls.signOuts).toEqual([]);
+  });
 });
 
 describe("oauthErrorLocation", () => {
@@ -205,7 +276,18 @@ describe("oauthErrorLocation", () => {
 
 const USER = { avatarUrl: null, id: UserId.make("user_1"), login: "alex", name: null };
 
-function oauthHandler(options: { exchange?: "fail"; signIn?: "conflict" } = {}) {
+const CONFIG = AppConfig.of({
+  adminEmails: [],
+  apiWorkerName: "tokenmaxxing-api",
+  corsOrigins: ["https://tokenmaxxing.sh"],
+  github: { clientId: "github-client", clientSecret: "github-secret" },
+  google: { clientId: "google-client", clientSecret: "google-secret" },
+  productName: "Tokenmaxxing",
+});
+
+function oauthHandler(
+  options: { exchange?: "fail"; resolveSession?: "fail"; signIn?: "conflict" } = {},
+) {
   const calls = {
     exchanges: [] as Array<{ code: string; codeVerifier: string }>,
     signOuts: [] as string[],
@@ -223,26 +305,22 @@ function oauthHandler(options: { exchange?: "fail"; signIn?: "conflict" } = {}) 
   // half (code exchange, profile read) is faked.
   const github = Effect.runSync(
     makeGitHubProvider().pipe(
-      Effect.provideService(AppConfig, {
-        adminEmails: [],
-        apiWorkerName: "tokenmaxxing-api",
-        corsOrigins: [],
-        github: { clientId: "github-client", clientSecret: "github-secret" },
-        google: { clientId: "google-client", clientSecret: "google-secret" },
-        productName: "Tokenmaxxing",
-      }),
+      Effect.provideService(AppConfig, CONFIG),
       Effect.provide(FetchHttpClient.layer),
     ),
   );
   const logs = makeTestLogger();
   const services = Context.empty().pipe(
     Context.add(Logger.CurrentLoggers, new Set([logs.logger])),
+    Context.add(AppConfig, CONFIG),
     Context.add(
       AuthService,
       AuthService.of({
         listAccounts: () => Effect.succeed([]),
         resolveSession: (token) =>
-          Effect.succeed(token === "old-session" ? Option.some(USER) : Option.none()),
+          options.resolveSession === "fail"
+            ? Effect.die(new Error("D1 down"))
+            : Effect.succeed(token === "old-session" ? Option.some(USER) : Option.none()),
         signInWithProvider: () =>
           options.signIn === "conflict"
             ? Effect.fail(new AccountLinkConflict({ provider: "github" }))
