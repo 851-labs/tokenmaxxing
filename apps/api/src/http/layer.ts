@@ -409,6 +409,9 @@ const corsLayer = Layer.unwrap(
         ],
         allowedMethods: ["DELETE", "GET", "PATCH", "POST", "PUT", "OPTIONS"],
         credentials: true,
+        // Let browsers reuse a preflight instead of sending one per request
+        // (Chromium caps this at two hours).
+        maxAge: 7_200,
       }),
       { global: true },
     );

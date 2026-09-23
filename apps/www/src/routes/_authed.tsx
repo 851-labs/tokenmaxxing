@@ -1,7 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { isApiError } from "../lib/api";
-import { meQueryOptions } from "../lib/queries";
+import { ensureViewer } from "../lib/queries";
 
 /**
  * Pathless layout for signed-in pages. The session check is a *loader*, not
@@ -11,14 +10,8 @@ import { meQueryOptions } from "../lib/queries";
  */
 const Route = createFileRoute("/_authed")({
   loader: async ({ context, location }) => {
-    try {
-      await context.queryClient.ensureQueryData(meQueryOptions);
-    } catch (error) {
-      if (isApiError(error, "Unauthorized")) {
-        throw redirect({ search: { redirect: location.href }, to: "/login" });
-      }
-
-      throw error;
+    if ((await ensureViewer(context.queryClient)) === null) {
+      throw redirect({ search: { redirect: location.href }, to: "/login" });
     }
   },
   head: () => ({

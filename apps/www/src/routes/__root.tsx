@@ -16,8 +16,10 @@ import {
   FAVICON_MIME_TYPE,
   faviconUrlFromMatches,
 } from "../lib/favicon";
+import { githubStarsQueryOptions } from "../lib/github-stars";
 import { organizationSchema, webSiteSchema } from "../lib/jsonld";
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SITE_OG_IMAGE_URL } from "../lib/og";
+import { meQueryOptions } from "../lib/queries";
 import { SITE_DESCRIPTION, SITE_NAME } from "../lib/site";
 import styles from "../styles.css?url";
 
@@ -71,6 +73,15 @@ function rootHead({ notFound = false }: { notFound?: boolean } = {}) {
 }
 
 const Route = createRootRouteWithContext<RouterContext>()({
+  // Resolved during SSR (cached after that), so pages ship with the nav's
+  // viewer and the footer's star count and the browser fetches neither on
+  // load. A failure here only drops the nav/footer back to client fetching.
+  loader: async ({ context }) => {
+    await Promise.all([
+      context.queryClient.ensureQueryData(meQueryOptions).catch(() => undefined),
+      context.queryClient.ensureQueryData(githubStarsQueryOptions).catch(() => undefined),
+    ]);
+  },
   head: ({ matches }) =>
     rootHead({
       notFound: matches.some((match) => match._notFound === true || match.status === "notFound"),

@@ -69,7 +69,8 @@ function UserMenu() {
     );
   }
 
-  if (me.isError) {
+  const user = me.data?.user;
+  if (user === undefined) {
     return (
       <div className="flex items-center gap-2">
         <GithubStarLink />
@@ -79,8 +80,6 @@ function UserMenu() {
       </div>
     );
   }
-
-  const user = me.data.user;
 
   return (
     <div className="flex items-center gap-2">

@@ -5,11 +5,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { runApi } from "../lib/api";
+import { fetchViewer, runApi } from "../lib/api";
 import { CliLoginApproval, cliLoginHead } from "./login_.cli";
 
 vi.mock("../lib/api", () => ({
   errorMessage: (_error: unknown, fallback: string) => fallback,
+  fetchViewer: vi.fn(),
   runApi: vi.fn(),
 }));
 
@@ -41,6 +42,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   approveCliLogin.mockClear();
   vi.mocked(runApi).mockImplementation(async (call) => call(fakeClient as never) as never);
+  vi.mocked(fetchViewer).mockImplementation(async () => fakeClient.me.me() as never);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
