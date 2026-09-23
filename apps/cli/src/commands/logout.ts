@@ -1,13 +1,14 @@
 import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 
+import { booleanFlag } from "../flags";
 import { ApiClientService, ConfigService } from "../services";
 import { humanFrame, humanLog, humanSpinner, writeJson } from "../output";
 
 const logoutCommand = Command.make(
   "logout",
   {
-    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: booleanFlag("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => logoutEffect({ json }),
 ).pipe(Command.withDescription("Log out and revoke this device's CLI token"));

@@ -13,9 +13,11 @@ import {
   ConfigService,
   TerminalService,
 } from "../services";
+import { booleanFlag } from "../flags";
 import { formatUrl, humanFrame, humanLog, humanSpinner, writeJson } from "../output";
 import {
   alreadyLoggedInAsMessage,
+  apiErrorMessage,
   loggedInAsMessage,
   validateCurrentLogin,
 } from "../auth-validation";
@@ -23,13 +25,24 @@ import {
 class StartCliLoginError extends Data.TaggedError("StartCliLoginError")<{
   readonly cause: unknown;
 }> {
-  override message = "error: failed to start CLI login\nhint: check your network and try again";
+  override get message() {
+    const apiMessage = apiErrorMessage(this.cause);
+    return apiMessage === undefined
+      ? "error: failed to start CLI login\nhint: check your network and try again"
+      : `error: ${apiMessage}`;
+  }
 }
 
 class PollCliLoginError extends Data.TaggedError("PollCliLoginError")<{
   readonly cause: unknown;
 }> {
-  override message = "error: failed to poll CLI login\nhint: run tokenmaxxing login again";
+  override get message() {
+    // e.g. an expired or unknown login code: the server says what to do next.
+    const apiMessage = apiErrorMessage(this.cause);
+    return apiMessage === undefined
+      ? "error: failed to poll CLI login\nhint: run tokenmaxxing login again"
+      : `error: ${apiMessage}`;
+  }
 }
 
 class OpenBrowserError extends Data.TaggedError("OpenBrowserError")<{
@@ -111,7 +124,7 @@ interface BrowserLoginResult {
 const loginCommand = Command.make(
   "login",
   {
-    json: Flag.Boolean("json").pipe(Flag.withDescription("Output machine-readable JSON")),
+    json: booleanFlag("json").pipe(Flag.withDescription("Output machine-readable JSON")),
   },
   ({ json }) => loginEffect({ json }),
 ).pipe(Command.withDescription("Log in to tokenmaxxing via your browser"));

@@ -5,7 +5,7 @@ import { delimiter, dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
 
 import { Cause, Effect, Layer } from "effect";
-import { UserId, type AuthUser } from "@tokenmaxxing/api-contract";
+import { Unauthorized, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
 import packageJson from "../../package.json";
@@ -298,7 +298,7 @@ function makeInstallRuntime(
 }
 
 function unauthorizedError() {
-  return Object.assign(new Error("unauthorized"), { _tag: "Unauthorized" as const });
+  return new Unauthorized({});
 }
 
 function failureTag(exit: Awaited<ReturnType<typeof Effect.runPromiseExit>>): string | undefined {

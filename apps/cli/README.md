@@ -29,7 +29,10 @@ doctor` to inspect scheduler files, auth, auto-update, locks, and recent logs.
 
 Run `sync` as often as you like, from as many machines as you like —
 profiles aggregate across devices. Useful flags: `--dry-run`,
-`--since YYYY-MM-DD`, `--sources claude,codex`, `--json`.
+`--since YYYY-MM-DD`, `--sources claude,codex`, `--json`. `sync` exits
+non-zero when no agent's usage could be collected; if only some agents fail,
+it still uploads the rest and exits 0 with `"status": "partial"` in `--json`
+output.
 
 ### What gets uploaded (privacy)
 
