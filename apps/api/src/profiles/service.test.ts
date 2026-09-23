@@ -136,6 +136,7 @@ async function makeProfileService(
   return Effect.runPromise(
     makeProfilesService().pipe(
       Effect.provideService(ProfilesRepository, {
+        listVisibleIdentities: () => Effect.succeed([]),
         daily: (_userId, query) => {
           onDaily?.(query);
           return Effect.succeed([
@@ -179,6 +180,7 @@ describe("ProfilesService shadow-ban visibility", () => {
     const service = await Effect.runPromise(
       makeProfilesService().pipe(
         Effect.provideService(ProfilesRepository, {
+          listVisibleIdentities: () => Effect.succeed([]),
           daily: () => Effect.succeed([]),
           findUserByLogin: () =>
             Effect.succeed(

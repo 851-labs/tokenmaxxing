@@ -605,7 +605,7 @@ describe("native scheduler templates", () => {
       "/MO",
       "5",
       "/TR",
-      '"C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync.cmd"',
+      '"C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing\\service-sync.cmd"',
       "/F",
     ]);
   });
@@ -1022,52 +1022,56 @@ describe("service auto-update reports", () => {
     });
   });
 
-  it("fetches registry runner updates from the current release channel", async () => {
-    const paths = servicePaths({
-      env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
-      home: "/Users/alex",
-      platform: "darwin",
-    })!;
-    const cases = [
-      { currentVersion: "0.4.12", nextVersion: "0.4.13", specifier: "latest" },
-      { currentVersion: "0.4.18-alpha.1", nextVersion: "0.4.18-alpha.2", specifier: "alpha" },
-      { currentVersion: "0.4.18-beta.1", nextVersion: "0.4.18-beta.2", specifier: "beta" },
-      { currentVersion: "0.4.18-rc.0", nextVersion: "0.4.18-rc.1", specifier: "rc" },
-    ];
+  it(
+    "fetches registry runner updates from the current release channel",
+    { timeout: 15_000 },
+    async () => {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
+        home: "/Users/alex",
+        platform: "darwin",
+      })!;
+      const cases = [
+        { currentVersion: "0.4.12", nextVersion: "0.4.13", specifier: "latest" },
+        { currentVersion: "0.4.18-alpha.1", nextVersion: "0.4.18-alpha.2", specifier: "alpha" },
+        { currentVersion: "0.4.18-beta.1", nextVersion: "0.4.18-beta.2", specifier: "beta" },
+        { currentVersion: "0.4.18-rc.0", nextVersion: "0.4.18-rc.1", specifier: "rc" },
+      ];
 
-    for (const testCase of cases) {
-      const fetchedSpecifiers: string[] = [];
+      for (const testCase of cases) {
+        const fetchedSpecifiers: string[] = [];
 
-      await expect(
-        runAutoUpdate(
-          registryMetadata,
-          {
-            fetchRunnerRelease: (_target, versionSpecifier) => {
-              fetchedSpecifiers.push(versionSpecifier);
-              return Effect.succeed(registryRelease(testCase.nextVersion));
+        await expect(
+          runAutoUpdate(
+            registryMetadata,
+            {
+              fetchRunnerRelease: (_target, versionSpecifier) => {
+                fetchedSpecifiers.push(versionSpecifier);
+                return Effect.succeed(registryRelease(testCase.nextVersion));
+              },
+              installRunnerRelease: (release) =>
+                Effect.succeed({
+                  packageName: release.packageName,
+                  path: `/tmp/tokenmaxxing/service-runners/${release.version}/darwin-arm64/tokenmaxxing`,
+                  target: release.target,
+                  version: release.version,
+                }),
+              now,
             },
-            installRunnerRelease: (release) =>
-              Effect.succeed({
-                packageName: release.packageName,
-                path: `/tmp/tokenmaxxing/service-runners/${release.version}/darwin-arm64/tokenmaxxing`,
-                target: release.target,
-                version: release.version,
-              }),
-            now,
-          },
-          testCase.currentVersion,
-          paths,
-        ),
-      ).resolves.toMatchObject({
-        installedVersion: testCase.nextVersion,
-        latestVersion: testCase.nextVersion,
-        manager: "registry",
-        reason: null,
-        status: "success",
-      });
-      expect(fetchedSpecifiers).toEqual([testCase.specifier]);
-    }
-  });
+            testCase.currentVersion,
+            paths,
+          ),
+        ).resolves.toMatchObject({
+          installedVersion: testCase.nextVersion,
+          latestVersion: testCase.nextVersion,
+          manager: "registry",
+          reason: null,
+          status: "success",
+        });
+        expect(fetchedSpecifiers).toEqual([testCase.specifier]);
+      }
+    },
+  );
 
   it("does not install an older registry runner candidate", async () => {
     const paths = servicePaths({

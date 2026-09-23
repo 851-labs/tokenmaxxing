@@ -195,6 +195,11 @@ class StatsGroup extends HttpApiGroup.make("stats").add(
  */
 class ProfilesGroup extends HttpApiGroup.make("profiles")
   .add(
+    HttpApiEndpoint.get("list", "/profiles", {
+      success: Schema.Array(ProfileIdentityResponse),
+    }),
+  )
+  .add(
     HttpApiEndpoint.get("identity", "/profiles/:login/identity", {
       params: {
         login: Schema.String,

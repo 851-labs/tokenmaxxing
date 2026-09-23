@@ -1,15 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LeaderboardResponse, utcDayKey } from "@tokenmaxxing/api-contract";
+import * as Schema from "effect/Schema";
+import { ProfileIdentityResponse } from "@tokenmaxxing/api-contract";
 
 import { textResponse } from "../lib/http";
 import { fetchPublicJson } from "../lib/public-api";
 import { buildSitemapXml, STATIC_SITEMAP_PATHS, type SitemapEntry } from "./-sitemap";
 
-type Leaderboard = typeof LeaderboardResponse.Type;
+type ProfileIdentity = typeof ProfileIdentityResponse.Type;
 
 interface SitemapRouteDeps {
-  loadLeaderboard(): Promise<Leaderboard | null>;
-  now(): Date;
+  loadProfiles(): Promise<readonly ProfileIdentity[] | null>;
 }
 
 const SITEMAP_CACHE_CONTROL = "public, max-age=3600, stale-while-revalidate=86400";
@@ -17,9 +17,7 @@ const SITEMAP_CACHE_CONTROL = "public, max-age=3600, stale-while-revalidate=8640
 const PARTIAL_SITEMAP_CACHE_CONTROL = "public, max-age=300";
 
 const defaultDeps: SitemapRouteDeps = {
-  loadLeaderboard: () =>
-    fetchPublicJson("/leaderboard?metric=spend&window=all", LeaderboardResponse),
-  now: () => new Date(),
+  loadProfiles: () => fetchPublicJson("/profiles", Schema.Array(ProfileIdentityResponse)),
 };
 
 function makeSitemapHandler(deps: SitemapRouteDeps = defaultDeps) {
@@ -27,17 +25,13 @@ function makeSitemapHandler(deps: SitemapRouteDeps = defaultDeps) {
     const pages: SitemapEntry[] = STATIC_SITEMAP_PATHS.map((path) => ({ path }));
     let profiles: SitemapEntry[] = [];
     let complete = true;
-    // `lastDate` is the user's local day, which can run a day ahead of UTC;
-    // a sitemap <lastmod> must not be in the future.
-    const today = utcDayKey(deps.now());
     try {
-      const leaderboard = await deps.loadLeaderboard();
-      profiles = (leaderboard?.entries ?? []).map((entry) => ({
-        lastModified: entry.lastDate !== null && entry.lastDate > today ? today : entry.lastDate,
-        path: `/${encodeURIComponent(entry.user.login)}`,
+      const identities = await deps.loadProfiles();
+      profiles = (identities ?? []).map((profile) => ({
+        path: `/${encodeURIComponent(profile.login)}`,
       }));
     } catch (error) {
-      console.warn("Sitemap leaderboard load failed", { error });
+      console.warn("Sitemap profile load failed", { error });
       complete = false;
     }
 

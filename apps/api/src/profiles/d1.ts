@@ -15,6 +15,14 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
   const database = yield* Drizzle;
 
   return ProfilesRepository.of({
+    listVisibleIdentities: () =>
+      database.use((db) =>
+        db
+          .select({ avatarUrl: users.avatarUrl, login: users.login })
+          .from(users)
+          .where(isNull(users.shadowBannedAt))
+          .orderBy(asc(users.login)),
+      ),
     findUserByLogin: (login) =>
       Effect.gen(function* () {
         const rows = yield* database.use((db) =>

@@ -15,7 +15,7 @@ import {
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { arch, homedir, hostname } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join, posix as posixPath } from "node:path";
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 
@@ -3463,24 +3463,25 @@ function servicePaths({
     return null;
   }
 
-  const configDir = dirname(getConfigPath(env));
-  const wrapperPath = join(
+  const path = platform === "win32" ? { dirname, join } : posixPath;
+  const configDir = env["TOKENMAXXING_CONFIG_DIR"] ?? path.dirname(getConfigPath(env));
+  const wrapperPath = path.join(
     configDir,
     platform === "win32" ? WINDOWS_WRAPPER_NAME : POSIX_WRAPPER_NAME,
   );
-  const logPath = join(configDir, "service.log");
-  const lockPath = join(configDir, "service.lock");
-  const metadataPath = join(configDir, "service.json");
-  const runnerPointerPath = join(configDir, SERVICE_RUNNER_POINTER_NAME);
-  const runnersDir = join(configDir, SERVICE_RUNNER_DIR_NAME);
-  const statePath = join(configDir, "service-state.json");
-  const updateLockPath = join(configDir, "service-update.lock");
+  const logPath = path.join(configDir, "service.log");
+  const lockPath = path.join(configDir, "service.lock");
+  const metadataPath = path.join(configDir, "service.json");
+  const runnerPointerPath = path.join(configDir, SERVICE_RUNNER_POINTER_NAME);
+  const runnersDir = path.join(configDir, SERVICE_RUNNER_DIR_NAME);
+  const statePath = path.join(configDir, "service-state.json");
+  const updateLockPath = path.join(configDir, "service-update.lock");
 
   if (backend === "launchd") {
     return {
       backend,
       configDir,
-      definitionPath: join(home, "Library", "LaunchAgents", `${SERVICE_LABEL}.plist`),
+      definitionPath: path.join(home, "Library", "LaunchAgents", `${SERVICE_LABEL}.plist`),
       lockPath,
       logPath,
       metadataPath,
@@ -3493,11 +3494,15 @@ function servicePaths({
   }
 
   if (backend === "systemd") {
-    const systemdDir = join(env["XDG_CONFIG_HOME"] ?? join(home, ".config"), "systemd", "user");
+    const systemdDir = path.join(
+      env["XDG_CONFIG_HOME"] ?? path.join(home, ".config"),
+      "systemd",
+      "user",
+    );
     return {
       backend,
       configDir,
-      definitionPath: join(systemdDir, `${SYSTEMD_NAME}.service`),
+      definitionPath: path.join(systemdDir, `${SYSTEMD_NAME}.service`),
       lockPath,
       logPath,
       metadataPath,
@@ -4092,7 +4097,7 @@ function legacyServiceWrapperPaths(paths: ServicePaths): string[] {
     return [];
   }
 
-  const legacyWrapperPath = join(paths.configDir, LEGACY_POSIX_WRAPPER_NAME);
+  const legacyWrapperPath = posixPath.join(paths.configDir, LEGACY_POSIX_WRAPPER_NAME);
 
   return legacyWrapperPath === paths.wrapperPath ? [] : [legacyWrapperPath];
 }

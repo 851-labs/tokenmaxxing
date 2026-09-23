@@ -4009,6 +4009,91 @@
         }
       }
     },
+    "/profiles": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "operationId": "profiles.list",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "avatarUrl": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "login": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "avatarUrl",
+                      "login"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BadRequest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestEncoded"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "PayloadTooLarge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayloadTooLargeEncoded"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UnsupportedMediaType",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnsupportedMediaTypeEncoded"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "InternalServerError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerErrorEncoded"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/profiles/{login}/identity": {
       "get": {
         "tags": [

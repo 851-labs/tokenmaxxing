@@ -74,10 +74,15 @@ describe("api cache headers", () => {
     const fetch = await buildFetch(makeHarness().services);
 
     const leaderboard = await serve(fetch, apiRequest("/leaderboard"));
+    const profiles = await serve(fetch, apiRequest("/profiles"));
     const identity = await serve(fetch, apiRequest("/profiles/visible/identity"));
 
     expect(leaderboard.status).toBe(200);
     expect(leaderboard.headers.get("cache-control")).toBe(
+      "public, s-maxage=60, stale-while-revalidate=300",
+    );
+    expect(profiles.status).toBe(200);
+    expect(profiles.headers.get("cache-control")).toBe(
       "public, s-maxage=60, stale-while-revalidate=300",
     );
     expect(identity.status).toBe(200);
@@ -619,6 +624,7 @@ function makeHarness() {
     }),
   );
   const profiles = ProfilesService.of({
+    listIdentities: () => Effect.succeed([]),
     getDaily: () =>
       Effect.succeed({ days: [], range: { firstDate: "2026-01-01", lastDate: "2026-09-22" } }),
     getIdentity: (login) =>

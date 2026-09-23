@@ -72,8 +72,14 @@ async function renderOgImage(
   const isVersioned = new URL(request.url).searchParams.get("v") === fingerprint;
   const cacheControl = isVersioned ? VERSIONED_CACHE_CONTROL : PREVIEW_CACHE_CONTROL;
   const cacheKey = ogCacheKey(target.scope, fingerprint);
-  const env = await deps.getRuntimeEnv(context);
-  const cached = env.BUCKET === undefined ? null : await readCachedPng(env.BUCKET, cacheKey);
+  let env: OgRuntimeEnv;
+  try {
+    env = await deps.getRuntimeEnv(context);
+  } catch (error) {
+    return pngResponse(fallbackPngBytes(), TRANSIENT_CACHE_CONTROL, { error, source: "fallback" });
+  }
+
+  const cached = env.BUCKET === undefined ? null : await readCachedPngSafely(env.BUCKET, cacheKey);
   if (cached !== null) {
     return pngResponse(cached, cacheControl, { source: "cache" });
   }
@@ -101,7 +107,7 @@ async function renderOgImage(
     const previous =
       env.BUCKET === undefined
         ? null
-        : await readLatestCachedPng(env.BUCKET, target.scope, cacheKey);
+        : await readLatestCachedPngSafely(env.BUCKET, target.scope, cacheKey);
     if (previous !== null) {
       return pngResponse(previous, PREVIEW_CACHE_CONTROL, { error, source: "prior-cache" });
     }
@@ -154,6 +160,14 @@ async function readCachedPng(bucket: OgR2Bucket, key: string): Promise<Uint8Arra
   return new Uint8Array(await object.arrayBuffer());
 }
 
+async function readCachedPngSafely(bucket: OgR2Bucket, key: string): Promise<Uint8Array | null> {
+  try {
+    return await readCachedPng(bucket, key);
+  } catch {
+    return null;
+  }
+}
+
 async function readLatestCachedPng(
   bucket: OgR2Bucket,
   scope: string,
@@ -170,6 +184,18 @@ async function readLatestCachedPng(
   }
 
   return readCachedPng(bucket, previous.key);
+}
+
+async function readLatestCachedPngSafely(
+  bucket: OgR2Bucket,
+  scope: string,
+  requestedKey: string,
+): Promise<Uint8Array | null> {
+  try {
+    return await readLatestCachedPng(bucket, scope, requestedKey);
+  } catch {
+    return null;
+  }
 }
 
 function pngResponse(

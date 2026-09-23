@@ -38,6 +38,7 @@ interface DailyQuery {
 }
 
 interface ProfilesServiceShape {
+  listIdentities(): Effect.Effect<ProfileIdentityResponse[], never>;
   getIdentity(
     login: string,
     viewerUserId: UserId | null,
@@ -62,6 +63,7 @@ interface ProfileUser {
 type ProfileStatsWithoutRank = Omit<ProfileStats, "leaderboardRank">;
 
 interface ProfilesRepositoryShape {
+  listVisibleIdentities(): Effect.Effect<ProfileIdentityResponse[], DatabaseError>;
   findUserByLogin(login: string): Effect.Effect<Option.Option<ProfileUser>, DatabaseError>;
   leaderboardRank(input: {
     since: string | null;
@@ -110,6 +112,9 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
   });
 
   return ProfilesService.of({
+    listIdentities: Effect.fn("ProfilesService.listIdentities")(function* () {
+      return yield* repository.listVisibleIdentities().pipe(Effect.orDie);
+    }),
     getIdentity: Effect.fn("ProfilesService.getIdentity")(function* (login, viewerUserId) {
       const user = yield* requireUser(login, viewerUserId);
       return { avatarUrl: user.avatarUrl, login: user.login };

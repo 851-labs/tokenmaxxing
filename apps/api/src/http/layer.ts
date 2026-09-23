@@ -263,6 +263,14 @@ const viewerUserId = Effect.gen(function* () {
 
 const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (handlers) =>
   handlers
+    .handle("list", () =>
+      Effect.gen(function* () {
+        const profiles = yield* ProfilesService;
+        const identities = yield* profiles.listIdentities();
+        yield* cacheControl(PUBLIC_READ_CACHE_CONTROL);
+        return identities;
+      }),
+    )
     .handle("identity", ({ params }) =>
       Effect.gen(function* () {
         const profiles = yield* ProfilesService;

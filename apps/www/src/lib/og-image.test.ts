@@ -93,6 +93,50 @@ describe("renderOgImage target resolution", () => {
     expect(response.status).toBe(404);
     expect(getRuntimeEnv).not.toHaveBeenCalled();
   });
+
+  it("serves the fallback when runtime or R2 reads fail", async () => {
+    const captureScreenshot = vi.fn<OgImageDeps["captureScreenshot"]>(async () => PNG_FROM_BROWSER);
+    const target = {
+      cardPath: "/og-card/pondorasti",
+      currentVersion: "current",
+      scope: "pondorasti",
+    };
+    const request = new Request("https://tokenmaxxing.sh/og/pondorasti.png");
+
+    await expect(
+      renderOgImage(
+        {
+          captureScreenshot,
+          getRuntimeEnv: async () => {
+            throw new Error("runtime unavailable");
+          },
+        },
+        { request, resolveTarget: async () => target },
+      ),
+    ).resolves.toMatchObject({ headers: expect.any(Headers) });
+
+    const response = await renderOgImage(
+      {
+        captureScreenshot,
+        getRuntimeEnv: async () => ({
+          BROWSER: browser,
+          BUCKET: {
+            get: async () => {
+              throw new Error("R2 unavailable");
+            },
+            list: async () => {
+              throw new Error("R2 unavailable");
+            },
+            put: async () => undefined,
+          },
+        }),
+      },
+      { request, resolveTarget: async () => target },
+    );
+
+    expect(response.headers.get("x-og-source")).toBe("browser");
+    expect(captureScreenshot).toHaveBeenCalledOnce();
+  });
 });
 
 const browser: OgBrowser = { quickAction: async () => new Response(PNG_FROM_BROWSER) };
