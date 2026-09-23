@@ -17,6 +17,8 @@ interface HeatmapProps {
   /** date -> spend */
   byDate: ReadonlyMap<string, number>;
   first: string;
+  /** The day to bring into view on narrow screens, e.g. the latest usage. */
+  focus: string;
   last: string;
   segmentsByDate: ReadonlyMap<string, ChartSegment[]>;
 }
@@ -42,9 +44,24 @@ const HEATMAP_STEPS: CursorSteps = {
   ArrowUp: -1,
 };
 
-function Heatmap({ byDate, first, last, segmentsByDate }: HeatmapProps) {
+function Heatmap({ byDate, first, focus, last, segmentsByDate }: HeatmapProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // When the year overflows (phones), open on the focus day, not January.
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    const cell = scroller?.querySelector<SVGRectElement>(`[data-day="${focus}"]`);
+    if (scroller === null || cell === null || cell === undefined) {
+      return;
+    }
+
+    scroller.scrollLeft += scrollOffsetToReveal(
+      scroller.getBoundingClientRect(),
+      cell.getBoundingClientRect(),
+    );
+  }, [focus]);
 
   const { allDays, cells, leadingBlanks, max, monthLabels, weeks } = useMemo(() => {
     const days = enumerateDays(first, last);
@@ -119,7 +136,7 @@ function Heatmap({ byDate, first, last, segmentsByDate }: HeatmapProps) {
 
   return (
     <div className="relative" ref={rootRef}>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto" ref={scrollerRef}>
         <svg
           aria-label={`Daily spend heatmap from ${formatDay(first)} to ${formatDay(last)}`}
           className={cn("block h-auto w-full select-none", CHART_FOCUS_CLASS_NAME)}
@@ -195,4 +212,23 @@ function Heatmap({ byDate, first, last, segmentsByDate }: HeatmapProps) {
   );
 }
 
-export { Heatmap };
+/**
+ * Horizontal scroll that brings `cell` fully into `viewport`, plus one
+ * column of context when it had to scroll; 0 if already visible.
+ */
+function scrollOffsetToReveal(
+  viewport: { left: number; right: number },
+  cell: { left: number; right: number },
+): number {
+  const trailing = CELL + GAP;
+  if (cell.right > viewport.right) {
+    return cell.right - viewport.right + trailing;
+  }
+  if (cell.left < viewport.left) {
+    return cell.left - viewport.left - trailing;
+  }
+
+  return 0;
+}
+
+export { Heatmap, scrollOffsetToReveal };

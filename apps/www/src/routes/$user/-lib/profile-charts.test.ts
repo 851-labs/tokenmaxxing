@@ -22,6 +22,7 @@ describe("deriveProfileCharts", () => {
 
     expect(derived.heatmap).toEqual({
       first: "2026-01-01",
+      focus: "2026-06-21",
       last: "2026-12-31",
     });
     expect(derived.spend.days.map((day) => [day.date, day.total])).toEqual([
@@ -37,7 +38,7 @@ describe("deriveProfileCharts", () => {
     expect(derived.months.map((month) => [month.month, month.value])).toEqual([["2026-06", 12]]);
   });
 
-  it("renders the heatmap across the full calendar year", () => {
+  it("renders the heatmap across the full calendar year, opened on the last day", () => {
     const range: DailyRange = {
       firstDate: "2026-01-01",
       lastDate: "2026-06-21",
@@ -47,6 +48,7 @@ describe("deriveProfileCharts", () => {
 
     expect(derived.heatmap).toEqual({
       first: "2026-01-01",
+      focus: "2026-06-21",
       last: "2026-12-31",
     });
     expect(derived.spend.days.at(0)?.date).toBe("2026-01-01");

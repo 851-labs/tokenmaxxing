@@ -24,8 +24,8 @@ type DailyRow = DailyResponse["days"][number];
 type DailyRange = DailyResponse["range"];
 
 interface ProfileCharts {
-  /** The calendar year containing the range's last day. */
-  heatmap: { first: string; last: string };
+  /** The calendar year containing the range's last day, opened on that day. */
+  heatmap: { first: string; focus: string; last: string };
   months: MonthPoint[];
   /** Per-day spend segments for the heatmap tooltip. */
   segmentsByDate: Map<string, ChartSegment[]>;
@@ -70,7 +70,11 @@ function deriveProfileCharts(rows: readonly DailyRow[], range: DailyRange): Prof
   }));
 
   return {
-    heatmap: { first: calendarYearStart(range.lastDate), last: calendarYearEnd(range.lastDate) },
+    heatmap: {
+      first: calendarYearStart(range.lastDate),
+      focus: range.lastDate,
+      last: calendarYearEnd(range.lastDate),
+    },
     months,
     segmentsByDate,
     spend,
