@@ -63,7 +63,7 @@ function BootstrapCommand() {
             type="button"
           >
             <code
-              className="min-w-0 overflow-x-auto whitespace-pre font-mono text-sm leading-6 text-muted-foreground"
+              className="min-w-0 whitespace-pre-wrap font-mono [overflow-wrap:anywhere] text-sm leading-6 text-muted-foreground"
               style={codeTextStyle}
             >
               {option.command}
