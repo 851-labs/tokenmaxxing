@@ -7,7 +7,14 @@ import * as Schema from "effect/Schema";
 import { StackedChartPanel, type StackedBarsMode } from "../../components/charts/stacked-bars";
 import { StatCard } from "../../components/stat-card";
 import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
-import { formatInteger, formatPercent, formatTokens, formatUsd, percentOf } from "../../lib/format";
+import {
+  formatCount,
+  formatInteger,
+  formatPercent,
+  formatTokens,
+  formatUsd,
+  percentOf,
+} from "../../lib/format";
 import { statsQueryOptions } from "../../lib/queries";
 import { searchParam } from "../../lib/search";
 import { pageHead } from "../../lib/seo";
@@ -51,7 +58,7 @@ const Route = createFileRoute("/stats")({
       description:
         "Aggregate tokenmaxxing stats across tracked LLM agent spend, token volume, models, sources, and public leaderboard users.",
       path: "/stats",
-      title: "Stats - tokenmaxxing.sh",
+      title: "Stats — tokenmaxxing.sh",
     }),
   component: StatsPage,
 });
@@ -120,8 +127,22 @@ function StatsSummary({ view }: { view: StatsWindowView }) {
         label="Cache-read share"
         value={formatPercent(percentOf(totals.cacheReadTokens, totals.totalTokens))}
       />
-      <StatCard label="Usage range" value={formatUsageRange(view.chartRange)} />
+      <StatCard label="Usage range" value={<UsageRange range={view.chartRange} />} />
     </section>
+  );
+}
+
+/** Smaller than a stat so a phone's half-width card fits each date; wraps only between them. */
+function UsageRange({ range }: { range: StatsWindowView["chartRange"] }) {
+  if (range === null) {
+    return formatUsageRange(range);
+  }
+
+  return (
+    <span className="text-lg">
+      <span className="whitespace-nowrap">{range.first}</span>{" "}
+      <span className="whitespace-nowrap">to {range.last}</span>
+    </span>
   );
 }
 
@@ -223,7 +244,7 @@ function RankPanel({
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{entry.key}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {formatInteger(entry.userCount)} users · {formatPercent(percentOf(value, total))}{" "}
+                  {formatCount(entry.userCount, "user")} · {formatPercent(percentOf(value, total))}{" "}
                   of shown
                 </p>
               </div>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatCompact,
+  formatCount,
   formatDateTimeUtc,
   formatDay,
   formatInteger,
@@ -14,6 +15,13 @@ import {
 } from "./format";
 
 describe("number formatters", () => {
+  it("pluralises counted nouns", () => {
+    expect(formatCount(1, "user")).toBe("1 user");
+    expect(formatCount(0, "user")).toBe("0 users");
+    expect(formatCount(1_234, "user")).toBe("1,234 users");
+    expect(formatCount(2, "entry", "entries")).toBe("2 entries");
+  });
+
   it("shows cents below $100 and whole dollars from $100", () => {
     expect(formatUsd(0)).toBe("$0.00");
     expect(formatUsd(42.5)).toBe("$42.50");

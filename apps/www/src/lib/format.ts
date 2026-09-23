@@ -50,6 +50,11 @@ function formatInteger(value: number): string {
   return integer.format(value);
 }
 
+/** "1 user", "2 users": the formatted count plus the singular or plural noun. */
+function formatCount(value: number, singular: string, plural = `${singular}s`): string {
+  return `${formatInteger(value)} ${value === 1 ? singular : plural}`;
+}
+
 /** `value` is already a percentage (0–100). */
 function formatPercent(value: number, fractionDigits = 1): string {
   return `${value.toFixed(fractionDigits)}%`;
@@ -110,6 +115,7 @@ function formatDateTimeUtc(iso: string): string {
 
 export {
   formatCompact,
+  formatCount,
   formatDateTimeUtc,
   formatDay,
   formatInteger,
