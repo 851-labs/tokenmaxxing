@@ -5,6 +5,32 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.0-alpha.0 - 2026-09-23
+
+### Changed
+
+- `tokenmaxxing login` now uses a device-code flow: only the CLI that started a login can collect
+  its token, and the browser asks you to confirm the device before approving. Older CLIs keep
+  working with the previous flow until 2027-11-01.
+- Scheduled syncs re-send the last 21 days every 6 hours (and on the first run after upgrading),
+  so past days that ccusage later re-counts are corrected on the leaderboard. Override the window
+  with `TOKENMAXXING_SYNC_WINDOW_DAYS` (1–90).
+
+### Fixed
+
+- Fixed every command failing with "Missing required flag" (for example `--json`) in builds from
+  the updated CLI framework, including the scheduled `service run --scheduled`.
+- `sync` now exits non-zero when every source fails, and rejects `--since` values that are not a
+  real `YYYY-MM-DD` date.
+- Login and sync errors now show the server's message (for example an expired login code).
+- A stored token is only cleared when the server says it is invalid, not on transient errors.
+
+### Server
+
+- Usage uploads are validated more strictly (dates, token counts, sources, sizes); future-dated
+  days are dropped instead of counted, and bad rows from older CLIs no longer reject a whole sync.
+- API errors now return a consistent JSON body with a `_tag` and `message`.
+
 ## 0.6.0 - 2026-08-05
 
 ### Added
