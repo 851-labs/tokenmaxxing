@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 import type { UsageSource } from "@tokenmaxxing/api-contract";
 
@@ -30,8 +30,8 @@ type LogRoot =
   | { kind: "file"; path: string }
   /** Direct children of `path` whose names match. */
   | { kind: "children"; match: (name: string) => boolean; path: string }
-  /** Every file under `path` (recursively) with one of `extensions`. */
-  | { extensions: readonly string[]; kind: "tree"; path: string };
+  /** Every file under `path` (recursively) whose name matches. */
+  | { kind: "tree"; match: (name: string) => boolean; path: string };
 
 interface LogRootOptions {
   cwd?: string | undefined;
@@ -99,6 +99,98 @@ async function sourceLogRoots(
         ]),
         ...configFiles,
       ];
+    case "grok": {
+      // GROK_HOME is one root (not comma-separated); sessions/*/updates.jsonl + summary.json.
+      const root = nonEmpty(env.GROK_HOME) ?? join(home, ".grok");
+      return [tree(join(root, "sessions"), ["jsonl", "json"]), ...configFiles];
+    }
+    case "antigravity":
+      // ccusage prefers <root>/conversations when it exists; the whole root is a superset.
+      return [
+        ...envPaths(env.ANTIGRAVITY_DATA_DIR, [
+          join(home, ".gemini", "antigravity"),
+          join(home, ".gemini", "antigravity-cli"),
+          join(home, ".gemini", "antigravity-ide"),
+          join(home, ".gemini", "antigravity-backup"),
+          join(home, ".config", "antigravity"),
+        ]).map((path) => tree(path, ["db", "db-wal", "db-journal"])),
+        ...configFiles,
+      ];
+    case "zcode": {
+      const configured = splitPaths(env.ZCODE_HOME) ?? [];
+      const roots = configured.length > 0 ? configured : [join(home, ".zcode")];
+      return [
+        ...roots.map((root) => sqliteDb(join(root, "cli", "db", "db.sqlite"))),
+        ...configFiles,
+      ];
+    }
+    case "amp":
+      return [
+        ...envPaths(env.AMP_DATA_DIR, [join(home, ".local", "share", "amp")]).map((path) =>
+          tree(join(path, "threads"), ["json"]),
+        ),
+        ...configFiles,
+      ];
+    case "qwen":
+      return [
+        ...envPaths(env.QWEN_DATA_DIR, [join(home, ".qwen")]).map((path) =>
+          tree(join(path, "projects"), ["jsonl"]),
+        ),
+        ...configFiles,
+      ];
+    case "kimi":
+      return [
+        ...envPaths(env.KIMI_DATA_DIR, [join(home, ".kimi"), join(home, ".kimi-code")]).map(
+          (path) => tree(join(path, "sessions"), ["jsonl"]),
+        ),
+        ...configFiles,
+      ];
+    case "kilo":
+      return [
+        ...envPaths(env.KILO_DATA_DIR, [join(home, ".local", "share", "kilo")]).map((path) =>
+          sqliteDb(join(path, "kilo.db")),
+        ),
+        ...configFiles,
+      ];
+    case "goose": {
+      const root = nonEmpty(env.GOOSE_PATH_ROOT);
+      const sessionDirs =
+        root === undefined
+          ? [
+              join(home, ".local", "share", "goose", "sessions"),
+              join(home, "Library", "Application Support", "goose", "sessions"),
+              join(home, ".local", "share", "Block", "goose", "sessions"),
+            ]
+          : [join(root, "data", "sessions")];
+      return [...sessionDirs.map((dir) => sqliteDb(join(dir, "sessions.db"))), ...configFiles];
+    }
+    case "droid":
+      return [
+        ...envPaths(env.DROID_SESSIONS_DIR, [join(home, ".factory", "sessions")]).map((path) =>
+          tree(path, ["json"]),
+        ),
+        ...configFiles,
+      ];
+    case "codebuff":
+      return [
+        ...envPaths(
+          env.CODEBUFF_DATA_DIR,
+          ["manicode", "manicode-dev", "manicode-staging"].map((channel) =>
+            join(home, ".config", channel),
+          ),
+        ).map((path) =>
+          tree(basename(path) === "projects" ? path : join(path, "projects"), ["json"]),
+        ),
+        ...configFiles,
+      ];
+    case "openclaw": {
+      const configured = nonEmpty(env.OPENCLAW_DIR);
+      const roots =
+        configured === undefined
+          ? [".openclaw", ".clawdbot", ".moltbot", ".moldbot"].map((dir) => join(home, dir))
+          : (splitPaths(configured) ?? []);
+      return [...roots.map((path) => matchingTree(path, isOpenClawLog)), ...configFiles];
+    }
     case "pi":
       // ccusage.json can add pi paths and named stores this module does not parse.
       if (await anyFileExists(configFiles.map((root) => root.path))) {
@@ -177,7 +269,7 @@ async function fingerprintRoots(roots: readonly LogRoot[]): Promise<SourceFinger
         const path = join(frame.dir, entry.name);
         if (entry.isDirectory()) {
           directories.push(path);
-        } else if (entry.isFile() && hasExtension(entry.name, root.extensions)) {
+        } else if (entry.isFile() && root.match(entry.name)) {
           matched.push(path);
         }
       }
@@ -272,7 +364,42 @@ function expandHome(path: string, home: string): string {
 }
 
 function tree(path: string, extensions: readonly string[]): LogRoot {
-  return { extensions, kind: "tree", path };
+  return matchingTree(path, (name) => hasExtension(name, extensions));
+}
+
+function matchingTree(path: string, match: (name: string) => boolean): LogRoot {
+  return { kind: "tree", match, path };
+}
+
+/** A SQLite database plus the write-ahead log and rollback journal its writes land in. */
+function sqliteDb(path: string): LogRoot {
+  const name = basename(path);
+  return {
+    kind: "children",
+    match: (entry) => entry === name || entry === `${name}-wal` || entry === `${name}-journal`,
+    path: dirname(path),
+  };
+}
+
+/**
+ * OpenClaw transcripts (`*.jsonl`, plus the `.jsonl.deleted.<ts>` and
+ * `.jsonl.reset.<ts>` copies ccusage still counts) and per-agent databases
+ * (`agents/<id>/agent/openclaw-agent.sqlite`).
+ */
+function isOpenClawLog(name: string): boolean {
+  const index = name.indexOf(".jsonl");
+  if (index !== -1) {
+    const suffix = name.slice(index);
+    if (
+      suffix === ".jsonl" ||
+      suffix.startsWith(".jsonl.deleted.") ||
+      suffix.startsWith(".jsonl.reset.")
+    ) {
+      return true;
+    }
+  }
+
+  return /^openclaw-agent\.sqlite(?:-wal|-journal)?$/.test(name);
 }
 
 function file(path: string): LogRoot {
@@ -301,6 +428,6 @@ async function anyFileExists(paths: readonly string[]): Promise<boolean> {
   return found.some(Boolean);
 }
 
-export { fingerprintRoots, fingerprintSource, sourceLogRoots };
+export { fingerprintRoots, fingerprintSource, isOpenClawLog, sourceLogRoots };
 
 export type { LogRoot, LogRootOptions, SourceFingerprint };

@@ -668,7 +668,7 @@ describe("sync source outcomes", () => {
     expect(uploadPayload?.reports).toMatchObject([
       {
         command: [
-          "ccusage@^20.0.19",
+          "ccusage@^20.0.22",
           "codex",
           "daily",
           "--json",
