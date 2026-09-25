@@ -2,6 +2,14 @@ import { Data, Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 
 import packageJson from "../../package.json";
+import {
+  type DistTags,
+  type DistTagVersion,
+  fetchDistTags,
+  LATEST_DIST_TAG,
+  releaseChannel,
+  resolveUpdate,
+} from "../cli-version";
 import { booleanFlag } from "../flags";
 import { humanFrame, humanSpinner, writeJson } from "../output";
 import {
@@ -11,6 +19,7 @@ import {
   findTokenmaxxingCommandInstall,
   isEphemeralCommandPath,
   isServiceInstalled,
+  packageManagerSpecifier,
   refreshServiceAfterUpdate,
   runPackageManagerUpdate,
   servicePathsEffect,
@@ -33,8 +42,11 @@ type VersionCheckResult =
   | {
       _tag: "available";
       currentVersion: string;
+      /** Highest version on the dist-tags this install follows (`latest`, plus its prerelease channel). */
       latestVersion: string;
       shouldUpdate: boolean;
+      /** The dist-tag + version to install; null when already up to date. */
+      target: DistTagVersion | null;
     }
   | {
       _tag: "unavailable";
@@ -71,11 +83,15 @@ class UpgradeFailedError extends Data.TaggedError("UpgradeFailedError")<{
     "error: failed to upgrade tokenmaxxing\nhint: try upgrading with your package manager";
 }
 
-class UpgradeVersionCheckError extends Data.TaggedError("UpgradeVersionCheckError")<{
-  readonly cause: unknown;
-}> {}
-
-const npmLatestUrl = "https://registry.npmjs.org/@851-labs%2Ftokenmaxxing/latest";
+class UpgradePrereleaseVersionCheckError extends Data.TaggedError(
+  "UpgradePrereleaseVersionCheckError",
+)<{
+  readonly currentVersion: string;
+}> {
+  override get message() {
+    return `error: could not check the latest tokenmaxxing versions\ncurrent: ${this.currentVersion}\nhint: prereleases only upgrade after a successful registry check (installing latest could downgrade); retry when online`;
+  }
+}
 
 const upgradeCommand = Command.make(
   "upgrade",
@@ -94,12 +110,15 @@ function upgradeProgram(
     currentVersion?: string;
     env?: Record<string, string | undefined>;
     findCommandInstall?: () => Effect.Effect<CommandInstall | null, unknown>;
-    getLatestVersion?: () => Effect.Effect<string, unknown>;
+    getDistTags?: () => Effect.Effect<DistTags, unknown>;
     home?: string;
     isServiceInstalled?: (paths: ServicePaths) => Effect.Effect<boolean, never>;
     platform?: NodeJS.Platform;
     refreshService?: (options: { commandPath: string }) => Effect.Effect<void, unknown>;
-    runPackageManagerUpdate?: (manager: AutoUpdateManager) => Effect.Effect<void, unknown>;
+    runPackageManagerUpdate?: (
+      manager: AutoUpdateManager,
+      specifier: string,
+    ) => Effect.Effect<void, unknown>;
   } = {},
   options: { json?: boolean | undefined } = {},
 ) {
@@ -137,27 +156,28 @@ function upgradeProgram(
     }
     yield* Effect.sync(() => installSpinner.stop(`Using method: ${manager}`));
 
-    const command = autoUpdateCommandDescription(manager);
     const currentVersion = runtime.currentVersion ?? packageJson.version;
     const versionSpinner = yield* humanSpinner("Checking latest version", options);
     const versionCheck = yield* checkLatestVersion(
       currentVersion,
-      runtime.getLatestVersion ?? getLatestCliVersion,
+      runtime.getDistTags ?? (() => fetchDistTags()),
     );
 
-    if (versionCheck._tag === "available" && !versionCheck.shouldUpdate) {
+    if (versionCheck._tag === "available" && versionCheck.target === null) {
       yield* Effect.sync(() =>
-        versionSpinner.stop(`No updates pending (${versionCheck.currentVersion}); upgrade skipped`),
+        versionSpinner.stop(`Already up to date (${versionCheck.currentVersion}); upgrade skipped`),
       );
       if (options.json) {
         yield* writeJson({
-          command,
+          command: autoUpdateCommandDescription(manager),
           currentVersion: versionCheck.currentVersion,
+          distTag: null,
           latestVersion: versionCheck.latestVersion,
           packageManager: manager,
           service: { status: "skipped" },
           skipped: true,
           status: "ok",
+          targetVersion: null,
           updated: false,
           versionCheck: "ok",
         });
@@ -167,9 +187,19 @@ function upgradeProgram(
       return;
     }
 
-    if (versionCheck._tag === "available") {
+    // Without a registry answer a stable install still runs `@latest` (it
+    // cannot be ahead of it), but a prerelease could be ahead of `latest`.
+    if (versionCheck._tag === "unavailable" && releaseChannel(currentVersion) !== LATEST_DIST_TAG) {
+      yield* Effect.sync(() => versionSpinner.error("Could not check latest version"));
+      return yield* Effect.fail(new UpgradePrereleaseVersionCheckError({ currentVersion }));
+    }
+
+    const target = versionCheck._tag === "available" ? versionCheck.target : null;
+    const specifier = target === null ? LATEST_DIST_TAG : packageManagerSpecifier(target);
+    const command = autoUpdateCommandDescription(manager, specifier);
+    if (target !== null) {
       yield* Effect.sync(() =>
-        versionSpinner.stop(`From ${versionCheck.currentVersion} -> ${versionCheck.latestVersion}`),
+        versionSpinner.stop(`From ${versionCheck.currentVersion} -> ${target.version}`),
       );
     } else {
       yield* Effect.sync(() =>
@@ -178,7 +208,7 @@ function upgradeProgram(
     }
 
     const upgradeSpinner = yield* humanSpinner(`Running ${command}`, options);
-    yield* (runtime.runPackageManagerUpdate ?? runPackageManagerUpdate)(manager).pipe(
+    yield* (runtime.runPackageManagerUpdate ?? runPackageManagerUpdate)(manager, specifier).pipe(
       Effect.tap(() => Effect.sync(() => upgradeSpinner.stop(formatUpgradeSuccess(versionCheck)))),
       Effect.tapError(() => Effect.sync(() => upgradeSpinner.error("Upgrade failed"))),
       Effect.mapError((cause) => new UpgradeFailedError({ cause })),
@@ -195,11 +225,13 @@ function upgradeProgram(
       yield* writeJson({
         command,
         currentVersion: versionCheck.currentVersion,
+        distTag: target?.distTag ?? null,
         latestVersion: versionCheck.latestVersion,
         packageManager: manager,
         service: serviceRefreshJson(refreshResult),
         skipped: false,
         status: "ok",
+        targetVersion: target?.version ?? null,
         updated: true,
         versionCheck: versionCheck._tag === "available" ? "ok" : "unavailable",
       });
@@ -210,106 +242,37 @@ function upgradeProgram(
 
 function checkLatestVersion(
   currentVersion: string,
-  getLatestVersion: () => Effect.Effect<string, unknown>,
+  getDistTags: () => Effect.Effect<DistTags, unknown>,
 ): Effect.Effect<VersionCheckResult, never> {
-  return getLatestVersion().pipe(
+  const unavailable = {
+    _tag: "unavailable" as const,
+    currentVersion,
+    latestVersion: null,
+  };
+
+  return getDistTags().pipe(
     Effect.match({
-      onFailure: () => ({
-        _tag: "unavailable" as const,
-        currentVersion,
-        latestVersion: null,
-      }),
-      onSuccess: (latestVersion) => ({
-        _tag: "available" as const,
-        currentVersion,
-        latestVersion,
-        shouldUpdate: shouldUpdateVersion(currentVersion, latestVersion),
-      }),
+      onFailure: () => unavailable,
+      onSuccess: (distTags): VersionCheckResult => {
+        const { newest, update } = resolveUpdate(currentVersion, distTags);
+        return newest === null
+          ? unavailable
+          : {
+              _tag: "available",
+              currentVersion,
+              latestVersion: newest.version,
+              shouldUpdate: update !== null,
+              target: update,
+            };
+      },
     }),
   );
-}
-
-function getLatestCliVersion(): Effect.Effect<string, UpgradeVersionCheckError> {
-  return Effect.gen(function* () {
-    const response = yield* Effect.tryPromise({
-      try: () =>
-        fetch(npmLatestUrl, {
-          headers: {
-            accept: "application/json",
-          },
-        }),
-      catch: (cause) => new UpgradeVersionCheckError({ cause }),
-    });
-
-    if (!response.ok) {
-      return yield* Effect.fail(
-        new UpgradeVersionCheckError({ cause: `registry returned ${response.status}` }),
-      );
-    }
-
-    const body = yield* Effect.tryPromise({
-      try: () => response.json() as Promise<unknown>,
-      catch: (cause) => new UpgradeVersionCheckError({ cause }),
-    });
-    const latestVersion = registryLatestVersion(body);
-    if (latestVersion === null) {
-      return yield* Effect.fail(
-        new UpgradeVersionCheckError({ cause: "registry response missing version" }),
-      );
-    }
-
-    return latestVersion;
-  });
 }
 
 function formatUpgradeSuccess(versionCheck: VersionCheckResult): string {
   return versionCheck._tag === "available"
     ? `Upgraded to v${versionCheck.latestVersion}`
     : "Upgraded tokenmaxxing";
-}
-
-function registryLatestVersion(body: unknown): string | null {
-  if (body === null || typeof body !== "object" || !("version" in body)) {
-    return null;
-  }
-
-  const version = body.version;
-  return typeof version === "string" && version.length > 0 ? version : null;
-}
-
-function shouldUpdateVersion(currentVersion: string, latestVersion: string): boolean {
-  if (currentVersion === latestVersion) {
-    return false;
-  }
-
-  const comparison = compareStableVersions(currentVersion, latestVersion);
-  return comparison === null ? true : comparison < 0;
-}
-
-function compareStableVersions(left: string, right: string): number | null {
-  const leftParts = stableVersionParts(left);
-  const rightParts = stableVersionParts(right);
-  if (leftParts === null || rightParts === null) {
-    return null;
-  }
-
-  for (let index = 0; index < leftParts.length; index += 1) {
-    const difference = leftParts[index]! - rightParts[index]!;
-    if (difference !== 0) {
-      return difference;
-    }
-  }
-
-  return 0;
-}
-
-function stableVersionParts(version: string): [number, number, number] | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (match === null) {
-    return null;
-  }
-
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
 function refreshInstalledService(
@@ -379,4 +342,5 @@ export {
   UpgradeEphemeralCommandError,
   UpgradeFailedError,
   UpgradeManagerError,
+  UpgradePrereleaseVersionCheckError,
 };

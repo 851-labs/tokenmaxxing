@@ -50,8 +50,6 @@ import {
   serviceRepairReason,
   serviceRepairState,
   serviceRunnerPackageName,
-  serviceRunnerReleaseChannel,
-  serviceRunnerReleaseIsNewer,
   serviceRunnerTarget,
   serviceCompletedUsageReplacementBackfill,
   serviceNeedsUsageReplacementBackfill,
@@ -224,27 +222,6 @@ function makeTestLayer(options: TestLayerOptions) {
 
   return { layer, state };
 }
-
-describe("service runner update versions", () => {
-  it("derives the npm release channel from the current runner version", () => {
-    expect(serviceRunnerReleaseChannel("0.4.18")).toBe("latest");
-    expect(serviceRunnerReleaseChannel("v0.4.18")).toBe("latest");
-    expect(serviceRunnerReleaseChannel("0.4.18-alpha.1")).toBe("alpha");
-    expect(serviceRunnerReleaseChannel("0.4.18-beta.2")).toBe("beta");
-    expect(serviceRunnerReleaseChannel("0.4.18-rc.0+build")).toBe("rc");
-  });
-
-  it("only treats strictly newer semver-like runner versions as installable", () => {
-    expect(serviceRunnerReleaseIsNewer("0.4.18", "0.4.19")).toBe(true);
-    expect(serviceRunnerReleaseIsNewer("0.4.18", "0.5.0")).toBe(true);
-    expect(serviceRunnerReleaseIsNewer("0.4.18", "1.0.0")).toBe(true);
-    expect(serviceRunnerReleaseIsNewer("0.4.18", "0.4.18")).toBe(false);
-    expect(serviceRunnerReleaseIsNewer("0.4.18", "0.4.17")).toBe(false);
-    expect(serviceRunnerReleaseIsNewer("0.4.18-alpha.1", "0.4.18-alpha.2")).toBe(true);
-    expect(serviceRunnerReleaseIsNewer("0.4.18-alpha.2", "0.4.18-alpha.1")).toBe(false);
-    expect(serviceRunnerReleaseIsNewer("0.4.18-alpha.1", "0.4.18")).toBe(true);
-  });
-});
 
 function makeInstallRuntime(
   options: { env?: Record<string, string | undefined>; install?: CommandInstall } = {},
@@ -865,7 +842,7 @@ describe("service auto-update reports", () => {
       runAutoUpdate(
         metadata,
         {
-          fetchLatestVersion: () => Effect.succeed("0.4.12"),
+          fetchDistTags: () => Effect.succeed({ latest: "0.4.12" }),
           now,
         },
         "0.4.12",
@@ -883,7 +860,7 @@ describe("service auto-update reports", () => {
     await expect(
       runAutoUpdate({ ...metadata, autoUpdate: false } as ServiceMetadata, {
         commandExists: () => Effect.succeed(false),
-        fetchLatestVersion: () => Effect.succeed("0.4.13"),
+        fetchDistTags: () => Effect.succeed({ latest: "0.4.13" }),
         now,
       }),
     ).resolves.toMatchObject({
@@ -896,7 +873,7 @@ describe("service auto-update reports", () => {
   it("reports missing service metadata", async () => {
     await expect(
       runAutoUpdate(null, {
-        fetchLatestVersion: () => Effect.succeed("0.4.13"),
+        fetchDistTags: () => Effect.succeed({ latest: "0.4.13" }),
         now,
       }),
     ).resolves.toMatchObject({
@@ -912,7 +889,7 @@ describe("service auto-update reports", () => {
       runAutoUpdate(
         { ...metadata, autoUpdateManager: null },
         {
-          fetchLatestVersion: () => Effect.succeed("0.4.13"),
+          fetchDistTags: () => Effect.succeed({ latest: "0.4.13" }),
           now,
         },
       ),
@@ -926,7 +903,7 @@ describe("service auto-update reports", () => {
   it("reports unknown latest version", async () => {
     await expect(
       runAutoUpdate(metadata, {
-        fetchLatestVersion: () => Effect.succeed(null),
+        fetchDistTags: () => Effect.succeed(null),
         now,
       }),
     ).resolves.toMatchObject({
@@ -940,7 +917,7 @@ describe("service auto-update reports", () => {
     await expect(
       runAutoUpdate(metadata, {
         commandExists: () => Effect.succeed(false),
-        fetchLatestVersion: () => Effect.succeed("0.4.13"),
+        fetchDistTags: () => Effect.succeed({ latest: "0.4.13" }),
         now,
       }),
     ).resolves.toMatchObject({
@@ -954,7 +931,7 @@ describe("service auto-update reports", () => {
     await expect(
       runAutoUpdate(metadata, {
         commandExists: () => Effect.succeed(true),
-        fetchLatestVersion: () => Effect.succeed("0.4.13"),
+        fetchDistTags: () => Effect.succeed({ latest: "0.4.13" }),
         now,
         runPackageManagerUpdate: () => Effect.fail(new Error("npm failed")),
       }),
@@ -969,7 +946,7 @@ describe("service auto-update reports", () => {
     await expect(
       runAutoUpdate(metadata, {
         commandExists: () => Effect.succeed(true),
-        fetchLatestVersion: () => Effect.succeed("0.4.13"),
+        fetchDistTags: () => Effect.succeed({ latest: "0.4.13" }),
         now,
         readInstalledVersion: () => Effect.succeed("0.4.12"),
         runPackageManagerUpdate: () => Effect.void,
@@ -985,7 +962,7 @@ describe("service auto-update reports", () => {
     await expect(
       runAutoUpdate(metadata, {
         commandExists: () => Effect.succeed(true),
-        fetchLatestVersion: () => Effect.succeed("0.4.13"),
+        fetchDistTags: () => Effect.succeed({ latest: "0.4.13" }),
         now,
         readInstalledVersion: () => Effect.succeed("0.4.13"),
         runPackageManagerUpdate: () => Effect.void,
@@ -994,6 +971,106 @@ describe("service auto-update reports", () => {
       installedVersion: "0.4.13",
       reason: null,
       status: "success",
+    });
+  });
+
+  describe("package-manager release channels", () => {
+    async function runChannelUpdate(currentVersion: string, distTags: Record<string, string>) {
+      const updates: Array<{ manager: string; specifier: string }> = [];
+      const report = await runAutoUpdate(
+        metadata,
+        {
+          commandExists: () => Effect.succeed(true),
+          fetchDistTags: () => Effect.succeed(distTags),
+          now,
+          readInstalledVersion: () =>
+            Effect.succeed(
+              updates.at(-1)?.specifier === "latest"
+                ? distTags.latest!
+                : (updates.at(-1)?.specifier ?? currentVersion),
+            ),
+          runPackageManagerUpdate: (manager, specifier) =>
+            Effect.sync(() => {
+              updates.push({ manager, specifier });
+            }),
+        },
+        currentVersion,
+      );
+
+      return { report, updates };
+    }
+
+    it("never downgrades an alpha runner to an older latest", async () => {
+      const { report, updates } = await runChannelUpdate("0.7.0-alpha.0", {
+        alpha: "0.7.0-alpha.0",
+        latest: "0.6.0",
+      });
+
+      expect(updates).toEqual([]);
+      expect(report).toMatchObject({
+        currentVersion: "0.7.0-alpha.0",
+        installedVersion: "0.7.0-alpha.0",
+        latestVersion: "0.7.0-alpha.0",
+        status: "not-needed",
+      });
+    });
+
+    it("keeps an alpha runner when only an older latest is published", async () => {
+      const { report, updates } = await runChannelUpdate("0.7.0-alpha.0", { latest: "0.6.0" });
+
+      expect(updates).toEqual([]);
+      expect(report).toMatchObject({ latestVersion: "0.6.0", status: "not-needed" });
+    });
+
+    it("updates an alpha runner along the alpha channel by exact version", async () => {
+      const { report, updates } = await runChannelUpdate("0.7.0-alpha.9", {
+        alpha: "0.7.0-alpha.10",
+        latest: "0.6.0",
+      });
+
+      expect(updates).toEqual([{ manager: "npm", specifier: "0.7.0-alpha.10" }]);
+      expect(report).toMatchObject({
+        installedVersion: "0.7.0-alpha.10",
+        latestVersion: "0.7.0-alpha.10",
+        status: "success",
+      });
+    });
+
+    it("graduates an alpha runner to the release on latest", async () => {
+      const { report, updates } = await runChannelUpdate("0.7.0-alpha.1", {
+        alpha: "0.7.0-alpha.1",
+        latest: "0.7.0",
+      });
+
+      expect(updates).toEqual([{ manager: "npm", specifier: "latest" }]);
+      expect(report).toMatchObject({ installedVersion: "0.7.0", status: "success" });
+    });
+
+    it("keeps a stable runner off prerelease channels", async () => {
+      const { report, updates } = await runChannelUpdate("0.6.0", {
+        alpha: "0.7.0-alpha.1",
+        latest: "0.6.0",
+      });
+
+      expect(updates).toEqual([]);
+      expect(report).toMatchObject({ latestVersion: "0.6.0", status: "not-needed" });
+    });
+
+    it("updates a stable runner through latest", async () => {
+      const { report, updates } = await runChannelUpdate("0.6.0", {
+        alpha: "0.7.0-alpha.1",
+        latest: "0.6.1",
+      });
+
+      expect(updates).toEqual([{ manager: "npm", specifier: "latest" }]);
+      expect(report).toMatchObject({ installedVersion: "0.6.1", status: "success" });
+    });
+
+    it("never downgrades a stable runner that is ahead of latest", async () => {
+      const { report, updates } = await runChannelUpdate("0.6.1", { latest: "0.6.0" });
+
+      expect(updates).toEqual([]);
+      expect(report).toMatchObject({ latestVersion: "0.6.0", status: "not-needed" });
     });
   });
 
@@ -1065,7 +1142,9 @@ describe("service auto-update reports", () => {
         reason: null,
         status: "success",
       });
-      expect(fetchedSpecifiers).toEqual([testCase.specifier]);
+      expect(fetchedSpecifiers).toEqual(
+        testCase.specifier === "latest" ? ["latest"] : [testCase.specifier, "latest"],
+      );
     }
   });
 
@@ -1096,31 +1175,76 @@ describe("service auto-update reports", () => {
     });
   });
 
-  it("does not install a registry runner candidate from a different release channel", async () => {
+  it("never downgrades a prerelease registry runner to an older latest", async () => {
     const paths = servicePaths({
       env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
       home: "/Users/alex",
       platform: "darwin",
     });
+    const releases: Record<string, string> = { alpha: "0.7.0-alpha.0", latest: "0.6.0" };
 
     await expect(
       runAutoUpdate(
         registryMetadata,
         {
-          fetchRunnerRelease: () => Effect.succeed(registryRelease("0.4.18")),
+          fetchRunnerRelease: (_target, distTag) =>
+            Effect.succeed(registryRelease(releases[distTag]!)),
           installRunnerRelease: () => Effect.fail(new Error("should not install")),
           now,
         },
-        "0.4.18-alpha.1",
+        "0.7.0-alpha.0",
         paths!,
       ),
     ).resolves.toMatchObject({
-      installedVersion: "0.4.18-alpha.1",
-      latestVersion: "0.4.18",
+      installedVersion: "0.7.0-alpha.0",
+      latestVersion: "0.7.0-alpha.0",
       manager: "registry",
       reason: null,
       status: "not-needed",
     });
+  });
+
+  it("graduates a prerelease registry runner once its release lands on latest", async () => {
+    const paths = servicePaths({
+      env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
+      home: "/Users/alex",
+      platform: "darwin",
+    })!;
+    const releases: Record<string, string | null> = { alpha: "0.4.18-alpha.1", latest: "0.4.18" };
+    const installed: string[] = [];
+
+    await expect(
+      runAutoUpdate(
+        registryMetadata,
+        {
+          fetchRunnerRelease: (_target, distTag) => {
+            const version = releases[distTag];
+            return Effect.succeed(
+              version === null || version === undefined ? null : registryRelease(version),
+            );
+          },
+          installRunnerRelease: (release) =>
+            Effect.sync(() => {
+              installed.push(release.version);
+              return {
+                packageName: release.packageName,
+                path: `/tmp/tokenmaxxing/service-runners/${release.version}/darwin-arm64/tokenmaxxing`,
+                target: release.target,
+                version: release.version,
+              };
+            }),
+          now,
+        },
+        "0.4.18-alpha.1",
+        paths,
+      ),
+    ).resolves.toMatchObject({
+      installedVersion: "0.4.18",
+      latestVersion: "0.4.18",
+      manager: "registry",
+      status: "success",
+    });
+    expect(installed).toEqual(["0.4.18"]);
   });
 
   it("reports registry runner install failures without blocking sync", async () => {
@@ -1204,8 +1328,13 @@ describe("service auto-update reports", () => {
         reason: null,
         status: "success",
       });
-      expect(fetchedTargets).toEqual(["darwin-x64", "darwin-x64-baseline"]);
-      expect(fetchedSpecifiers).toEqual(["alpha", "alpha"]);
+      expect(fetchedTargets).toEqual([
+        "darwin-x64",
+        "darwin-x64",
+        "darwin-x64-baseline",
+        "darwin-x64-baseline",
+      ]);
+      expect(fetchedSpecifiers).toEqual(["alpha", "latest", "alpha", "latest"]);
       expect(installedTargets).toEqual(["darwin-x64-baseline"]);
     } finally {
       await rm(dir, { force: true, recursive: true });
