@@ -9,11 +9,11 @@ import {
   type LeaderboardResponse,
 } from "@tokenmaxxing/api-contract";
 import * as Schema from "effect/Schema";
+import { useState } from "react";
 
 import { AGENT_ICONS } from "./-components/agent-icons";
 import { BootstrapCommand } from "./-components/bootstrap-command";
 import { FAQ_ITEMS } from "./-components/faq-items";
-import { DESKTOP_ONLY_CELL, metricColumnClassName } from "./-lib/leaderboard-columns";
 import { Avatar } from "../../components/ui/avatar";
 import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
 import { SUPPORTED_AGENTS } from "../../lib/agents";
@@ -56,15 +56,27 @@ const AGENTS_WITH_ICONS = SUPPORTED_AGENTS.flatMap((agent) => {
 
 type LeaderboardEntry = (typeof LeaderboardResponse.Type)["entries"][number];
 
-/** Tighter gutters on phones, where every column competes for ~300px. */
-const CELL = "px-2 py-3 sm:px-3";
-const USER_CELL = cn(CELL, "w-full max-w-0 sm:w-1/3");
-const NUMBER_CELL = cn(CELL, "whitespace-nowrap text-right tabular-nums");
-/** Active days / Last active: `sm` and up only, so phone gutters never apply. */
-const DETAIL_CELL = cn(
-  "whitespace-nowrap p-3 text-right tabular-nums text-muted-foreground",
-  DESKTOP_ONLY_CELL,
+/** Tighter gutters on phones, so more columns fit before the table scrolls. */
+const CELL = "whitespace-nowrap px-2 py-3 sm:px-3";
+const NUMBER_CELL = cn(CELL, "text-right tabular-nums");
+const DETAIL_CELL = cn(NUMBER_CELL, "text-muted-foreground");
+
+/**
+ * Rank and user stay pinned while the numbers scroll under them. The rank
+ * column has a fixed width so the user column knows its sticky offset (it fits
+ * a three-digit rank at either gutter). Pinned cells inherit their row's
+ * background, so rows are painted with opaque mixes rather than alpha tints.
+ */
+const RANK_CELL = "sticky left-0 w-12 min-w-12 bg-inherit py-3 pr-2 pl-2 sm:pl-3";
+const USER_CELL = cn(
+  CELL,
+  "sticky left-12 bg-inherit",
+  // A hairline and soft shadow mark the pinned edge once rows scroll under it.
+  "group-data-scrolled/board:shadow-[inset_-1px_0_0_var(--color-border),6px_0_8px_-6px_rgb(0_0_0/0.2)]",
 );
+const HEADER_ROW_BG = "bg-[color-mix(in_oklab,var(--color-muted)_50%,var(--color-background))]";
+const BODY_ROW_BG =
+  "bg-background hover:bg-[color-mix(in_oklab,var(--color-muted)_40%,var(--color-background))]";
 
 const Route = createFileRoute("/(home)/")({
   validateSearch: leaderboardSearchSchema,
@@ -139,7 +151,7 @@ function LeaderboardPage() {
           </div>
         </header>
 
-        <LeaderboardTable entries={data.entries} metric={metric} />
+        <LeaderboardTable entries={data.entries} />
       </section>
 
       <FaqSection />
@@ -147,90 +159,89 @@ function LeaderboardPage() {
   );
 }
 
-function LeaderboardTable({
-  entries,
-  metric,
-}: {
-  entries: readonly LeaderboardEntry[];
-  metric: LeaderboardMetric;
-}) {
-  const spendColumn = metricColumnClassName("spend", metric);
-  const tokensColumn = metricColumnClassName("tokens", metric);
+function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] }) {
+  const [scrolled, setScrolled] = useState(false);
 
-  return (
-    <div className="overflow-hidden border-y border-border">
-      {entries.length === 0 ? (
+  if (entries.length === 0) {
+    return (
+      <div className="border-y border-border">
         <p className="p-6 text-sm text-muted-foreground">
           Nobody on the board yet — be the first to sync.
         </p>
-      ) : (
-        <table className="w-full text-sm">
-          <caption className="sr-only">
-            Leaderboard of top users by LLM token spend and usage
-          </caption>
-          <thead>
-            <tr className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
-              <th className={cn(CELL, "w-10 font-medium sm:w-12")} scope="col">
-                #
-              </th>
-              {/* max-w-0 drops the column's min-content width, so it can shrink
-                  and long logins truncate instead of widening the table. Phones
-                  give it all the space the numbers leave; from sm up a third of
-                  the table keeps the desktop column balance. */}
-              <th className={cn(USER_CELL, "font-medium")} scope="col">
-                User
-              </th>
-              <th className={cn(NUMBER_CELL, "font-medium", spendColumn)} scope="col">
-                Spend
-              </th>
-              <th className={cn(NUMBER_CELL, "font-medium", tokensColumn)} scope="col">
-                Tokens
-              </th>
-              <th className={cn(DETAIL_CELL, "font-medium")} scope="col">
-                Active days
-              </th>
-              <th className={cn(DETAIL_CELL, "font-medium")} scope="col">
-                Last active
-              </th>
+      </div>
+    );
+  }
+
+  return (
+    // Phones get every column: the table scrolls sideways inside this frame
+    // (never the page), and it is focusable so keyboards can scroll it too.
+    <div
+      aria-label="Leaderboard table"
+      className="group/board overflow-x-auto overscroll-x-contain border-y border-border outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
+      data-scrolled={scrolled ? "" : undefined}
+      onScroll={(event) => setScrolled(event.currentTarget.scrollLeft > 0)}
+      role="region"
+      tabIndex={0}
+    >
+      <table className="w-max min-w-full text-sm">
+        <caption className="sr-only">Leaderboard of top users by LLM token spend and usage</caption>
+        <thead>
+          <tr
+            className={cn(
+              "border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground",
+              HEADER_ROW_BG,
+            )}
+          >
+            <th className={cn(RANK_CELL, "font-medium")} scope="col">
+              #
+            </th>
+            <th className={cn(USER_CELL, "font-medium")} scope="col">
+              User
+            </th>
+            <th className={cn(NUMBER_CELL, "font-medium")} scope="col">
+              Spend
+            </th>
+            <th className={cn(NUMBER_CELL, "font-medium")} scope="col">
+              Tokens
+            </th>
+            <th className={cn(NUMBER_CELL, "font-medium")} scope="col">
+              Active days
+            </th>
+            <th className={cn(NUMBER_CELL, "font-medium")} scope="col">
+              Last active
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr
+              className={cn(
+                "border-b border-border transition-colors last:border-b-0",
+                BODY_ROW_BG,
+              )}
+              key={entry.user.login}
+            >
+              <td className={cn(RANK_CELL, "font-mono tabular-nums text-muted-foreground")}>
+                {entry.rank}
+              </td>
+              <td className={USER_CELL}>
+                <Link
+                  className="flex items-center gap-2.5 font-medium hover:underline"
+                  params={{ user: entry.user.login }}
+                  to="/$user"
+                >
+                  <Avatar alt={`${entry.user.login} avatar`} size={24} src={entry.user.avatarUrl} />
+                  {entry.user.login}
+                </Link>
+              </td>
+              <td className={cn(NUMBER_CELL, "font-mono")}>{formatUsd(entry.spendUsd)}</td>
+              <td className={cn(NUMBER_CELL, "font-mono")}>{formatTokens(entry.totalTokens)}</td>
+              <td className={DETAIL_CELL}>{entry.activeDays}</td>
+              <td className={DETAIL_CELL}>{entry.lastDate ?? "—"}</td>
             </tr>
-          </thead>
-          <tbody>
-            {entries.map((entry) => (
-              <tr
-                className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/40"
-                key={entry.user.login}
-              >
-                <td className={cn(CELL, "font-mono tabular-nums text-muted-foreground")}>
-                  {entry.rank}
-                </td>
-                <td className={USER_CELL}>
-                  <Link
-                    className="flex min-w-0 items-center gap-2.5 font-medium hover:underline"
-                    params={{ user: entry.user.login }}
-                    title={entry.user.login}
-                    to="/$user"
-                  >
-                    <Avatar
-                      alt={`${entry.user.login} avatar`}
-                      size={24}
-                      src={entry.user.avatarUrl}
-                    />
-                    <span className="min-w-0 truncate">{entry.user.login}</span>
-                  </Link>
-                </td>
-                <td className={cn(NUMBER_CELL, "font-mono", spendColumn)}>
-                  {formatUsd(entry.spendUsd)}
-                </td>
-                <td className={cn(NUMBER_CELL, "font-mono", tokensColumn)}>
-                  {formatTokens(entry.totalTokens)}
-                </td>
-                <td className={DETAIL_CELL}>{entry.activeDays}</td>
-                <td className={DETAIL_CELL}>{entry.lastDate ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
