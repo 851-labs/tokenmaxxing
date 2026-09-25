@@ -73,12 +73,13 @@ const gunzipPromise = promisify(gunzip);
 const require = createRequire(import.meta.url);
 
 const SERVICE_LABEL = "sh.tokenmaxxing.sync";
-const SERVICE_TEMPLATE_VERSION = 5;
+const SERVICE_TEMPLATE_VERSION = 6;
 const SYSTEMD_NAME = "tokenmaxxing-sync";
 const WINDOWS_TASK_NAME = "tokenmaxxing-sync";
 const POSIX_WRAPPER_NAME = "tokenmaxxing.sh";
 const LEGACY_POSIX_WRAPPER_NAME = "service-sync.sh";
 const WINDOWS_WRAPPER_NAME = "service-sync.cmd";
+const WINDOWS_LAUNCHER_NAME = "service-sync.vbs";
 const PACKAGE_NAME = "@851-labs/tokenmaxxing";
 const SERVICE_RUNNER_DIR_NAME = "service-runners";
 const SERVICE_RUNNER_POINTER_NAME = "service-runner-current";
@@ -350,6 +351,8 @@ type DoctorAuthConfig =
     };
 
 type DoctorStatus = "info" | "ok" | "warn";
+
+type WindowsLauncherStatus = "current" | "missing" | "outdated";
 
 interface DoctorCheck {
   detail: string;
@@ -913,6 +916,9 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
       const lockStatus = yield* readServiceLockStatus(paths.lockPath, now);
       const nativeStatus = yield* readNativeSchedulerStatus(paths);
       const reloadRequired = serviceReloadRequired(metadata, state);
+      const launcherPath = windowsLauncherPath(paths);
+      const launcherStatus =
+        launcherPath === null ? null : yield* readWindowsLauncherStatus(launcherPath);
       const status = {
         arch: state?.lastArch ?? null,
         autoUpdate: formatServiceStatusAutoUpdate(metadata),
@@ -937,6 +943,8 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
         lastSuccessDate: serviceLastSuccessDate(state) ?? null,
         lastUpserted: state?.lastUpserted ?? null,
         lastVersion: state?.lastCliVersion ?? null,
+        launcherPath,
+        launcherStatus,
         lock: formatServiceLockStatus(lockStatus),
         logPath: paths.logPath,
         reloadRequired,
@@ -1010,6 +1018,13 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
         }
         console.log(`Lock: ${status.lock}`);
         console.log(`Wrapper: ${status.wrapperPath}`);
+        if (status.launcherPath !== null) {
+          console.log(
+            `Launcher: ${status.launcherPath}${
+              status.launcherStatus === "current" ? "" : ` (${status.launcherStatus})`
+            }`,
+          );
+        }
         console.log(`Log: ${status.logPath}`);
       });
     }),
@@ -1076,6 +1091,14 @@ function serviceDoctorEffect(options: { json?: boolean | undefined } = {}) {
       const nativeStatus = yield* readNativeSchedulerStatus(paths);
       const reloadRequired = serviceReloadRequired(metadata, state);
       const wrapperExists = yield* fileExists(paths.wrapperPath);
+      const launcherPath = windowsLauncherPath(paths);
+      const launcherCheck =
+        launcherPath === null
+          ? null
+          : windowsLauncherDoctorCheck(
+              launcherPath,
+              yield* readWindowsLauncherStatus(launcherPath),
+            );
       const runnerPointerExists = yield* fileExists(paths.runnerPointerPath);
       const definitionExists =
         paths.definitionPath === null ? installed : yield* fileExists(paths.definitionPath);
@@ -1124,6 +1147,7 @@ function serviceDoctorEffect(options: { json?: boolean | undefined } = {}) {
           paths.definitionPath ?? "tracked by Windows Task Scheduler metadata",
         ),
         doctorCheck(wrapperExists ? "ok" : "warn", "wrapper", paths.wrapperPath),
+        ...(launcherCheck === null ? [] : [launcherCheck]),
         doctorServiceEnvCheck(wrapperContents),
         doctorCheck(
           runnerPointerExists ? "ok" : "warn",
@@ -3212,6 +3236,12 @@ function doctorCheck(status: DoctorStatus, label: string, detail: string): Docto
   return { detail, label, status };
 }
 
+function windowsLauncherDoctorCheck(path: string, status: WindowsLauncherStatus): DoctorCheck {
+  return status === "current"
+    ? doctorCheck("ok", "launcher", path)
+    : doctorCheck("warn", "launcher", `${path} ${status}; repair with ${serviceRepairCommand()}`);
+}
+
 function doctorLine(check: DoctorCheck): string {
   return `${check.status.toUpperCase().padEnd(4)} ${check.label.padEnd(12)} ${check.detail}`;
 }
@@ -3329,6 +3359,20 @@ function legacyWindowsTaskName(time: ScheduleTime): string {
 
 function windowsTaskNames(): string[] {
   return [windowsTaskName(), ...LEGACY_SCHEDULE_TIMES.map((time) => legacyWindowsTaskName(time))];
+}
+
+function windowsLauncherPath(paths: ServicePaths): string | null {
+  return paths.backend === "windows-task-scheduler"
+    ? join(paths.configDir, WINDOWS_LAUNCHER_NAME)
+    : null;
+}
+
+// Task Scheduler runs actions from its native (64-bit on x64/arm64) host, so %SystemRoot%\System32
+// is always the native wscript.exe there, even if this CLI runs under WOW64 file-system redirection.
+function windowsScriptHostPath(env: Record<string, string | undefined> = process.env): string {
+  const systemRoot = env["SystemRoot"] ?? env["SYSTEMROOT"] ?? "C:\\Windows";
+
+  return `${systemRoot.replace(/[\\/]+$/, "")}\\System32\\wscript.exe`;
 }
 
 function renderLaunchdStartInterval(): string {
@@ -3881,6 +3925,30 @@ exit /b %ERRORLEVEL%\r
 `;
 }
 
+// schtasks can only register interactive tasks, so a task that starts the .cmd wrapper directly
+// opens a console window on every run. The task starts this launcher with wscript.exe (a GUI
+// host) instead, which runs the wrapper with a hidden window (style 0), waits for it, and exits
+// with its code so Task Scheduler still records the sync result. cmd.exe keeps its hidden console,
+// so the runner and ccusage children inherit it rather than allocating visible ones.
+//
+// The launcher resolves the wrapper next to itself instead of embedding its path: wscript reads
+// .vbs files in the ANSI code page, which would mangle non-ASCII profile paths, so the script
+// stays pure ASCII.
+function renderWindowsLauncher(): string {
+  return `' Generated by tokenmaxxing. Runs ${WINDOWS_WRAPPER_NAME} without a console window.\r
+Option Explicit\r
+Dim shell, scriptPath, wrapperPath, exitCode\r
+scriptPath = WScript.ScriptFullName\r
+wrapperPath = Left(scriptPath, InStrRev(scriptPath, "\\")) & "${WINDOWS_WRAPPER_NAME}"\r
+Set shell = CreateObject("WScript.Shell")\r
+On Error Resume Next\r
+exitCode = shell.Run("""" & wrapperPath & """", 0, True)\r
+If Err.Number <> 0 Then exitCode = 127\r
+On Error GoTo 0\r
+WScript.Quit exitCode\r
+`;
+}
+
 function renderWindowsLogRotation(logPath: string): string {
   const quotedLogPath = cmdQuote(logPath);
   const moves = Array.from({ length: SERVICE_LOG_ROTATIONS - 1 }, (_, index) => {
@@ -3962,6 +4030,10 @@ function writeServiceFiles(
       if (paths.backend !== "windows-task-scheduler") {
         await chmod(paths.wrapperPath, 0o755);
       }
+      const launcherPath = windowsLauncherPath(paths);
+      if (launcherPath !== null) {
+        await writeFileAtomic(launcherPath, renderWindowsLauncher());
+      }
       await writeFileAtomic(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
 
       if (paths.backend === "launchd" && paths.definitionPath !== null) {
@@ -3980,6 +4052,10 @@ function removeServiceFiles(paths: ServicePaths): Effect.Effect<void, unknown> {
   return Effect.tryPromise({
     try: async () => {
       await rm(paths.wrapperPath, { force: true });
+      const launcherPath = windowsLauncherPath(paths);
+      if (launcherPath !== null) {
+        await rm(launcherPath, { force: true });
+      }
       for (const legacyWrapperPath of legacyServiceWrapperPaths(paths)) {
         await rm(legacyWrapperPath, { force: true });
       }
@@ -4038,7 +4114,16 @@ function installNativeScheduler(paths: ServicePaths): Effect.Effect<void, unknow
   });
 }
 
-function windowsTaskCreateArgs(paths: ServicePaths): string[] {
+// The /TR value is one Windows command line (Node quotes it as a single argv entry for schtasks).
+// Task Scheduler splits it into the quoted program path and wscript's arguments: //B suppresses
+// script error dialogs, //E pins the VBScript engine, and the quoted launcher path may contain
+// spaces or parentheses.
+function windowsTaskCreateArgs(
+  paths: ServicePaths,
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const launcherPath = join(paths.configDir, WINDOWS_LAUNCHER_NAME);
+
   return [
     "/Create",
     "/TN",
@@ -4048,7 +4133,7 @@ function windowsTaskCreateArgs(paths: ServicePaths): string[] {
     "/MO",
     String(SERVICE_INTERVAL_MINUTES),
     "/TR",
-    cmdQuote(paths.wrapperPath),
+    `${cmdQuote(windowsScriptHostPath(env))} //B //NoLogo //E:VBScript ${cmdQuote(launcherPath)}`,
     "/F",
   ];
 }
@@ -4488,6 +4573,18 @@ function isServiceInstalled(paths: ServicePaths): Effect.Effect<boolean, never> 
   return paths.definitionPath === null ? Effect.succeed(false) : fileExists(paths.definitionPath);
 }
 
+function readWindowsLauncherStatus(path: string): Effect.Effect<WindowsLauncherStatus, never> {
+  return Effect.tryPromise({
+    try: () => readFile(path, "utf8"),
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.map((content): WindowsLauncherStatus =>
+      content === renderWindowsLauncher() ? "current" : "outdated",
+    ),
+    Effect.catch(() => Effect.succeed<WindowsLauncherStatus>("missing")),
+  );
+}
+
 function fileExists(path: string): Effect.Effect<boolean, never> {
   return Effect.tryPromise({
     try: async () => {
@@ -4590,11 +4687,14 @@ export {
   deterministicServiceJitterMs,
   readServiceMetadata,
   readCurrentServiceRunnerInstall,
+  readWindowsLauncherStatus,
+  removeServiceFiles,
   resolveExecutableSiblingPackageJson,
   resolveServiceRunnerPackageJson,
   renderLaunchdPlist,
   renderServiceWrapper,
   renderSystemdTimer,
+  renderWindowsLauncher,
   refreshServiceAfterUpdate,
   installServiceRunner,
   installServiceRunnerForRepair,
@@ -4606,6 +4706,7 @@ export {
   serviceRepairCanInstallScheduler,
   serviceLockCanBeReplaced,
   serviceRepairNeedsSchedulerInstall,
+  serviceReloadRequired,
   serviceRepairReason,
   serviceRepairState,
   serviceRunnerPackageName,
@@ -4631,8 +4732,12 @@ export {
   packageManagerSpecifier,
   runPackageManagerUpdate,
   verifyNpmIntegrity,
+  windowsLauncherDoctorCheck,
+  windowsLauncherPath,
+  windowsScriptHostPath,
   windowsTaskNames,
   windowsTaskCreateArgs,
+  writeServiceFiles,
   ServiceCommandNotFoundError,
   ServiceEnvTokenError,
   ServiceEphemeralCommandError,

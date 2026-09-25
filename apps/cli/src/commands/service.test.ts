@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 
@@ -43,14 +43,18 @@ import {
   isTransientCommandShimPath,
   legacyServiceWrapperPaths,
   readCurrentServiceRunnerInstall,
+  readWindowsLauncherStatus,
+  removeServiceFiles,
   resolveExecutableSiblingPackageJson,
   renderLaunchdPlist,
   renderServiceWrapper,
   renderSystemdTimer,
+  renderWindowsLauncher,
   runServiceAutoUpdate,
   scheduleDescription,
   serviceLockCanBeReplaced,
   serviceRepairCanInstallScheduler,
+  serviceReloadRequired,
   serviceRepairNeedsSchedulerInstall,
   serviceRepairReason,
   serviceRepairState,
@@ -76,8 +80,12 @@ import {
   servicePaths,
   serviceStateJson,
   verifyNpmIntegrity,
+  windowsLauncherDoctorCheck,
+  windowsLauncherPath,
+  windowsScriptHostPath,
   windowsTaskCreateArgs,
   windowsTaskNames,
+  writeServiceFiles,
 } from "./service";
 import type { SyncResult } from "./sync";
 
@@ -763,7 +771,7 @@ describe("native scheduler templates", () => {
     });
 
     expect(windowsPaths).not.toBeNull();
-    expect(windowsTaskCreateArgs(windowsPaths!)).toEqual([
+    expect(windowsTaskCreateArgs(windowsPaths!, { SystemRoot: "C:\\Windows" })).toEqual([
       "/Create",
       "/TN",
       "tokenmaxxing-sync",
@@ -772,11 +780,257 @@ describe("native scheduler templates", () => {
       "/MO",
       "5",
       "/TR",
-      '"C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync.cmd"',
+      '"C:\\Windows\\System32\\wscript.exe" //B //NoLogo //E:VBScript "C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync.vbs"',
       "/F",
     ]);
   });
 });
+
+describe("Windows hidden launcher", () => {
+  const windowsPaths = (configDir: string) =>
+    servicePaths({
+      env: { TOKENMAXXING_CONFIG_DIR: configDir },
+      home: "C:\\Users\\alex",
+      platform: "win32",
+    })!;
+
+  it("starts the task through wscript instead of the console wrapper", () => {
+    const paths = windowsPaths(
+      "C:\\Users\\Zoë O'Neil (Work)\\AppData\\Roaming\\token maxxing & co",
+    );
+    const taskRun = windowsTaskCreateArgs(paths, { SystemRoot: "D:\\WINDOWS\\" }).at(-2)!;
+
+    // Task Scheduler splits /TR like any Windows command line, and wscript parses its own
+    // arguments the same way, so the launcher path must survive as one argument.
+    expect(splitWindowsCommandLine(taskRun)).toEqual([
+      "D:\\WINDOWS\\System32\\wscript.exe",
+      "//B",
+      "//NoLogo",
+      "//E:VBScript",
+      windowsLauncherPath(paths),
+    ]);
+    expect(windowsLauncherPath(paths)).toBe(join(paths.configDir, "service-sync.vbs"));
+    expect(taskRun).not.toContain("service-sync.cmd");
+    expect(taskRun.length).toBeLessThanOrEqual(261);
+  });
+
+  it("uses the native System32 script host", () => {
+    expect(windowsScriptHostPath({ SystemRoot: "C:\\Windows" })).toBe(
+      "C:\\Windows\\System32\\wscript.exe",
+    );
+    expect(windowsScriptHostPath({ SYSTEMROOT: "E:\\Win" })).toBe("E:\\Win\\System32\\wscript.exe");
+    expect(windowsScriptHostPath({})).toBe("C:\\Windows\\System32\\wscript.exe");
+    expect(windowsScriptHostPath({ SystemRoot: "C:\\Windows" })).not.toMatch(/SysWOW64|Sysnative/i);
+  });
+
+  it("only tracks a launcher for the Windows backend", () => {
+    const darwinPaths = servicePaths({
+      env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
+      home: "/Users/alex",
+      platform: "darwin",
+    })!;
+
+    expect(windowsLauncherPath(darwinPaths)).toBeNull();
+  });
+
+  it("renders a pure-ASCII VBScript that hides the wrapper and propagates its exit code", () => {
+    const launcher = renderWindowsLauncher();
+    const lines = launcher.split("\r\n");
+
+    expect(launcher.endsWith("\r\n")).toBe(true);
+    expect(launcher.replaceAll("\r\n", "")).not.toMatch(/[\r\n]/);
+    expect(launcher).toMatch(/^[\x20-\x7e\r\n]*$/);
+    expect(lines).toContain("Option Explicit");
+    // The wrapper is resolved next to the launcher, so no profile path is embedded.
+    expect(lines).toContain(
+      'wrapperPath = Left(scriptPath, InStrRev(scriptPath, "\\")) & "service-sync.cmd"',
+    );
+    expect(basename(windowsPaths("C:\\tokenmaxxing").wrapperPath)).toBe("service-sync.cmd");
+    // Style 0 hides the console; waiting returns the wrapper exit code for WScript.Quit.
+    expect(lines).toContain('exitCode = shell.Run("""" & wrapperPath & """", 0, True)');
+    expect(lines).toContain("If Err.Number <> 0 Then exitCode = 127");
+    expect(lines.at(-2)).toBe("WScript.Quit exitCode");
+    expect(launcher).not.toContain("C:\\");
+    expect(launcher).not.toMatch(/cmd\.exe|powershell/i);
+  });
+
+  it("passes /TR to schtasks as one argument through Windows argv quoting", () => {
+    const args = windowsTaskCreateArgs(
+      windowsPaths("C:\\Users\\Zoë O'Neil (Work)\\token maxxing & co\\"),
+      { SystemRoot: "C:\\Windows" },
+    );
+    // execFile quotes each argument the way libuv does before CreateProcessW; schtasks parses
+    // its command line back with CommandLineToArgvW rules.
+    const commandLine = ["schtasks", ...args].map(quoteWindowsArg).join(" ");
+
+    expect(splitWindowsCommandLine(commandLine)).toEqual(["schtasks", ...args]);
+  });
+
+  it("writes the launcher on install and repair and removes it on uninstall", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-windows-launcher-"));
+
+    try {
+      const paths = windowsPaths(join(dir, "Zoë (Work)"));
+      const launcherPath = windowsLauncherPath(paths)!;
+      const metadata: ServiceMetadata = {
+        autoUpdateManager: "registry",
+        backend: "windows-task-scheduler",
+        commandPath: join(paths.runnersDir, "tokenmaxxing.exe"),
+        installedAt: "2026-06-16T09:00:00.000Z",
+        schedule: "syncs every 5 minutes",
+        templateVersion: 6,
+        version: 1,
+      };
+
+      expect(await Effect.runPromise(readWindowsLauncherStatus(launcherPath))).toBe("missing");
+
+      await Effect.runPromise(writeServiceFiles(paths, "@echo off\r\n", metadata));
+      expect(await readFile(launcherPath, "utf8")).toBe(renderWindowsLauncher());
+      expect(await readFile(paths.wrapperPath, "utf8")).toBe("@echo off\r\n");
+      expect(await Effect.runPromise(readWindowsLauncherStatus(launcherPath))).toBe("current");
+
+      // Repair rewrites an outdated launcher in place.
+      await writeFile(launcherPath, "' stale launcher\r\n");
+      expect(await Effect.runPromise(readWindowsLauncherStatus(launcherPath))).toBe("outdated");
+      await Effect.runPromise(writeServiceFiles(paths, "@echo off\r\n", metadata));
+      expect(await Effect.runPromise(readWindowsLauncherStatus(launcherPath))).toBe("current");
+
+      await Effect.runPromise(removeServiceFiles(paths));
+      expect(await Effect.runPromise(readWindowsLauncherStatus(launcherPath))).toBe("missing");
+      await expect(readFile(paths.wrapperPath, "utf8")).rejects.toThrow();
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("does not write a launcher for POSIX backends", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-posix-launcher-"));
+
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: dir, XDG_CONFIG_HOME: join(dir, "xdg") },
+        home: dir,
+        platform: "linux",
+      })!;
+
+      await Effect.runPromise(
+        writeServiceFiles(paths, "#!/bin/sh\n", {
+          backend: "systemd",
+          commandPath: "/usr/local/bin/tokenmaxxing",
+          installedAt: "2026-06-16T09:00:00.000Z",
+          schedule: "syncs every 5 minutes",
+          version: 1,
+        }),
+      );
+
+      expect(
+        await Effect.runPromise(readWindowsLauncherStatus(join(dir, "service-sync.vbs"))),
+      ).toBe("missing");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("reports missing or outdated launchers in service doctor", () => {
+    expect(windowsLauncherDoctorCheck("C:\\tm\\service-sync.vbs", "current")).toEqual({
+      detail: "C:\\tm\\service-sync.vbs",
+      label: "launcher",
+      status: "ok",
+    });
+    expect(windowsLauncherDoctorCheck("C:\\tm\\service-sync.vbs", "missing")).toEqual({
+      detail: "C:\\tm\\service-sync.vbs missing; repair with tokenmaxxing service repair",
+      label: "launcher",
+      status: "warn",
+    });
+    expect(windowsLauncherDoctorCheck("C:\\tm\\service-sync.vbs", "outdated").status).toBe("warn");
+  });
+
+  it("marks installs from older templates for repair so their task is re-registered", () => {
+    const metadata: ServiceMetadata = {
+      autoUpdateManager: "registry",
+      backend: "windows-task-scheduler",
+      commandPath: "C:\\tm\\service-runners\\0.7.0\\windows-x64\\tokenmaxxing.exe",
+      installedAt: "2026-06-16T09:00:00.000Z",
+      runnerTarget: "windows-x64",
+      runnerVersion: "0.7.0",
+      schedule: "syncs every 5 minutes",
+      templateVersion: 5,
+      version: 1,
+    };
+
+    expect(serviceReloadRequired(metadata)).toBe(true);
+    expect(serviceReloadRequired({ ...metadata, templateVersion: 6 })).toBe(false);
+    expect(
+      serviceRepairNeedsSchedulerInstall({
+        reason: serviceRepairReason({ reloadRequired: true, schedulerActive: true })!,
+        reloadRequired: true,
+        schedulerActive: true,
+      }),
+    ).toBe(true);
+  });
+});
+
+// libuv quote_cmd_arg: quote arguments with whitespace or quotes, escape embedded quotes, and
+// double the backslashes that precede an escaped or closing quote.
+function quoteWindowsArg(arg: string): string {
+  if (arg === "") {
+    return '""';
+  }
+  if (!/[\s"]/.test(arg)) {
+    return arg;
+  }
+
+  return `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
+}
+
+// CommandLineToArgvW rules: 2n backslashes + quote -> n backslashes and a quote toggle,
+// 2n+1 backslashes + quote -> n backslashes and a literal quote, other backslashes are literal.
+function splitWindowsCommandLine(commandLine: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let hasArg = false;
+
+  for (let index = 0; index < commandLine.length; index += 1) {
+    const char = commandLine[index]!;
+    if (char === "\\") {
+      let backslashes = 0;
+      while (commandLine[index] === "\\") {
+        backslashes += 1;
+        index += 1;
+      }
+      if (commandLine[index] === '"') {
+        current += "\\".repeat(Math.floor(backslashes / 2));
+        if (backslashes % 2 === 1) {
+          current += '"';
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else {
+        current += "\\".repeat(backslashes);
+        index -= 1;
+      }
+      hasArg = true;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+      hasArg = true;
+    } else if ((char === " " || char === "\t") && !inQuotes) {
+      if (hasArg) {
+        args.push(current);
+        current = "";
+        hasArg = false;
+      }
+    } else {
+      current += char;
+      hasArg = true;
+    }
+  }
+  if (hasArg) {
+    args.push(current);
+  }
+
+  return args;
+}
 
 describe("legacyServiceWrapperPaths", () => {
   it("tracks old POSIX wrapper names for cleanup", () => {
@@ -2617,7 +2871,7 @@ describe("serviceInstallProgram", () => {
       installedAt: "2026-06-16T12:00:00.000Z",
       runnerTarget: "darwin-arm64",
       runnerVersion: "0.4.17",
-      templateVersion: 5,
+      templateVersion: 6,
     });
     expect(written[0]?.metadata).not.toHaveProperty("autoUpdate");
     expect(state.logs).toContain("Automatic sync installed");
