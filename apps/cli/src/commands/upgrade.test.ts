@@ -39,7 +39,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.4.3",
         findCommandInstall: () => Effect.succeed(install),
-        getLatestVersion: () => Effect.succeed("0.4.4"),
+        getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
         isServiceInstalled: () => Effect.succeed(false),
         runPackageManagerUpdate: (manager) =>
           Effect.sync(() => {
@@ -71,7 +71,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.4.3",
         findCommandInstall: () => Effect.succeed(install),
-        getLatestVersion: () => Effect.succeed("0.4.3"),
+        getDistTags: () => Effect.succeed({ latest: "0.4.3" }),
         isServiceInstalled: () => Effect.succeed(true),
         refreshService: (options) =>
           Effect.sync(() => {
@@ -91,7 +91,7 @@ describe("upgradeProgram", () => {
       "Detecting install method",
       "Using method: npm",
       "Checking latest version",
-      "No updates pending (0.4.3); upgrade skipped",
+      "Already up to date (0.4.3); upgrade skipped",
     ]);
   });
 
@@ -103,7 +103,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.4.3",
         findCommandInstall: () => Effect.succeed(install),
-        getLatestVersion: () => Effect.fail("offline"),
+        getDistTags: () => Effect.fail("offline"),
         isServiceInstalled: () => Effect.succeed(false),
         runPackageManagerUpdate: (manager) =>
           Effect.sync(() => {
@@ -135,7 +135,7 @@ describe("upgradeProgram", () => {
         {
           currentVersion: "0.4.3",
           findCommandInstall: () => Effect.succeed(install),
-          getLatestVersion: () => Effect.succeed("0.4.3"),
+          getDistTags: () => Effect.succeed({ latest: "0.4.3" }),
           runPackageManagerUpdate: (manager) =>
             Effect.sync(() => {
               managers.push(manager);
@@ -151,11 +151,13 @@ describe("upgradeProgram", () => {
       JSON.stringify({
         command: "npm install -g @851-labs/tokenmaxxing@latest --silent",
         currentVersion: "0.4.3",
+        distTag: null,
         latestVersion: "0.4.3",
         packageManager: "npm",
         service: { status: "skipped" },
         skipped: true,
         status: "ok",
+        targetVersion: null,
         updated: false,
         versionCheck: "ok",
       }),
@@ -171,7 +173,7 @@ describe("upgradeProgram", () => {
         {
           currentVersion: "0.4.3",
           findCommandInstall: () => Effect.succeed(install),
-          getLatestVersion: () => Effect.succeed("0.4.4"),
+          getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
           isServiceInstalled: () => Effect.succeed(false),
           runPackageManagerUpdate: (manager) =>
             Effect.sync(() => {
@@ -188,11 +190,13 @@ describe("upgradeProgram", () => {
       JSON.stringify({
         command: "npm install -g @851-labs/tokenmaxxing@latest --silent",
         currentVersion: "0.4.3",
+        distTag: "latest",
         latestVersion: "0.4.4",
         packageManager: "npm",
         service: { status: "not-installed" },
         skipped: false,
         status: "ok",
+        targetVersion: "0.4.4",
         updated: true,
         versionCheck: "ok",
       }),
@@ -207,7 +211,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.4.3",
         findCommandInstall: () => Effect.succeed(install),
-        getLatestVersion: () => Effect.succeed("0.4.4"),
+        getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
         isServiceInstalled: () => Effect.succeed(true),
         refreshService: (options) =>
           Effect.sync(() => {
@@ -230,7 +234,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.4.3",
         findCommandInstall: () => Effect.succeed(install),
-        getLatestVersion: () => Effect.succeed("0.4.4"),
+        getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
         isServiceInstalled: () => Effect.succeed(true),
         refreshService: () => Effect.fail(new Error("refresh failed")),
         runPackageManagerUpdate: () => Effect.void,
@@ -239,6 +243,145 @@ describe("upgradeProgram", () => {
 
     expect(exit._tag).toBe("Success");
     expect(logs).toContain("Service: refresh failed; run tokenmaxxing service install if needed");
+  });
+
+  describe("release channels", () => {
+    async function runUpgrade(input: {
+      currentVersion: string;
+      distTags: Effect.Effect<Record<string, string>, unknown>;
+      manager?: CommandInstall["autoUpdateManager"];
+    }) {
+      const { layer, logs } = testConsole();
+      const updates: Array<{ manager: string; specifier: string }> = [];
+      const exit = await Effect.runPromiseExit(
+        upgradeProgram(
+          {
+            currentVersion: input.currentVersion,
+            findCommandInstall: () =>
+              Effect.succeed({ ...install, autoUpdateManager: input.manager ?? "npm" }),
+            getDistTags: () => input.distTags,
+            isServiceInstalled: () => Effect.succeed(false),
+            runPackageManagerUpdate: (manager, specifier) =>
+              Effect.sync(() => {
+                updates.push({ manager, specifier });
+              }),
+          },
+          { json: true },
+        ).pipe(Effect.provide(layer)),
+      );
+
+      return {
+        exit,
+        json: logs.length === 1 ? (JSON.parse(logs[0]!) as Record<string, unknown>) : null,
+        updates,
+      };
+    }
+
+    it("never downgrades a prerelease to an older latest", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.7.0-alpha.0",
+        distTags: Effect.succeed({ alpha: "0.7.0-alpha.0", latest: "0.6.0" }),
+      });
+
+      expect(result.exit._tag).toBe("Success");
+      expect(result.updates).toEqual([]);
+      expect(result.json).toMatchObject({
+        currentVersion: "0.7.0-alpha.0",
+        distTag: null,
+        latestVersion: "0.7.0-alpha.0",
+        skipped: true,
+        targetVersion: null,
+        updated: false,
+      });
+    });
+
+    it("keeps a prerelease when its channel tag is missing and latest is older", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.7.0-alpha.0",
+        distTags: Effect.succeed({ latest: "0.6.0" }),
+      });
+
+      expect(result.updates).toEqual([]);
+      expect(result.json).toMatchObject({ latestVersion: "0.6.0", skipped: true, updated: false });
+    });
+
+    it("follows the prerelease channel to the next prerelease by exact version", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.7.0-alpha.9",
+        distTags: Effect.succeed({ alpha: "0.7.0-alpha.10", latest: "0.6.0" }),
+      });
+
+      expect(result.exit._tag).toBe("Success");
+      expect(result.updates).toEqual([{ manager: "npm", specifier: "0.7.0-alpha.10" }]);
+      expect(result.json).toMatchObject({
+        command: "npm install -g @851-labs/tokenmaxxing@0.7.0-alpha.10 --silent",
+        currentVersion: "0.7.0-alpha.9",
+        distTag: "alpha",
+        latestVersion: "0.7.0-alpha.10",
+        skipped: false,
+        targetVersion: "0.7.0-alpha.10",
+        updated: true,
+      });
+    });
+
+    it("graduates a prerelease to the release once it lands on latest", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.7.0-alpha.1",
+        distTags: Effect.succeed({ alpha: "0.7.0-alpha.1", latest: "0.7.0" }),
+      });
+
+      expect(result.updates).toEqual([{ manager: "npm", specifier: "latest" }]);
+      expect(result.json).toMatchObject({
+        command: "npm install -g @851-labs/tokenmaxxing@latest --silent",
+        distTag: "latest",
+        targetVersion: "0.7.0",
+        updated: true,
+      });
+    });
+
+    it("installs prereleases with bun add since bun update cannot pin a version", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.7.0-alpha.0",
+        distTags: Effect.succeed({ alpha: "0.7.0-alpha.1", latest: "0.6.0" }),
+        manager: "bun",
+      });
+
+      expect(result.updates).toEqual([{ manager: "bun", specifier: "0.7.0-alpha.1" }]);
+      expect(result.json).toMatchObject({
+        command: "bun add -g @851-labs/tokenmaxxing@0.7.0-alpha.1 --silent",
+      });
+    });
+
+    it("keeps stable installs off prerelease channels", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.6.0",
+        distTags: Effect.succeed({ alpha: "0.7.0-alpha.1", latest: "0.6.0" }),
+      });
+
+      expect(result.updates).toEqual([]);
+      expect(result.json).toMatchObject({ latestVersion: "0.6.0", skipped: true });
+    });
+
+    it("never downgrades a stable install that is ahead of latest", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.6.1",
+        distTags: Effect.succeed({ latest: "0.6.0" }),
+      });
+
+      expect(result.updates).toEqual([]);
+      expect(result.json).toMatchObject({ latestVersion: "0.6.0", skipped: true });
+    });
+
+    it("refuses to upgrade a prerelease blind when the registry check fails", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.7.0-alpha.0",
+        distTags: Effect.fail("offline"),
+      });
+
+      expect(result.exit._tag).toBe("Failure");
+      expect(result.updates).toEqual([]);
+      expect(JSON.stringify(result.exit)).toContain("UpgradePrereleaseVersionCheckError");
+    });
   });
 
   it("rejects ephemeral package-runner installs", async () => {
@@ -294,6 +437,7 @@ describe("formatUpgradeSuccess", () => {
         currentVersion: "0.4.3",
         latestVersion: "0.4.4",
         shouldUpdate: true,
+        target: { distTag: "latest", version: "0.4.4" },
       }),
     ).toBe("Upgraded to v0.4.4");
   });

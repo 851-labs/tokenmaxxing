@@ -44,6 +44,7 @@ const userFacingErrorTags = new Set([
   "UpgradeEphemeralCommandError",
   "UpgradeFailedError",
   "UpgradeManagerError",
+  "UpgradePrereleaseVersionCheckError",
   "WhoamiError",
   "WriteCliTokenError",
 ]);

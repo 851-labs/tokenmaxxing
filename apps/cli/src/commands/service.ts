@@ -30,6 +30,15 @@ import type {
   ServiceRepairStatus,
 } from "@tokenmaxxing/api-contract";
 
+import {
+  type DistTags,
+  type DistTagVersion,
+  fetchDistTags,
+  followedDistTags,
+  LATEST_DIST_TAG,
+  parseSemVer,
+  resolveUpdate,
+} from "../cli-version";
 import { booleanFlag } from "../flags";
 import { ClockService, ConfigService, ConsoleService } from "../services";
 import { getConfigPath } from "../services/config";
@@ -93,7 +102,6 @@ const SERVICE_RECONCILE_WINDOW_DAYS = 21;
 const SERVICE_RECONCILE_WINDOW_MAX_DAYS = 90;
 const SERVICE_RECONCILE_WINDOW_ENV = "TOKENMAXXING_SYNC_WINDOW_DAYS";
 const SERVICE_RECONCILE_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const NPM_LATEST_URL = "https://registry.npmjs.org/@851-labs%2Ftokenmaxxing/latest";
 const SERVICE_UPLOAD_RETRY_POLICY: UploadRetryPolicy = {
   attempts: 3,
   backoffMs: [1_000, 4_000, 16_000],
@@ -208,7 +216,7 @@ interface ServiceAutoUpdateReport {
 
 interface ServiceAutoUpdateRuntime {
   commandExists?: ((command: string) => Effect.Effect<boolean, never>) | undefined;
-  fetchLatestVersion?: (() => Effect.Effect<string | null, never>) | undefined;
+  fetchDistTags?: (() => Effect.Effect<DistTags | null, never>) | undefined;
   fetchRunnerRelease?:
     | ((
         target: ServiceRunnerTarget,
@@ -225,7 +233,7 @@ interface ServiceAutoUpdateRuntime {
   readInstalledVersion?: ((commandPath: string) => Effect.Effect<string | null, never>) | undefined;
   runnerTargetCandidates?: (() => readonly ServiceRunnerTarget[]) | undefined;
   runPackageManagerUpdate?:
-    | ((manager: AutoUpdateManager) => Effect.Effect<void, unknown>)
+    | ((manager: AutoUpdateManager, specifier: string) => Effect.Effect<void, unknown>)
     | undefined;
 }
 
@@ -2370,7 +2378,11 @@ function runServiceAutoUpdate(
     const attemptedAt = now().toISOString();
 
     if (metadata === null) {
-      const latestVersion = yield* (runtime.fetchLatestVersion ?? fetchLatestCliVersion)();
+      const distTags = yield* (runtime.fetchDistTags ?? fetchCliDistTags)();
+      const latestVersion =
+        distTags === null
+          ? null
+          : (resolveUpdate(options.currentVersion, distTags).newest?.version ?? null);
       return serviceAutoUpdateReport({
         attemptedAt,
         completedAt: now().toISOString(),
@@ -2403,26 +2415,30 @@ function runLegacyPackageManagerAutoUpdate(
 ): Effect.Effect<ServiceAutoUpdateReport, never, ConsoleService> {
   return Effect.gen(function* () {
     const console = yield* Effect.service(ConsoleService);
-    const fetchLatestVersion = runtime.fetchLatestVersion ?? fetchLatestCliVersion;
     const commandExists_ = runtime.commandExists ?? commandExists;
     const runUpdate = runtime.runPackageManagerUpdate ?? runPackageManagerUpdate;
     const readInstalledVersion = runtime.readInstalledVersion ?? readInstalledCliVersion;
-    const latestVersion = yield* fetchLatestVersion();
+    const distTags = yield* (runtime.fetchDistTags ?? fetchCliDistTags)();
+    const resolution = distTags === null ? null : resolveUpdate(options.currentVersion, distTags);
 
-    if (latestVersion === null) {
+    if (resolution === null || resolution.newest === null) {
       return serviceAutoUpdateReport({
         attemptedAt,
         completedAt: now().toISOString(),
         currentVersion: options.currentVersion,
         enabled: true,
-        latestVersion,
+        latestVersion: null,
         manager: metadata.autoUpdateManager ?? null,
         reason: "latest-unknown",
         status: "skipped",
       });
     }
 
-    if (normalizeVersion(options.currentVersion) === normalizeVersion(latestVersion)) {
+    // Only a strictly newer version on a followed dist-tag is installed; a
+    // prerelease runner ahead of `latest` must never be "updated" back to it.
+    const latestVersion = resolution.newest.version;
+    const target = resolution.update;
+    if (target === null) {
       return serviceAutoUpdateReport({
         attemptedAt,
         completedAt: now().toISOString(),
@@ -2486,7 +2502,7 @@ function runLegacyPackageManagerAutoUpdate(
       });
     }
 
-    const updateResult = yield* runUpdate(manager).pipe(
+    const updateResult = yield* runUpdate(manager, packageManagerSpecifier(target)).pipe(
       Effect.match({
         onFailure: (cause) => ({ _tag: "failure" as const, cause }),
         onSuccess: () => ({ _tag: "success" as const }),
@@ -2579,38 +2595,44 @@ function runServiceRunnerAutoUpdate(
     }
     const paths = options.paths;
 
-    const runnerChannel = serviceRunnerReleaseChannel(options.currentVersion);
     const fetchRunnerRelease = runtime.fetchRunnerRelease ?? fetchServiceRunnerRelease;
-    let release: ServiceRunnerRelease | null = null;
+    const releases = new Map<string, ServiceRunnerRelease>();
     for (const target of targets) {
-      const fetchResult = yield* fetchRunnerRelease(target, runnerChannel).pipe(
-        Effect.match({
-          onFailure: (cause) => ({ _tag: "failure" as const, cause }),
-          onSuccess: (value) => ({ _tag: "success" as const, value }),
-        }),
-      );
-      if (fetchResult._tag === "failure") {
-        return serviceAutoUpdateReport({
-          attemptedAt,
-          completedAt: now().toISOString(),
-          currentVersion: options.currentVersion,
-          enabled: true,
-          error: formatAutoUpdateError(fetchResult.cause.cause),
-          latestVersion: null,
-          manager: "registry",
-          reason: fetchResult.cause.reason,
-          status: "failure",
-        });
+      for (const distTag of followedDistTags(options.currentVersion)) {
+        const fetchResult = yield* fetchRunnerRelease(target, distTag).pipe(
+          Effect.match({
+            onFailure: (cause) => ({ _tag: "failure" as const, cause }),
+            onSuccess: (value) => ({ _tag: "success" as const, value }),
+          }),
+        );
+        if (fetchResult._tag === "failure") {
+          return serviceAutoUpdateReport({
+            attemptedAt,
+            completedAt: now().toISOString(),
+            currentVersion: options.currentVersion,
+            enabled: true,
+            error: formatAutoUpdateError(fetchResult.cause.cause),
+            latestVersion: null,
+            manager: "registry",
+            reason: fetchResult.cause.reason,
+            status: "failure",
+          });
+        }
+        if (fetchResult.value !== null) {
+          releases.set(distTag, fetchResult.value);
+        }
       }
 
-      const candidate = fetchResult.value;
-      if (candidate !== null) {
-        release = candidate;
+      if (releases.size > 0) {
         break;
       }
     }
 
-    if (release === null) {
+    const resolution = resolveUpdate(
+      options.currentVersion,
+      Object.fromEntries([...releases].map(([distTag, release]) => [distTag, release.version])),
+    );
+    if (resolution.newest === null) {
       return serviceAutoUpdateReport({
         attemptedAt,
         completedAt: now().toISOString(),
@@ -2623,19 +2645,20 @@ function runServiceRunnerAutoUpdate(
       });
     }
 
-    if (!serviceRunnerReleaseIsUpdateCandidate(options.currentVersion, release.version)) {
+    if (resolution.update === null) {
       return serviceAutoUpdateReport({
         attemptedAt,
         completedAt: now().toISOString(),
         currentVersion: options.currentVersion,
         enabled: true,
         installedVersion: options.currentVersion,
-        latestVersion: release.version,
+        latestVersion: resolution.newest.version,
         manager: "registry",
         reason: null,
         status: "not-needed",
       });
     }
+    const release = releases.get(resolution.update.distTag)!;
 
     const updateLock = yield* acquireServiceUpdateLock(paths.updateLockPath, now()).pipe(
       Effect.match({
@@ -2783,21 +2806,8 @@ function serviceAutoUpdateReport(input: ServiceAutoUpdateReport): ServiceAutoUpd
   };
 }
 
-function fetchLatestCliVersion(): Effect.Effect<string | null, never> {
-  return Effect.tryPromise({
-    try: async () => {
-      const response = await fetch(NPM_LATEST_URL, {
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(SERVICE_FETCH_TIMEOUT_MS),
-      });
-      if (!response.ok) {
-        return null;
-      }
-
-      return versionFromPackageJson(await response.json());
-    },
-    catch: (cause) => cause,
-  }).pipe(Effect.catch(() => Effect.succeed(null)));
+function fetchCliDistTags(): Effect.Effect<DistTags | null, never> {
+  return fetchDistTags(SERVICE_FETCH_TIMEOUT_MS).pipe(Effect.catch(() => Effect.succeed(null)));
 }
 
 function fetchServiceRunnerRelease(
@@ -2862,7 +2872,7 @@ function serviceRunnerReleaseFromPackageJson(
   const dist = (body as { dist?: unknown }).dist;
   if (
     typeof version !== "string" ||
-    parseServiceVersion(version) === null ||
+    parseSemVer(version) === null ||
     dist === null ||
     typeof dist !== "object"
   ) {
@@ -3115,15 +3125,6 @@ function readInstalledCliVersion(commandPath: string): Effect.Effect<string | nu
   }).pipe(Effect.catch(() => Effect.succeed(null)));
 }
 
-function versionFromPackageJson(body: unknown): string | null {
-  if (body === null || typeof body !== "object") {
-    return null;
-  }
-
-  const version = (body as { version?: unknown }).version;
-  return typeof version === "string" && version.length > 0 ? version : null;
-}
-
 function parseCliVersion(output: string): string | null {
   const match = /v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/.exec(output);
   return match?.[1] ?? null;
@@ -3131,134 +3132,6 @@ function parseCliVersion(output: string): string | null {
 
 function normalizeVersion(version: string): string {
   return version.trim().replace(/^v/i, "").replace(/\+.*/, "");
-}
-
-interface ParsedServiceVersion {
-  major: number;
-  minor: number;
-  patch: number;
-  prerelease: readonly string[];
-}
-
-function serviceRunnerReleaseChannel(version: string): string {
-  const parsed = parseServiceVersion(version);
-  return parsed === null || parsed.prerelease.length === 0 ? "latest" : parsed.prerelease[0]!;
-}
-
-function serviceRunnerReleaseIsNewer(currentVersion: string, candidateVersion: string): boolean {
-  const comparison = compareServiceVersions(currentVersion, candidateVersion);
-  return comparison !== null && comparison < 0;
-}
-
-function serviceRunnerReleaseIsUpdateCandidate(
-  currentVersion: string,
-  candidateVersion: string,
-): boolean {
-  return (
-    serviceRunnerReleaseChannel(currentVersion) === serviceRunnerReleaseChannel(candidateVersion) &&
-    serviceRunnerReleaseIsNewer(currentVersion, candidateVersion)
-  );
-}
-
-function compareServiceVersions(left: string, right: string): number | null {
-  const leftVersion = parseServiceVersion(left);
-  const rightVersion = parseServiceVersion(right);
-  if (leftVersion === null || rightVersion === null) {
-    return null;
-  }
-
-  const coreDifference =
-    leftVersion.major - rightVersion.major ||
-    leftVersion.minor - rightVersion.minor ||
-    leftVersion.patch - rightVersion.patch;
-  if (coreDifference !== 0) {
-    return coreDifference;
-  }
-
-  return comparePrereleaseVersions(leftVersion.prerelease, rightVersion.prerelease);
-}
-
-function parseServiceVersion(version: string): ParsedServiceVersion | null {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+.+)?$/.exec(
-    version.trim(),
-  );
-  if (match === null) {
-    return null;
-  }
-
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  const patch = Number(match[3]);
-  if (
-    !Number.isSafeInteger(major) ||
-    !Number.isSafeInteger(minor) ||
-    !Number.isSafeInteger(patch)
-  ) {
-    return null;
-  }
-
-  return {
-    major,
-    minor,
-    patch,
-    prerelease: match[4]?.split(".") ?? [],
-  };
-}
-
-function comparePrereleaseVersions(left: readonly string[], right: readonly string[]): number {
-  if (left.length === 0 && right.length === 0) {
-    return 0;
-  }
-  if (left.length === 0) {
-    return 1;
-  }
-  if (right.length === 0) {
-    return -1;
-  }
-
-  const length = Math.max(left.length, right.length);
-  for (let index = 0; index < length; index += 1) {
-    const leftPart = left[index];
-    const rightPart = right[index];
-    if (leftPart === undefined) {
-      return -1;
-    }
-    if (rightPart === undefined) {
-      return 1;
-    }
-
-    const difference = comparePrereleasePart(leftPart, rightPart);
-    if (difference !== 0) {
-      return difference;
-    }
-  }
-
-  return 0;
-}
-
-function comparePrereleasePart(left: string, right: string): number {
-  const leftNumber = numericPrereleasePart(left);
-  const rightNumber = numericPrereleasePart(right);
-  if (leftNumber !== null && rightNumber !== null) {
-    return leftNumber - rightNumber;
-  }
-  if (leftNumber !== null) {
-    return -1;
-  }
-  if (rightNumber !== null) {
-    return 1;
-  }
-
-  return left.localeCompare(right);
-}
-
-function numericPrereleasePart(part: string): number | null {
-  if (!/^(0|[1-9]\d*)$/.test(part)) {
-    return null;
-  }
-
-  const value = Number(part);
-  return Number.isSafeInteger(value) ? value : null;
 }
 
 function formatAutoUpdateError(cause: unknown): string {
@@ -3269,8 +3142,11 @@ function formatAutoUpdateError(cause: unknown): string {
   return String(cause);
 }
 
-function runPackageManagerUpdate(manager: AutoUpdateManager): Effect.Effect<void, unknown> {
-  const command = autoUpdateCommand(manager);
+function runPackageManagerUpdate(
+  manager: AutoUpdateManager,
+  specifier: string = LATEST_DIST_TAG,
+): Effect.Effect<void, unknown> {
+  const command = autoUpdateCommand(manager, specifier);
 
   return runExecutable(command.command, command.args, {
     timeoutMs: SERVICE_PACKAGE_UPDATE_TIMEOUT_MS,
@@ -4399,10 +4275,32 @@ function isSameOrChildPath(path: string, parent: string): boolean {
   return path === parent || path.startsWith(normalizedParent);
 }
 
-function autoUpdateCommand(manager: AutoUpdateManager): {
+/**
+ * `specifier` is `latest` (the default) or an exact version; see
+ * `packageManagerSpecifier`. Only `latest` keeps `bun update --latest`,
+ * since bun cannot update to a specific version.
+ */
+function autoUpdateCommand(
+  manager: AutoUpdateManager,
+  specifier: string = LATEST_DIST_TAG,
+): {
   args: string[];
   command: AutoUpdateManager;
 } {
+  if (specifier !== LATEST_DIST_TAG) {
+    const packageSpec = `${PACKAGE_NAME}@${specifier}`;
+    switch (manager) {
+      case "bun":
+        return { args: ["add", "-g", packageSpec, "--silent"], command: "bun" };
+      case "npm":
+        return { args: ["install", "-g", packageSpec, "--silent"], command: "npm" };
+      case "pnpm":
+        return { args: ["add", "-g", packageSpec, "--silent"], command: "pnpm" };
+      case "yarn":
+        return { args: ["global", "add", packageSpec, "--silent"], command: "yarn" };
+    }
+  }
+
   switch (manager) {
     case "bun":
       return {
@@ -4427,10 +4325,23 @@ function autoUpdateCommand(manager: AutoUpdateManager): {
   }
 }
 
-function autoUpdateCommandDescription(manager: AutoUpdateManager): string {
-  const { command, args } = autoUpdateCommand(manager);
+function autoUpdateCommandDescription(
+  manager: AutoUpdateManager,
+  specifier: string = LATEST_DIST_TAG,
+): string {
+  const { command, args } = autoUpdateCommand(manager, specifier);
 
   return [command, ...args].join(" ");
+}
+
+/**
+ * What the package manager installs for an update target: `latest` when the
+ * target is the `latest` dist-tag (keeps the familiar commands), otherwise
+ * the exact verified version, so a dist-tag that moves between the check and
+ * the install can never swap in a different (possibly older) release.
+ */
+function packageManagerSpecifier(target: DistTagVersion): string {
+  return target.distTag === LATEST_DIST_TAG ? LATEST_DIST_TAG : target.version;
 }
 
 function readServiceMetadata(path: string): Effect.Effect<ServiceMetadata | null, never> {
@@ -4566,8 +4477,6 @@ export {
   serviceRepairReason,
   serviceRepairState,
   serviceRunnerPackageName,
-  serviceRunnerReleaseChannel,
-  serviceRunnerReleaseIsNewer,
   serviceRunnerTarget,
   serviceRunnerTargetCandidates,
   serviceCompletedUsageReplacementBackfill,
@@ -4587,6 +4496,7 @@ export {
   serviceRunLogLine,
   writeServiceCheckIn,
   serviceRunSuccessState,
+  packageManagerSpecifier,
   runPackageManagerUpdate,
   verifyNpmIntegrity,
   windowsTaskNames,
