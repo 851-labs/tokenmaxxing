@@ -13,7 +13,7 @@
     "reports": [
       {
         "command": [
-          "ccusage@^20.0.19",
+          "ccusage@^20.0.22",
           "claude",
           "daily",
           "--json",
@@ -61,7 +61,7 @@
       },
       {
         "command": [
-          "ccusage@^20.0.19",
+          "ccusage@^20.0.22",
           "codex",
           "daily",
           "--json",
@@ -90,7 +90,7 @@
       },
       {
         "command": [
-          "ccusage@^20.0.19",
+          "ccusage@^20.0.22",
           "opencode",
           "daily",
           "--json",
@@ -117,7 +117,7 @@
       },
       {
         "command": [
-          "ccusage@^20.0.19",
+          "ccusage@^20.0.22",
           "hermes",
           "daily",
           "--json",

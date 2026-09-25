@@ -1,6 +1,10 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
+import {
+  CCUSAGE_FIXTURE_SOURCES,
+  ccusageDailyFixture,
+} from "../../../api/src/testing/ccusage-fixtures";
 import { aggregateDays, summarize } from "./aggregate";
 import { decodeDailyReport, decodeSessionReport } from "./schema";
 
@@ -377,5 +381,37 @@ describe("summarize", () => {
       rows: 3,
       spendUsd: 841.29 + 9.85 + 1.25,
     });
+  });
+});
+
+describe("captured ccusage sources", () => {
+  const sum = (values: readonly number[]) => values.reduce((total, value) => total + value, 0);
+
+  it.each(CCUSAGE_FIXTURE_SOURCES)(
+    "decodes and aggregates %s without losing tokens or spend",
+    async (source) => {
+      const payload = ccusageDailyFixture(source);
+      const report = await Effect.runPromise(decodeDailyReport(payload));
+      const rows = aggregateDays(source, report.daily);
+
+      expect(rows.length).toBe(sum(payload.daily.map((day) => day.modelBreakdowns.length)));
+      expect(rows.every((row) => row.source === source)).toBe(true);
+      expect(sum(rows.map((row) => row.totalTokens))).toBe(
+        sum(payload.daily.map((day) => day.totalTokens)),
+      );
+      expect(summarize(rows).spendUsd).toBeCloseTo(
+        sum(payload.daily.map((day) => day.totalCost)),
+        10,
+      );
+    },
+  );
+
+  it("accepts Qwen's empty reports, whose totals are null", async () => {
+    await expect(
+      Effect.runPromise(decodeDailyReport({ daily: [], totals: null })),
+    ).resolves.toMatchObject({ daily: [] });
+    await expect(
+      Effect.runPromise(decodeSessionReport({ sessions: [], totals: null })),
+    ).resolves.toMatchObject({ sessions: [] });
   });
 });

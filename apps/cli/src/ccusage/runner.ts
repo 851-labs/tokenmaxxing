@@ -8,12 +8,14 @@ import type { CcusageSource } from "./sources";
 import { type CcusageEnv, ccusageSourceEnv } from "./source-env";
 
 /**
- * Shells out to `bun x ccusage@^20.0.19 <source> daily --json --breakdown` (npx
+ * Shells out to `bun x ccusage@^20.0.22 <source> daily --json --breakdown` (npx
  * fallback only when bun itself is missing). Runner and report failures stay
  * typed so the sync layer can distinguish them from valid empty reports.
  */
 
-const CCUSAGE_SPEC = "ccusage@^20.0.19";
+// 20.0.21 added the Antigravity and ZCode adapters; 20.0.22 stopped dropping
+// claude-fable-5-1 usage. Earlier v20 releases also carry the Codex replay fix.
+const CCUSAGE_SPEC = "ccusage@^20.0.22";
 const RUN_TIMEOUT_MS = 180_000;
 
 class CcusageRunError extends Data.TaggedError("CcusageRunError")<{

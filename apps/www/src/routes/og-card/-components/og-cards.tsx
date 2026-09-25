@@ -93,7 +93,7 @@ function SiteOgCard() {
           <p className="mt-3 font-mono text-3xl">tokenmaxxing bootstrap</p>
         </div>
         <p className="text-2xl leading-snug text-muted-foreground">
-          Leaderboards for {supportedAgentSentenceList()} usage.
+          Leaderboards for {supportedAgentSentenceList({ limit: 4 })}.
         </p>
       </section>
     </OgCardFrame>

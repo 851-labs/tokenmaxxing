@@ -15,6 +15,7 @@ import {
   formatUsd,
   percentOf,
 } from "../../lib/format";
+import { agentLabel } from "../../lib/agents";
 import { statsQueryOptions } from "../../lib/queries";
 import { searchParam } from "../../lib/search";
 import { pageHead } from "../../lib/seo";
@@ -210,17 +211,24 @@ function ModelSection({ view }: { view: StatsWindowView }) {
 function SourceSection({ view }: { view: StatsWindowView }) {
   return (
     <section className="grid grid-cols-1 gap-px bg-border">
-      <RankPanel entries={view.window.sources} metric="tokens" title={`Sources ${view.label}`} />
+      <RankPanel
+        entries={view.window.sources}
+        labelOf={agentLabel}
+        metric="tokens"
+        title={`Sources ${view.label}`}
+      />
     </section>
   );
 }
 
 function RankPanel({
   entries,
+  labelOf = (key) => key,
   metric,
   title,
 }: {
   entries: readonly StatsRankedMetric[];
+  labelOf?: (key: string) => string;
   metric: "spend" | "tokens";
   title: string;
 }) {
@@ -242,7 +250,7 @@ function RankPanel({
             >
               <span className="text-sm text-muted-foreground">{index + 1}</span>
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{entry.key}</p>
+                <p className="truncate text-sm font-medium">{labelOf(entry.key)}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {formatCount(entry.userCount, "user")} · {formatPercent(percentOf(value, total))}{" "}
                   of shown

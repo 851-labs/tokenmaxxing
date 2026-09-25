@@ -441,7 +441,7 @@ describe("UsageService invalid legacy rows", () => {
         { ...usageDay, inputTokens: -1 },
         { ...usageDay, outputTokens: 1.5 },
         { ...usageDay, model: "m".repeat(257) },
-        { ...usageDay, source: "openclaw" },
+        { ...usageDay, source: "cursor" },
         { ...usageDay, projectPath: "/Users/alex/secret-client" },
         { date: "2026-06-16" },
       ]),

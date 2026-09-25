@@ -36,9 +36,9 @@ async function ccusageErrorFor<A>(effect: Effect.Effect<A, CcusageRunError>) {
 }
 
 describe("ccusage commands", () => {
-  it("uses the minimum v20 release with the Codex replay fix", () => {
+  it("uses the minimum v20 release that ships every supported adapter", () => {
     expect(dailyCcusageCommand(codex)).toEqual([
-      "ccusage@^20.0.19",
+      "ccusage@^20.0.22",
       "codex",
       "daily",
       "--json",
@@ -47,7 +47,7 @@ describe("ccusage commands", () => {
       "calculate",
     ]);
     expect(sessionCcusageCommand(codex)).toEqual([
-      "ccusage@^20.0.19",
+      "ccusage@^20.0.22",
       "codex",
       "session",
       "--json",
@@ -58,7 +58,7 @@ describe("ccusage commands", () => {
 
   it("builds focused Pi daily and session commands", () => {
     expect(dailyCcusageCommand(pi)).toEqual([
-      "ccusage@^20.0.19",
+      "ccusage@^20.0.22",
       "pi",
       "daily",
       "--json",
@@ -67,7 +67,7 @@ describe("ccusage commands", () => {
       "calculate",
     ]);
     expect(sessionCcusageCommand(pi)).toEqual([
-      "ccusage@^20.0.19",
+      "ccusage@^20.0.22",
       "pi",
       "session",
       "--json",
@@ -78,7 +78,7 @@ describe("ccusage commands", () => {
 
   it("builds focused Hermes daily and session commands", () => {
     expect(dailyCcusageCommand(hermes)).toEqual([
-      "ccusage@^20.0.19",
+      "ccusage@^20.0.22",
       "hermes",
       "daily",
       "--json",
@@ -87,7 +87,7 @@ describe("ccusage commands", () => {
       "calculate",
     ]);
     expect(sessionCcusageCommand(hermes)).toEqual([
-      "ccusage@^20.0.19",
+      "ccusage@^20.0.22",
       "hermes",
       "session",
       "--json",
@@ -100,15 +100,15 @@ describe("ccusage commands", () => {
 describe("ccusageCommandInvocations", () => {
   it("selects the Windows npm command shim", () => {
     expect(ccusageCommandInvocations(["codex", "daily"], "win32")).toEqual([
-      { args: ["x", "ccusage@^20.0.19", "codex", "daily"], command: "bun" },
-      { args: ["-y", "ccusage@^20.0.19", "codex", "daily"], command: "npx.cmd" },
+      { args: ["x", "ccusage@^20.0.22", "codex", "daily"], command: "bun" },
+      { args: ["-y", "ccusage@^20.0.22", "codex", "daily"], command: "npx.cmd" },
     ]);
   });
 
   it("keeps the POSIX npm fallback", () => {
     expect(ccusageCommandInvocations(["codex", "daily"], "linux")).toEqual([
-      { args: ["x", "ccusage@^20.0.19", "codex", "daily"], command: "bun" },
-      { args: ["-y", "ccusage@^20.0.19", "codex", "daily"], command: "npx" },
+      { args: ["x", "ccusage@^20.0.22", "codex", "daily"], command: "bun" },
+      { args: ["-y", "ccusage@^20.0.22", "codex", "daily"], command: "npx" },
     ]);
   });
 });
@@ -125,7 +125,7 @@ describe("execCcusage", () => {
     expect(run).toHaveBeenCalledOnce();
     expect(run).toHaveBeenCalledWith(
       "bun",
-      ["x", "ccusage@^20.0.19", "codex", "daily"],
+      ["x", "ccusage@^20.0.22", "codex", "daily"],
       process.env,
     );
   });
@@ -150,13 +150,13 @@ describe("execCcusage", () => {
     expect(run).toHaveBeenNthCalledWith(
       1,
       "bun",
-      ["x", "ccusage@^20.0.19", "codex", "daily"],
+      ["x", "ccusage@^20.0.22", "codex", "daily"],
       process.env,
     );
     expect(run).toHaveBeenNthCalledWith(
       2,
       "npx.cmd",
-      ["-y", "ccusage@^20.0.19", "codex", "daily"],
+      ["-y", "ccusage@^20.0.22", "codex", "daily"],
       process.env,
     );
   });
