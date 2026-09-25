@@ -501,6 +501,29 @@ describe("capturedServiceEnv", () => {
   });
 });
 
+describe("capturedServiceEnv agent data directories", () => {
+  it("carries every agent's custom data directory into scheduled syncs", () => {
+    const agentDirs = {
+      AMP_DATA_DIR: "/data/amp",
+      ANTIGRAVITY_DATA_DIR: "/data/antigravity",
+      CODEBUFF_DATA_DIR: "/data/codebuff",
+      DROID_SESSIONS_DIR: "/data/droid",
+      GOOSE_PATH_ROOT: "/data/goose",
+      GROK_HOME: "/data/grok",
+      KILO_DATA_DIR: "/data/kilo",
+      KIMI_DATA_DIR: "/data/kimi",
+      OPENCLAW_DIR: "/data/openclaw",
+      QWEN_DATA_DIR: "/data/qwen",
+      ZCODE_HOME: "/data/zcode",
+    };
+
+    expect(capturedServiceEnv({ ...agentDirs, GROK_API_KEY: "secret", PATH: "/usr/bin" })).toEqual({
+      ...agentDirs,
+      PATH: "/usr/bin",
+    });
+  });
+});
+
 describe("serviceEnvDrift", () => {
   const shell = {
     CLAUDE_CONFIG_DIR: "/data/Claude Logs, it's mine",

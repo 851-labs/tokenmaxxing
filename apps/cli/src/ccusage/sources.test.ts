@@ -24,7 +24,44 @@ describe("resolveSources", () => {
     });
   });
 
+  it("maps every source to its focused ccusage subcommand", () => {
+    expect(DEFAULT_SOURCE_NAMES).toEqual([
+      "claude",
+      "codex",
+      "opencode",
+      "gemini",
+      "copilot",
+      "hermes",
+      "pi",
+      "grok",
+      "antigravity",
+      "zcode",
+      "amp",
+      "qwen",
+      "kimi",
+      "kilo",
+      "goose",
+      "droid",
+      "codebuff",
+      "openclaw",
+    ]);
+    for (const { source, subcommand } of resolveSources(DEFAULT_SOURCE_NAMES).sources) {
+      expect(subcommand).toBe(source);
+    }
+  });
+
+  it("normalizes case and whitespace and drops duplicates", () => {
+    expect(resolveSources([" Grok", "zcode", "grok "])).toEqual({
+      invalid: [],
+      sources: [
+        { source: "grok", subcommand: "grok" },
+        { source: "zcode", subcommand: "zcode" },
+      ],
+    });
+  });
+
   it("rejects unknown sources", () => {
     expect(resolveSources(["bogus"]).invalid).toEqual(["bogus"]);
+    expect(resolveSources(["supercharge", "cursor"]).invalid).toEqual(["supercharge", "cursor"]);
   });
 });

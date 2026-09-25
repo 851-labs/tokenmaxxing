@@ -287,7 +287,26 @@ type CliLoginApproveResponse = typeof CliLoginApproveResponse.Type;
  * these; response schemas keep `source` as a plain string so older decoders
  * keep working when a source is added.
  */
-const USAGE_SOURCES = ["claude", "codex", "opencode", "gemini", "copilot", "hermes", "pi"] as const;
+const USAGE_SOURCES = [
+  "claude",
+  "codex",
+  "opencode",
+  "gemini",
+  "copilot",
+  "hermes",
+  "pi",
+  "grok",
+  "antigravity",
+  "zcode",
+  "amp",
+  "qwen",
+  "kimi",
+  "kilo",
+  "goose",
+  "droid",
+  "codebuff",
+  "openclaw",
+] as const;
 
 const UsageSource = Schema.Literals(USAGE_SOURCES);
 

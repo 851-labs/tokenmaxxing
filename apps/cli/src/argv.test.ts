@@ -271,7 +271,7 @@ describe.skipIf(process.platform === "win32").concurrent("CLI argv parsing", () 
     const run = await runCli(["sync", "--dry-run"], { ccusage: "fail" });
 
     expect(run.status).toBe(1);
-    expect(run.stdout).toContain("claude    failed");
+    expect(run.stdout).toMatch(/^claude +failed/m);
     expect(run.stderr).toContain("error: no usage synced; ccusage failed for claude, codex");
   });
 

@@ -1,0 +1,60 @@
+{
+  "daily": [
+    {
+      "cacheCreationTokens": 500,
+      "cacheReadTokens": 31000,
+      "date": "2026-09-10",
+      "inputTokens": 8000,
+      "modelBreakdowns": [
+        {
+          "cacheCreationTokens": 500,
+          "cacheReadTokens": 25000,
+          "cost": 0.01882,
+          "inputTokens": 5000,
+          "modelName": "GLM-5.3",
+          "outputTokens": 1050
+        },
+        {
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 6000,
+          "cost": 0.00312,
+          "inputTokens": 3000,
+          "modelName": "GLM-4.7",
+          "outputTokens": 300
+        }
+      ],
+      "modelsUsed": ["GLM-5.3", "GLM-4.7"],
+      "outputTokens": 1350,
+      "totalCost": 0.02194,
+      "totalTokens": 40850
+    },
+    {
+      "cacheCreationTokens": 1000,
+      "cacheReadTokens": 15000,
+      "date": "2026-09-11",
+      "inputTokens": 4000,
+      "modelBreakdowns": [
+        {
+          "cacheCreationTokens": 1000,
+          "cacheReadTokens": 15000,
+          "cost": 0.014859999999999998,
+          "inputTokens": 4000,
+          "modelName": "GLM-5.3",
+          "outputTokens": 900
+        }
+      ],
+      "modelsUsed": ["GLM-5.3"],
+      "outputTokens": 900,
+      "totalCost": 0.014859999999999998,
+      "totalTokens": 20900
+    }
+  ],
+  "totals": {
+    "cacheCreationTokens": 1500,
+    "cacheReadTokens": 46000,
+    "inputTokens": 12000,
+    "outputTokens": 2250,
+    "totalCost": 0.0368,
+    "totalTokens": 61750
+  }
+}

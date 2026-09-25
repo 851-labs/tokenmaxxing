@@ -1,0 +1,52 @@
+{
+  "daily": [
+    {
+      "cacheCreationTokens": 0,
+      "cacheReadTokens": 11382784,
+      "date": "2026-09-14",
+      "inputTokens": 611872,
+      "modelBreakdowns": [
+        {
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 11382784,
+          "cost": 12.819448,
+          "inputTokens": 611872,
+          "modelName": "grok-4.6-build",
+          "outputTokens": 38716
+        }
+      ],
+      "modelsUsed": ["grok-4.6-build"],
+      "outputTokens": 38716,
+      "totalCost": 12.819448,
+      "totalTokens": 12033372
+    },
+    {
+      "cacheCreationTokens": 0,
+      "cacheReadTokens": 1396992,
+      "date": "2026-09-15",
+      "inputTokens": 320187,
+      "modelBreakdowns": [
+        {
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 1396992,
+          "cost": 1.750312,
+          "inputTokens": 320187,
+          "modelName": "grok-4.6-build",
+          "outputTokens": 12195
+        }
+      ],
+      "modelsUsed": ["grok-4.6-build"],
+      "outputTokens": 12195,
+      "totalCost": 1.750312,
+      "totalTokens": 1729374
+    }
+  ],
+  "totals": {
+    "cacheCreationTokens": 0,
+    "cacheReadTokens": 12779776,
+    "inputTokens": 932059,
+    "outputTokens": 50911,
+    "totalCost": 14.569759999999999,
+    "totalTokens": 13762746
+  }
+}

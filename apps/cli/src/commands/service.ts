@@ -4173,7 +4173,22 @@ async function isExecutable(path: string, platform: NodeJS.Platform): Promise<bo
 // literally at install/repair: ccusage splits several of them on commas, so the
 // scheduled run sees exactly what a foreground `sync` in the same shell would.
 // `service doctor` flags drift between these and the current shell.
-const SERVICE_SOURCE_ROOT_ENV_KEYS = ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "HERMES_HOME"] as const;
+const SERVICE_SOURCE_ROOT_ENV_KEYS = [
+  "CLAUDE_CONFIG_DIR",
+  "CODEX_HOME",
+  "HERMES_HOME",
+  "GROK_HOME",
+  "ANTIGRAVITY_DATA_DIR",
+  "ZCODE_HOME",
+  "AMP_DATA_DIR",
+  "QWEN_DATA_DIR",
+  "KIMI_DATA_DIR",
+  "KILO_DATA_DIR",
+  "GOOSE_PATH_ROOT",
+  "DROID_SESSIONS_DIR",
+  "CODEBUFF_DATA_DIR",
+  "OPENCLAW_DIR",
+] as const;
 
 // Environment the scheduled wrapper re-exports; PATH is always set (with a
 // default) and empty or unset values are omitted.

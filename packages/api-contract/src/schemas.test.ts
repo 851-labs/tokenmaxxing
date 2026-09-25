@@ -432,8 +432,34 @@ describe("usage input validation", () => {
     ).rejects.toThrow();
   });
 
+  it("accepts every ccusage-backed source the CLI can send", async () => {
+    for (const source of [
+      "grok",
+      "antigravity",
+      "zcode",
+      "amp",
+      "qwen",
+      "kimi",
+      "kilo",
+      "goose",
+      "droid",
+      "codebuff",
+      "openclaw",
+    ]) {
+      await expect(decodes(UsageDayInput, { ...validDay, source })).resolves.toMatchObject({
+        source,
+      });
+      await expect(decodes(RawUsageReportInput, { ...validReport, source })).resolves.toMatchObject(
+        { source },
+      );
+      await expect(
+        decodes(SourceUsageStatsInput, { sessionCount: 1, source }),
+      ).resolves.toMatchObject({ source });
+    }
+  });
+
   it("rejects sources and report kinds outside the literal sets", async () => {
-    for (const source of ["openclaw", "Claude", "claude ", "", 1]) {
+    for (const source of ["cursor", "supercharge", "Grok", "claude ", "", 1]) {
       await expect(decodes(UsageDayInput, { ...validDay, source })).rejects.toThrow();
       await expect(decodes(RawUsageReportInput, { ...validReport, source })).rejects.toThrow();
       await expect(decodes(SourceUsageStatsInput, { sessionCount: 1, source })).rejects.toThrow();

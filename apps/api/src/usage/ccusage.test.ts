@@ -2,7 +2,13 @@ import type { RawUsageReportInput } from "@tokenmaxxing/api-contract";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
+import {
+  CCUSAGE_FIXTURE_SOURCES,
+  ccusageDailyCommand,
+  ccusageDailyFixture,
+} from "../testing/ccusage-fixtures";
 import { parseRawUsageReports } from "./ccusage";
+import { normalizeCcusageModelName, normalizeUsageDays } from "./models";
 
 const options = { latestDate: "2026-09-23" };
 
@@ -327,5 +333,67 @@ describe("parseRawUsageReports", () => {
     expect(costs["model-a"]).toBeCloseTo(1 + 2 * 0.75);
     expect(costs["model-b"]).toBeCloseTo(2 + 2 * 0.25);
     expect(result.rows.reduce((sum, row) => sum + row.costUsd, 0)).toBeCloseTo(5);
+  });
+});
+
+describe("parseRawUsageReports with captured ccusage sources", () => {
+  const sum = (values: readonly number[]) => values.reduce((total, value) => total + value, 0);
+
+  it.each(CCUSAGE_FIXTURE_SOURCES)(
+    "keeps %s day totals, costs, and model names",
+    async (source) => {
+      const payload = ccusageDailyFixture(source);
+      const result = await Effect.runPromise(
+        parseRawUsageReports(
+          [{ command: ccusageDailyCommand(source), payload, reportKind: "daily", source }],
+          options,
+        ),
+      );
+      const rows = normalizeUsageDays(result.rows);
+
+      expect(rows.length).toBeGreaterThan(0);
+      expect(new Set(rows.map((row) => row.source))).toEqual(new Set([source]));
+      expect(result.coveredDays).toEqual(payload.daily.map(({ date }) => ({ date, source })));
+      expect(new Set(rows.map((row) => row.model))).toEqual(
+        new Set(
+          payload.daily.flatMap((day) =>
+            day.modelBreakdowns.map(({ modelName }) =>
+              normalizeCcusageModelName(source, modelName),
+            ),
+          ),
+        ),
+      );
+      // Reasoning tokens some adapters only count in the day total stay counted.
+      expect(sum(rows.map((row) => row.totalTokens))).toBe(
+        sum(payload.daily.map((day) => day.totalTokens)),
+      );
+      expect(sum(rows.map((row) => row.costUsd))).toBeCloseTo(
+        sum(payload.daily.map((day) => day.totalCost)),
+        10,
+      );
+    },
+  );
+
+  it("strips OpenClaw's own model prefix", async () => {
+    const result = await Effect.runPromise(
+      parseRawUsageReports(
+        [
+          {
+            command: ccusageDailyCommand("openclaw"),
+            payload: ccusageDailyFixture("openclaw"),
+            reportKind: "daily",
+            source: "openclaw",
+          },
+        ],
+        options,
+      ),
+    );
+
+    expect(result.rows.map((row) => row.model)).toContain("[openclaw] gpt-5.5");
+    expect(normalizeUsageDays(result.rows).map(({ date, model }) => [date, model])).toEqual([
+      ["2026-09-10", "claude-sonnet-4-6"],
+      ["2026-09-10", "gpt-5.5"],
+      ["2026-09-11", "claude-sonnet-4-6"],
+    ]);
   });
 });

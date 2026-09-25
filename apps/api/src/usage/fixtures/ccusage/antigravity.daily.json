@@ -1,0 +1,60 @@
+{
+  "daily": [
+    {
+      "cacheCreationTokens": 1500,
+      "cacheReadTokens": 35000,
+      "date": "2026-09-10",
+      "inputTokens": 5400,
+      "modelBreakdowns": [
+        {
+          "cacheCreationTokens": 1500,
+          "cacheReadTokens": 9000,
+          "cost": 0.026325,
+          "inputTokens": 2500,
+          "modelName": "claude-sonnet-4-6",
+          "outputTokens": 700
+        },
+        {
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 26000,
+          "cost": 0.009,
+          "inputTokens": 2900,
+          "modelName": "gemini-3.8-flash-high",
+          "outputTokens": 900
+        }
+      ],
+      "modelsUsed": ["gemini-3.8-flash-high", "claude-sonnet-4-6"],
+      "outputTokens": 1600,
+      "totalCost": 0.035325,
+      "totalTokens": 43900
+    },
+    {
+      "cacheCreationTokens": 0,
+      "cacheReadTokens": 16000,
+      "date": "2026-09-11",
+      "inputTokens": 2000,
+      "modelBreakdowns": [
+        {
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 16000,
+          "cost": 0.0057,
+          "inputTokens": 2000,
+          "modelName": "gemini-3.8-flash",
+          "outputTokens": 600
+        }
+      ],
+      "modelsUsed": ["gemini-3.8-flash"],
+      "outputTokens": 600,
+      "totalCost": 0.0057,
+      "totalTokens": 18800
+    }
+  ],
+  "totals": {
+    "cacheCreationTokens": 1500,
+    "cacheReadTokens": 51000,
+    "inputTokens": 7400,
+    "outputTokens": 2200,
+    "totalCost": 0.041025000000000006,
+    "totalTokens": 62700
+  }
+}

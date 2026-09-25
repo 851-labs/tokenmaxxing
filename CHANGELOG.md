@@ -5,6 +5,20 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Added
+
+- Added Grok Build CLI, Antigravity, ZCode, Amp, Qwen Code, Kimi CLI, Kilo Code, Goose, Droid,
+  Codebuff, and OpenClaw as supported sources (`--sources grok,antigravity,zcode,amp,qwen,kimi,`
+  `kilo,goose,droid,codebuff,openclaw`), each read through its focused ccusage subcommand.
+- Scheduled syncs now keep custom data directories for those agents (`GROK_HOME`,
+  `ANTIGRAVITY_DATA_DIR`, `ZCODE_HOME`, `AMP_DATA_DIR`, `QWEN_DATA_DIR`, `KIMI_DATA_DIR`,
+  `KILO_DATA_DIR`, `GOOSE_PATH_ROOT`, `DROID_SESSIONS_DIR`, `CODEBUFF_DATA_DIR`, `OPENCLAW_DIR`).
+
+### Changed
+
+- Required ccusage 20.0.22 or newer, the first release with every supported adapter (Antigravity
+  and ZCode arrived in 20.0.21) and with `claude-fable-5-1` usage counted again.
+
 ### Fixed
 
 - Scheduled syncs now carry custom `CLAUDE_CONFIG_DIR` and `CODEX_HOME` log roots, like
@@ -13,6 +27,11 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   when the service's roots differ from your shell. Thanks @maxmoneycash (#71).
 - Hermes usage now includes named profiles (`~/.hermes/profiles/<name>/state.db`) alongside the
   default root when `HERMES_HOME` is unset, in both `sync` and scheduled runs. Thanks @kvnloo (#68).
+
+### Server
+
+- The API accepts the new sources on `/usage/ingest` and `/usage/sync`, and the site labels them
+  on the stats page, home page, FAQ, privacy policy, and llms.txt.
 
 ## 0.7.0-alpha.0 - 2026-09-23
 

@@ -64,6 +64,22 @@ Sync is idempotent and profiles aggregate across devices, so you can run
 - GitHub Copilot CLI
 - Hermes
 - Pi
+- Grok Build CLI
+- Antigravity
+- ZCode
+- Amp
+- Qwen Code
+- Kimi CLI
+- Kilo Code
+- Goose
+- Droid
+- Codebuff
+- OpenClaw
+
+Agents stored outside their default location are found through the same
+environment variables ccusage reads (for example `CODEX_HOME`, `GROK_HOME`, or
+`AMP_DATA_DIR`; see ccusage's
+[environment variables](https://ccusage.com/guide/environment-variables)).
 
 ## Usage
 
@@ -86,8 +102,11 @@ The background service supports macOS, Linux, and Windows. It uses the global
 `tokenmaxxing` binary and keeps itself current through the package manager that
 installed the CLI when that package manager can be detected.
 
-Custom agent log roots (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HERMES_HOME`) are
-captured from your shell when you run `tokenmaxxing service install` or
+Custom agent log roots (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HERMES_HOME`,
+`GROK_HOME`, `ANTIGRAVITY_DATA_DIR`, `ZCODE_HOME`, `AMP_DATA_DIR`,
+`QWEN_DATA_DIR`, `KIMI_DATA_DIR`, `KILO_DATA_DIR`, `GOOSE_PATH_ROOT`,
+`DROID_SESSIONS_DIR`, `CODEBUFF_DATA_DIR`, `OPENCLAW_DIR`) are captured from
+your shell when you run `tokenmaxxing service install` or
 `tokenmaxxing service repair`; rerun one of those after changing them, and
 `tokenmaxxing service doctor` warns when they drift. Without `HERMES_HOME`, both
 `sync` and the service read the default Hermes root plus every named profile
