@@ -25,7 +25,6 @@ import {
   renderSyncSuccess,
   renderSyncTable,
   resolveSyncAuth,
-  sourceStatsForSync,
   syncJsonPayload,
   syncProgram,
   syncStatusForSources,
@@ -613,6 +612,127 @@ describe("sync source outcomes", () => {
     expect(uploadPayload).not.toHaveProperty("sourceStats");
   });
 
+  it("follows scheduled source plans without re-running skipped or reused reports", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+      interactive: false,
+    });
+    let uploadPayload: TestUsageIngestRequest["payload"] | undefined;
+    const auth = makeUploadAuth((request) =>
+      Effect.sync(() => {
+        uploadPayload = request.payload;
+        return { received: 1, syncedAt: "2026-07-22T00:00:00.000Z", upserted: 1 };
+      }),
+    );
+    const dailyRuns: Array<{ since: string | undefined; source: string }> = [];
+
+    const result = await Effect.runPromise(
+      syncProgram(
+        {
+          auth,
+          dryRun: false,
+          json: true,
+          since: "2026-07-22",
+          sourcePlans: {
+            claude: { mode: "skip", reason: "unchanged" },
+            codex: { knownSessions: 7, mode: "run", sessions: "reuse", since: "2026-07-20" },
+          },
+          sources: "claude,codex",
+        },
+        {
+          runDailyReport: (source, options) =>
+            Effect.sync(() => {
+              dailyRuns.push({ since: options?.since, source: source.source });
+              return { daily: [{ date: "2026-07-22", totalTokens: 10 }] };
+            }),
+          runSessionReport: () => Effect.die("session report should not run"),
+        },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(dailyRuns).toEqual([{ since: "2026-07-20", source: "codex" }]);
+    expect(result.status).toBe("ok");
+    expect(result.sourceResults).toEqual([
+      { reason: "unchanged", source: "claude", status: "skipped", summary: null },
+      {
+        source: "codex",
+        status: "synced",
+        summary: { days: 1, models: 1, rows: 1, sessions: 7, spendUsd: 0 },
+      },
+    ]);
+    expect(result.timings?.claude).toBeUndefined();
+    expect(result.timings?.codex).toEqual({ dailyMs: expect.any(Number) });
+    expect(uploadPayload?.reports).toMatchObject([
+      {
+        command: [
+          "ccusage@^20.0.19",
+          "codex",
+          "daily",
+          "--json",
+          "--breakdown",
+          "--mode",
+          "calculate",
+          "--since",
+          "20260720",
+        ],
+      },
+    ]);
+    // A reused count is display-only; the server keeps the count it has.
+    expect(uploadPayload).not.toHaveProperty("sourceStats");
+  });
+
+  it("uploads a full-history session count from a full run with a bounded daily window", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+      interactive: false,
+    });
+    let uploadPayload: TestUsageIngestRequest["payload"] | undefined;
+    const auth = makeUploadAuth((request) =>
+      Effect.sync(() => {
+        uploadPayload = request.payload;
+        return { received: 1, syncedAt: "2026-07-22T00:00:00.000Z", upserted: 1 };
+      }),
+    );
+    const sessionSince: Array<string | undefined> = [];
+
+    const result = await Effect.runPromise(
+      syncProgram(
+        {
+          auth,
+          dryRun: false,
+          json: true,
+          since: "2026-07-02",
+          sourcePlans: {
+            codex: { knownSessions: 1, mode: "run", sessions: "full", since: "2026-07-02" },
+          },
+          sources: "codex",
+        },
+        {
+          runDailyReport: () =>
+            Effect.succeed({ daily: [{ date: "2026-07-22", totalTokens: 10 }] }),
+          runSessionReport: (_source, options) =>
+            Effect.sync(() => {
+              sessionSince.push(options?.since);
+              return { sessions: [{}, {}, {}] };
+            }),
+        },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(sessionSince).toEqual([undefined]);
+    expect(result.timings?.codex).toEqual({
+      dailyMs: expect.any(Number),
+      sessionMs: expect.any(Number),
+    });
+    expect(uploadPayload?.sourceStats).toEqual([{ sessionCount: 3, source: "codex" }]);
+  });
+
   it.each(["2026-13-01", "2025-02-29", "yesterday", "2026-1-1", "20260101"])(
     "rejects --since %s before running ccusage",
     async (since) => {
@@ -663,34 +783,6 @@ describe("sync source outcomes", () => {
     expect(result.sourceResults).toEqual([
       { reason: "no_data", source: "codex", status: "skipped", summary: null },
     ]);
-  });
-});
-
-describe("sourceStatsForSync", () => {
-  it("keeps only sources with known session counts", () => {
-    expect(
-      sourceStatsForSync([
-        {
-          source: "claude",
-          status: "synced",
-          summary: { days: 17, models: 7, rows: 42, sessions: 54, spendUsd: 2_672 },
-        },
-        {
-          source: "codex",
-          status: "synced",
-          summary: { days: 89, models: 4, rows: 123, sessions: null, spendUsd: 12_172 },
-        },
-        { reason: "no_data", source: "gemini", status: "skipped", summary: null },
-      ]),
-    ).toEqual([{ sessionCount: 54, source: "claude" }]);
-  });
-
-  it("returns undefined when there is nothing useful to upload", () => {
-    expect(
-      sourceStatsForSync([
-        { reason: "no_data", source: "gemini", status: "skipped", summary: null },
-      ]),
-    ).toBeUndefined();
   });
 });
 

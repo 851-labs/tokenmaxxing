@@ -22,6 +22,7 @@ import {
   runCcusageDailyReport,
   runCcusageSessionReport,
 } from "../ccusage/runner";
+import type { SyncSourcePlan, SyncSourcePlans } from "../ccusage/cadence";
 import { DEFAULT_SOURCE_NAMES, resolveSources } from "../ccusage/sources";
 import {
   ApiClientService,
@@ -147,6 +148,12 @@ interface SyncOptions {
 interface SyncProgramOptions extends SyncOptions {
   auth?: SyncAuth | undefined;
   silent?: boolean | undefined;
+  /**
+   * Scheduled-run cadence per source (see ccusage/cadence.ts). A source
+   * without a plan runs its daily and session reports over `since`, and
+   * uploads its session count only when `since` is unset.
+   */
+  sourcePlans?: SyncSourcePlans | undefined;
   uploadPolicy?: UploadRetryPolicy | undefined;
 }
 
@@ -178,11 +185,20 @@ interface SyncSourceIssue {
   report: CcusageReportKind;
 }
 
+/** `unchanged` and `cooldown` only come from scheduled cadence plans. */
+type SyncSkipReason = "cooldown" | "no_data" | "unchanged";
+
 type SyncSourceResult =
   | { source: UsageSource; status: "failed"; summary: null; issue: SyncSourceIssue }
   | { source: UsageSource; status: "partial"; summary: SyncSourceSummary; issue: SyncSourceIssue }
-  | { source: UsageSource; status: "skipped"; summary: null; reason: "no_data" }
+  | { source: UsageSource; status: "skipped"; summary: null; reason: SyncSkipReason }
   | { source: UsageSource; status: "synced"; summary: SyncSourceSummary };
+
+/** Wall time of each ccusage report a source ran. */
+interface SyncSourceTimings {
+  dailyMs?: number | undefined;
+  sessionMs?: number | undefined;
+}
 
 type SyncStatus = "error" | "ok" | "partial";
 
@@ -193,6 +209,7 @@ interface SyncResult {
   sourceResults: SyncSourceResult[];
   sources: Record<string, SyncSourceSummary | null>;
   status: SyncStatus;
+  timings?: Partial<Record<UsageSource, SyncSourceTimings>> | undefined;
   upserted?: number | undefined;
 }
 
@@ -310,15 +327,39 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
     const rawReports: RawUsageReportInput[] = [];
     const sourceSummaries: Record<string, SyncSourceSummary | null> = {};
     const sourceResults: SyncSourceResult[] = [];
+    const sourceStats: SourceUsageStatsInput[] = [];
+    const timings: Partial<Record<UsageSource, SyncSourceTimings>> = {};
     const renderInlineResults = shouldRenderInlineSync(options);
     for (const source of sources) {
+      const plan: SyncSourcePlan = options.sourcePlans?.[source.source] ?? {
+        knownSessions: null,
+        mode: "run",
+        sessions: options.since === undefined ? "full" : "window",
+        since: options.since,
+      };
+      if (plan.mode === "skip") {
+        const result = {
+          reason: plan.reason,
+          source: source.source,
+          status: "skipped" as const,
+          summary: null,
+        };
+        sourceSummaries[source.source] = null;
+        sourceResults.push(result);
+        continue;
+      }
+
       const spinner = yield* humanSpinner(`Syncing ${source.source}`, options);
-      const dailyResult = yield* runDailyReport(source, { since: options.since }).pipe(
+      const sourceTimings: SyncSourceTimings = {};
+      timings[source.source] = sourceTimings;
+      const dailyStartedAt = Date.now();
+      const dailyResult = yield* runDailyReport(source, { since: plan.since }).pipe(
         Effect.match({
           onFailure: (error) => ({ error, _tag: "failure" as const }),
           onSuccess: (report) => ({ report, _tag: "success" as const }),
         }),
       );
+      sourceTimings.dailyMs = Date.now() - dailyStartedAt;
 
       if (dailyResult._tag === "failure") {
         const result = {
@@ -351,20 +392,31 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
 
       const sourceRows = aggregateDays(source.source, dailyReport.daily);
       rawReports.push({
-        command: dailyCcusageCommand(source, { since: options.since }),
+        command: dailyCcusageCommand(source, { since: plan.since }),
         payload: dailyReport,
         reportKind: "daily",
         source: source.source,
       });
 
-      const sessionResult = yield* runSessionReport(source, { since: options.since }).pipe(
-        Effect.match({
-          onFailure: (error) => ({ error, _tag: "failure" as const }),
-          onSuccess: (report) => ({ report, _tag: "success" as const }),
-        }),
-      );
+      const sessionResult =
+        plan.sessions === "reuse"
+          ? { count: plan.knownSessions, _tag: "reused" as const }
+          : yield* runTimedSessionReport(
+              runSessionReport,
+              source,
+              plan.sessions === "full" ? undefined : plan.since,
+              sourceTimings,
+            );
       const sessionCount =
-        sessionResult._tag === "success" ? sessionResult.report.sessions.length : null;
+        sessionResult._tag === "reused"
+          ? sessionResult.count
+          : sessionResult._tag === "success"
+            ? sessionResult.report.sessions.length
+            : null;
+      // Only a full-history count may replace the server's lifetime count.
+      if (plan.sessions === "full" && sessionCount !== null) {
+        sourceStats.push({ sessionCount, source: source.source });
+      }
       const summary = { ...summarize(sourceRows), sessions: sessionCount };
       const result: SyncSourceResult =
         sessionResult._tag === "failure"
@@ -398,6 +450,7 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
         sourceResults,
         sources: sourceSummaries,
         status,
+        timings,
       };
     }
 
@@ -415,6 +468,7 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
         sourceResults,
         sources: sourceSummaries,
         status,
+        timings,
       };
     }
 
@@ -423,7 +477,7 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
       device,
       options,
       rawReports,
-      sourceStats: options.since === undefined ? sourceStatsForSync(sourceResults) : undefined,
+      sourceStats: sourceStats.length === 0 ? undefined : sourceStats,
       uploadPolicy: options.uploadPolicy,
     });
     upserted = response.upserted;
@@ -435,8 +489,31 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
       sourceResults,
       sources: sourceSummaries,
       status,
+      timings,
       upserted,
     };
+  });
+}
+
+function runTimedSessionReport(
+  runSessionReport: typeof runCcusageSessionReport,
+  source: Parameters<typeof runCcusageSessionReport>[0],
+  since: string | undefined,
+  timings: SyncSourceTimings,
+) {
+  return Effect.suspend(() => {
+    const startedAt = Date.now();
+    return runSessionReport(source, { since }).pipe(
+      Effect.match({
+        onFailure: (error) => ({ error, _tag: "failure" as const }),
+        onSuccess: (report) => ({ report, _tag: "success" as const }),
+      }),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          timings.sessionMs = Date.now() - startedAt;
+        }),
+      ),
+    );
   });
 }
 
@@ -548,18 +625,6 @@ function syncJsonPayload(result: SyncResult) {
   };
 }
 
-function sourceStatsForSync(
-  results: readonly SyncSourceResult[],
-): SourceUsageStatsInput[] | undefined {
-  const stats = results.flatMap((result) =>
-    result.summary?.sessions === undefined || result.summary.sessions === null
-      ? []
-      : [{ sessionCount: result.summary.sessions, source: result.source }],
-  );
-
-  return stats.length === 0 ? undefined : stats;
-}
-
 function syncSourceIssue(error: CcusageRunError): SyncSourceIssue {
   const message =
     error.code === "command_not_found"
@@ -624,7 +689,7 @@ function renderSyncSourceResult(result: SyncSourceResult): string {
   }
 
   if (result.status === "skipped") {
-    return `${result.source} skipped (no data)`;
+    return `${result.source} skipped (${syncSkipReasonLabel(result.reason)})`;
   }
 
   const sessions =
@@ -644,6 +709,14 @@ function renderSyncSourceResult(result: SyncSourceResult): string {
   }
 
   return row.join(" - ");
+}
+
+function syncSkipReasonLabel(reason: SyncSkipReason): string {
+  return reason === "no_data"
+    ? "no data"
+    : reason === "unchanged"
+      ? "logs unchanged"
+      : "cooling down";
 }
 
 function renderSyncTable(
@@ -838,7 +911,6 @@ export {
   renderSyncSourceResult,
   renderSyncTable,
   resolveSyncAuth,
-  sourceStatsForSync,
   syncSourceIssue,
   syncStatusForSources,
   syncCommand,
@@ -854,6 +926,7 @@ export {
 
 export type {
   ResolveSyncAuthOptions,
+  SyncSkipReason,
   SyncAuth,
   SyncOptions,
   SyncResult,
@@ -861,6 +934,7 @@ export type {
   SyncSourceIssue,
   SyncSourceResult,
   SyncSourceSummary,
+  SyncSourceTimings,
   SyncStatus,
   UploadRetryPolicy,
 };

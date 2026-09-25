@@ -44,6 +44,8 @@ import { ClockService, ConfigService, ConsoleService } from "../services";
 import { getConfigPath } from "../services/config";
 import { humanFrame, humanLog, humanSpinner, writeJson } from "../output";
 import packageJson from "../../package.json";
+import { prepareSourceCadence, SOURCE_CADENCE_FILE_NAME } from "../ccusage/cadence";
+import { DEFAULT_SOURCE_NAMES } from "../ccusage/sources";
 import {
   parseServiceRunnerTarget,
   platformForServiceRunnerTarget,
@@ -60,6 +62,7 @@ import {
   syncProgram,
   type SyncAuth,
   type SyncResult,
+  type SyncSkipReason,
   type SyncSourceIssue,
   type SyncStatus,
   type UploadRetryPolicy,
@@ -271,10 +274,13 @@ interface ServiceState {
 }
 
 interface ServiceSourceState {
+  dailyMs?: number;
   days?: number;
   issue?: SyncSourceIssue;
   models?: number;
+  reason?: SyncSkipReason;
   rows?: number;
+  sessionMs?: number;
   sessions?: number | null;
   source: string;
   spendUsd?: number;
@@ -500,7 +506,7 @@ const runCommand = Command.make(
   "run",
   {
     force: booleanFlag("force").pipe(
-      Flag.withDescription("Deprecated; service runs sync every time"),
+      Flag.withDescription("Run every source, even ones whose logs are unchanged"),
     ),
     json: booleanFlag("json").pipe(Flag.withDescription("Output machine-readable JSON")),
     scheduled: booleanFlag("scheduled").pipe(Flag.withHidden),
@@ -1303,6 +1309,16 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       version: 1,
     }).pipe(Effect.mapError((cause) => new ServiceRunError({ cause })));
 
+    // Scheduled ticks skip sources whose logs are unchanged since their last
+    // upload and never re-run the session report (#69); anything else is a
+    // full run that also refreshes the uploaded session counts.
+    const cadence = yield* prepareSourceCadence({
+      cliVersion,
+      full: !options.scheduled || options.force || reconcile || usageReplacementBackfill,
+      path: serviceSourceCadencePath(paths),
+      since: scheduledSince,
+      sources: usageReplacementBackfill ? ["codex"] : DEFAULT_SOURCE_NAMES,
+    });
     const result = yield* syncProgram({
       auth,
       dryRun: false,
@@ -1310,12 +1326,16 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       silent: true,
       ...(scheduledSince === undefined ? {} : { since: scheduledSince }),
       ...(usageReplacementBackfill ? { sources: "codex" } : {}),
+      sourcePlans: cadence.plans,
       ...(options.scheduled ? { uploadPolicy: SERVICE_UPLOAD_RETRY_POLICY } : {}),
     }).pipe(
       Effect.match({
         onFailure: (cause) => ({ _tag: "failure" as const, cause }),
         onSuccess: (value) => ({ _tag: "success" as const, value }),
       }),
+      Effect.tap((outcome) =>
+        outcome._tag === "success" ? cadence.commit(outcome.value) : Effect.void,
+      ),
     );
 
     if (result._tag === "failure") {
@@ -1935,8 +1955,14 @@ function serviceRunFailureState(
 
 function serviceSourcesForState(result: SyncResult): ServiceSourceState[] {
   return result.sourceResults.map((sourceResult) => {
+    const timings = result.timings?.[sourceResult.source];
+    const durations = {
+      ...(timings?.dailyMs === undefined ? {} : { dailyMs: timings.dailyMs }),
+      ...(timings?.sessionMs === undefined ? {} : { sessionMs: timings.sessionMs }),
+    };
     if (sourceResult.status === "failed") {
       return {
+        ...durations,
         issue: sourceResult.issue,
         source: sourceResult.source,
         status: sourceResult.status,
@@ -1945,6 +1971,8 @@ function serviceSourcesForState(result: SyncResult): ServiceSourceState[] {
 
     if (sourceResult.status === "skipped") {
       return {
+        ...durations,
+        ...(sourceResult.reason === "no_data" ? {} : { reason: sourceResult.reason }),
         source: sourceResult.source,
         status: sourceResult.status,
       };
@@ -1952,6 +1980,7 @@ function serviceSourcesForState(result: SyncResult): ServiceSourceState[] {
 
     const summary = sourceResult.summary;
     return {
+      ...durations,
       days: summary.days,
       ...(sourceResult.status === "partial" ? { issue: sourceResult.issue } : {}),
       models: summary.models,
@@ -2306,6 +2335,10 @@ function formatServiceLockSince(status: Extract<ServiceLockStatus, { locked: tru
   }
 
   return parts.length === 0 ? "" : ` (${parts.join(", ")})`;
+}
+
+function serviceSourceCadencePath(paths: Pick<ServicePaths, "configDir">): string {
+  return join(paths.configDir, SOURCE_CADENCE_FILE_NAME);
 }
 
 function readServiceState(path: string): Effect.Effect<ServiceState | null, never> {
@@ -3954,6 +3987,7 @@ function removeServiceFiles(paths: ServicePaths): Effect.Effect<void, unknown> {
       await rm(paths.runnerPointerPath, { force: true });
       await rm(paths.runnersDir, { force: true, recursive: true });
       await rm(paths.statePath, { force: true });
+      await rm(serviceSourceCadencePath(paths), { force: true });
       await rm(paths.lockPath, { force: true });
       await rm(paths.updateLockPath, { force: true });
       if (paths.definitionPath !== null) {
