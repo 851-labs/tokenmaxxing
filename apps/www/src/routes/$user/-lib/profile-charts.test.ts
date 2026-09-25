@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { modelColor } from "../../../components/charts/model-colors";
 import { deriveProfileCharts, type DailyRange, type DailyRow } from "./profile-charts";
 
 describe("deriveProfileCharts", () => {
@@ -97,6 +98,27 @@ describe("deriveProfileCharts", () => {
       ["claude-opus-4-8", 20],
       ["claude-opus-4-7", 10],
     ]);
+  });
+
+  it("colors models by identity, the same as /stats, across every chart", () => {
+    const range: DailyRange = { firstDate: "2026-06-21", lastDate: "2026-06-21" };
+    const rows: DailyRow[] = [
+      dailyRow({ spendUsd: 20, key: "claude-opus-5", totalTokens: 100 }),
+      dailyRow({ spendUsd: 10, key: "gpt-5.6-sol", totalTokens: 300 }),
+    ];
+
+    const derived = deriveProfileCharts(rows, range);
+    const segments = [
+      ...derived.spend.legend,
+      ...derived.tokens.legend,
+      ...(derived.segmentsByDate.get("2026-06-21") ?? []),
+      ...(derived.months[0]?.segments ?? []),
+    ];
+
+    expect(segments).toHaveLength(8);
+    for (const segment of segments) {
+      expect(segment.color, segment.series).toBe(modelColor(segment.series));
+    }
   });
 
   it("collapses only models below the chart limit into Other", () => {
