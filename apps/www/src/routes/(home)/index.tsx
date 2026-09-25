@@ -62,18 +62,20 @@ const NUMBER_CELL = cn(CELL, "text-right tabular-nums");
 const DETAIL_CELL = cn(NUMBER_CELL, "text-muted-foreground");
 
 /**
- * Rank and user stay pinned while the numbers scroll under them. The rank
- * column has a fixed width so the user column knows its sticky offset (it fits
- * a three-digit rank at either gutter). Pinned cells inherit their row's
+ * Rank and avatar stay pinned while the login and numbers scroll under them;
+ * keeping the pinned block this narrow leaves phones room for the data. Both
+ * pinned columns have fixed widths so the avatar knows its sticky offset (the
+ * rank fits three digits at either gutter). Pinned cells inherit their row's
  * background, so rows are painted with opaque mixes rather than alpha tints.
  */
 const RANK_CELL = "sticky left-0 w-12 min-w-12 bg-inherit py-3 pr-2 pl-2 sm:pl-3";
-const USER_CELL = cn(
-  CELL,
-  "sticky left-12 bg-inherit",
+const AVATAR_CELL = cn(
+  "sticky left-12 w-10 min-w-10 max-w-10 bg-inherit py-3 pr-2 pl-2 sm:w-11 sm:min-w-11 sm:max-w-11 sm:pl-3",
   // A hairline and soft shadow mark the pinned edge once rows scroll under it.
   "group-data-scrolled/board:shadow-[inset_-1px_0_0_var(--color-border),6px_0_8px_-6px_rgb(0_0_0/0.2)]",
 );
+/** The avatar cell's `pr-2` plus this `pl-0.5` keep the old 10px avatar–login gap. */
+const LOGIN_CELL = "whitespace-nowrap py-3 pr-2 pl-0.5 sm:pr-3";
 const HEADER_ROW_BG = "bg-[color-mix(in_oklab,var(--color-muted)_50%,var(--color-background))]";
 const BODY_ROW_BG =
   "bg-background hover:bg-[color-mix(in_oklab,var(--color-muted)_40%,var(--color-background))]";
@@ -195,7 +197,10 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
             <th className={cn(RANK_CELL, "font-medium")} scope="col">
               #
             </th>
-            <th className={cn(USER_CELL, "font-medium")} scope="col">
+            <th className={AVATAR_CELL} scope="col">
+              <span className="sr-only">Avatar</span>
+            </th>
+            <th className={cn(LOGIN_CELL, "font-medium")} scope="col">
               User
             </th>
             <th className={cn(NUMBER_CELL, "font-medium")} scope="col">
@@ -224,13 +229,24 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
               <td className={cn(RANK_CELL, "font-mono tabular-nums text-muted-foreground")}>
                 {entry.rank}
               </td>
-              <td className={USER_CELL}>
+              <td className={AVATAR_CELL}>
+                {/* Pointer shortcut only: the login link beside it is the tab stop and name. */}
                 <Link
-                  className="flex items-center gap-2.5 font-medium hover:underline"
+                  aria-hidden="true"
+                  className="flex"
+                  params={{ user: entry.user.login }}
+                  tabIndex={-1}
+                  to="/$user"
+                >
+                  <Avatar size={24} src={entry.user.avatarUrl} />
+                </Link>
+              </td>
+              <td className={LOGIN_CELL}>
+                <Link
+                  className="font-medium hover:underline"
                   params={{ user: entry.user.login }}
                   to="/$user"
                 >
-                  <Avatar alt={`${entry.user.login} avatar`} size={24} src={entry.user.avatarUrl} />
                   {entry.user.login}
                 </Link>
               </td>
