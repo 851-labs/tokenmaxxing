@@ -78,10 +78,10 @@ describe("fnv1a", () => {
 
 describe("modelColor", () => {
   it("pins curated models to fixed colors", () => {
-    expect(modelColor("claude-opus-5")).toBe("#8f85ec");
+    expect(modelColor("claude-opus-5")).toBe("#a936c2");
     expect(modelColor("gpt-5.6-sol")).toBe("#f06400");
-    expect(modelColor("gpt-6-astra")).toBe("#5454ea");
-    expect(modelColor("claude-fable-5")).toBe("#865d00");
+    expect(modelColor("gpt-6-astra")).toBe("#077a45");
+    expect(modelColor("claude-fable-5")).toBe("#8f85ec");
   });
 
   it("gives name variants of one model the same color", () => {
