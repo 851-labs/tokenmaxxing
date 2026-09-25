@@ -17,6 +17,7 @@
 ## Conventions
 
 - Daily usage rows are keyed `(deviceId, date, source, model)` and upserted; sync must stay idempotent.
+- Cost is frozen at first upload unless the usage (token counts) changes: the `usage_days` upsert keeps the stored `cost_usd` when all token columns match (ccusage re-prices unmarked Codex history with the device's current speed tier), takes the incoming cost when any token count differs, and prices a row stored at 0. Fixing already-stored cost means editing D1 directly; re-ingesting payloads with the same tokens is a no-op for cost.
 - `date` columns are opaque `YYYY-MM-DD` strings (ccusage local-time buckets); never parse them into Date objects for bucketing. Do day arithmetic with `shiftDayKey`/`utcDayKey` from `@tokenmaxxing/api-contract` (API windows live in `apps/api/src/date-keys.ts`).
 - Published CLIs bundle a frozen contract. `packages/api-contract/fixtures/` (recorded CLI requests + the CLI endpoint OpenAPI slice) is a compatibility contract: review diffs there as breaking-change reviews, and add a `legacy/` fixture before changing a shape a released CLI sends. Responses go the other way: `apps/api/src/http/cli-compat.test.ts` decodes every replayed response and typed CLI error with frozen copies of the released CLI decoders, so fields may be added but never dropped, renamed or retyped, and error `_tag`s never change. `fixtures/full-api.openapi.json` snapshots the whole API as a review aid; only the CLI slice is frozen.
 - CLI tokens (`tmx_` prefix) never expire; revocation (`revokedAt`) is the only kill switch.
