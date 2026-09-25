@@ -8,8 +8,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
-  buildStackedSeriesChart,
-  seriesColors,
+  buildStackedSeriesCharts,
   type StackedSeriesChart,
 } from "../../../components/charts/series";
 import { addDays, enumerateDays } from "../../../lib/dates";
@@ -99,13 +98,12 @@ function deriveAggregateCharts(view: StatsWindowView): AggregateCharts {
   const rows = view.dailyByModel;
   const days =
     view.chartRange === null ? [] : enumerateDays(view.chartRange.first, view.chartRange.last);
-  const colors = seriesColors(rows);
 
-  return {
-    sessions: buildStackedSeriesChart(rows, days, colors, (row) => row.rowCount),
-    spend: buildStackedSeriesChart(rows, days, colors, (row) => row.spendUsd),
-    tokens: buildStackedSeriesChart(rows, days, colors, (row) => row.totalTokens),
-  };
+  return buildStackedSeriesCharts(rows, days, {
+    sessions: (row) => row.rowCount,
+    spend: (row) => row.spendUsd,
+    tokens: (row) => row.totalTokens,
+  }).charts;
 }
 
 function formatUsageRange(range: StatsWindowView["chartRange"]): string {

@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { modelColor, OTHER_MODEL_SERIES_COLOR } from "./model-colors";
 import {
   bucketSeries,
   buildSegments,
-  buildStackedSeriesChart,
-  OTHER_MODEL_SERIES_COLOR,
+  buildStackedSeriesCharts,
   segmentTooltipRows,
   selectModelSeries,
-  seriesColors,
 } from "./series";
 
 describe("selectModelSeries", () => {
@@ -71,13 +70,11 @@ describe("stacked series", () => {
   ];
 
   it("zero-fills days and keeps segment order stable across days", () => {
-    const colors = seriesColors(rows);
-    const chart = buildStackedSeriesChart(
-      rows,
-      ["2026-06-20", "2026-06-21", "2026-06-22"],
-      colors,
-      (row) => row.costUsd,
-    );
+    const {
+      charts: { cost: chart },
+    } = buildStackedSeriesCharts(rows, ["2026-06-20", "2026-06-21", "2026-06-22"], {
+      cost: (row) => row.costUsd,
+    });
 
     expect(chart.days.map((day) => [day.date, day.total])).toEqual([
       ["2026-06-20", 8],
@@ -93,13 +90,37 @@ describe("stacked series", () => {
   });
 
   it("ranks legend entries by share and drops empty series", () => {
-    const colors = seriesColors(rows);
-    const chart = buildStackedSeriesChart(rows, ["2026-06-20"], colors, (row) => row.costUsd);
+    const {
+      charts: { cost: chart },
+    } = buildStackedSeriesCharts(rows, ["2026-06-20"], { cost: (row) => row.costUsd });
 
     expect(chart.legend).toEqual([
-      { color: colors.get("a"), percent: 62.5, series: "a" },
-      { color: colors.get("b"), percent: 37.5, series: "b" },
+      { color: modelColor("a"), percent: 62.5, series: "a" },
+      { color: modelColor("b"), percent: 37.5, series: "b" },
     ]);
+  });
+
+  it("colors a model the same in every metric's chart and legend", () => {
+    const sessionRows = [
+      ...rows,
+      { costUsd: 0, date: "2026-06-20", key: "c" },
+      { costUsd: 0, date: "2026-06-21", key: "c" },
+    ];
+    const { charts, colors } = buildStackedSeriesCharts(sessionRows, ["2026-06-20"], {
+      cost: (row) => row.costUsd,
+      sessions: () => 1,
+    });
+
+    for (const chart of [charts.cost, charts.sessions]) {
+      for (const entry of chart.legend) {
+        expect(entry.color).toBe(colors.get(entry.series));
+      }
+      for (const segment of chart.days[0]?.segments ?? []) {
+        expect(segment.color).toBe(colors.get(segment.series));
+      }
+    }
+    expect(charts.sessions.legend.map((entry) => entry.series)).toContain("c");
+    expect(new Set(["a", "b", "c"].map((model) => colors.get(model))).size).toBe(3);
   });
 
   it("buckets by an arbitrary key such as the month", () => {
@@ -115,9 +136,10 @@ describe("stacked series", () => {
     expect(buckets.values.get("2026-06")?.get("a")).toBe(7);
   });
 
-  it("falls back to the Other color for unknown series", () => {
-    expect(buildSegments(["missing"], new Map(), undefined)).toEqual([
-      { color: OTHER_MODEL_SERIES_COLOR, series: "missing", value: 0 },
+  it("falls back to a series' own color when the map lacks it", () => {
+    expect(buildSegments(["missing", "Other"], new Map(), undefined)).toEqual([
+      { color: modelColor("missing"), series: "missing", value: 0 },
+      { color: OTHER_MODEL_SERIES_COLOR, series: "Other", value: 0 },
     ]);
   });
 

@@ -6,6 +6,7 @@ import type {
   StatsWindow,
 } from "@tokenmaxxing/api-contract";
 
+import { modelColor } from "../../../components/charts/model-colors";
 import {
   deriveAggregateCharts,
   formatUsageRange,
@@ -81,6 +82,28 @@ describe("selectStatsWindow", () => {
       ["2026-06-22", 2],
     ]);
     expect(charts.sessions.days.map((day) => day.total)).toEqual([1, 0, 1]);
+  });
+
+  it("colors each model the same on both tabs, the same as profiles", () => {
+    const models = ["claude-opus-5", "gpt-5.6-sol", "gpt-6-astra"];
+    const data = stats({
+      rows: models.map((key, index) => ({ ...row("2026-06-20", index + 1), key })),
+      totals: { firstDate: "2026-06-20", lastDate: "2026-06-20" },
+    });
+    // The YTD tab additionally charts a model the 30d tab never sees.
+    const ytd = stats({
+      rows: [...data.windows.ytd.dailyByModel, { ...row("2026-03-01", 9), key: "gpt-5.5" }],
+      totals: { firstDate: "2026-03-01", lastDate: "2026-06-20" },
+    });
+
+    for (const view of [selectStatsWindow(data, "30d"), selectStatsWindow(ytd, "ytd")]) {
+      const charts = deriveAggregateCharts(view);
+      for (const chart of [charts.spend, charts.tokens, charts.sessions]) {
+        for (const entry of chart.legend) {
+          expect(entry.color, entry.series).toBe(modelColor(entry.series));
+        }
+      }
+    }
   });
 
   it("labels year-to-date with the server's year, not a hard-coded one", () => {

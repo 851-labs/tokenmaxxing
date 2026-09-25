@@ -4,8 +4,7 @@ import type { MonthPoint } from "../../../components/charts/month-bars";
 import {
   bucketSeries,
   buildSegments,
-  buildStackedSeriesChart,
-  seriesColors,
+  buildStackedSeriesCharts,
   type ChartSegment,
   type StackedSeriesChart,
 } from "../../../components/charts/series";
@@ -38,10 +37,14 @@ interface ProfileCharts {
 }
 
 function deriveProfileCharts(rows: readonly DailyRow[], range: DailyRange): ProfileCharts {
-  const colors = seriesColors(rows);
   const days = enumerateDays(range.firstDate, range.lastDate);
-  const spend = buildStackedSeriesChart(rows, days, colors, (row) => row.spendUsd);
-  const tokens = buildStackedSeriesChart(rows, days, colors, (row) => row.totalTokens);
+  const {
+    charts: { spend, tokens },
+    colors,
+  } = buildStackedSeriesCharts(rows, days, {
+    spend: (row) => row.spendUsd,
+    tokens: (row) => row.totalTokens,
+  });
   const spendOrder = spend.selection.order;
 
   const spendByWeekday = [0, 0, 0, 0, 0, 0, 0];

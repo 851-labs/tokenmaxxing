@@ -1,4 +1,6 @@
-import { STATS_CHART_MODEL_LIMIT, STATS_OTHER_MODEL_KEY } from "@tokenmaxxing/api-contract";
+import { STATS_CHART_MODEL_LIMIT } from "@tokenmaxxing/api-contract";
+
+import { assignModelColors, modelColor, OTHER_MODEL_SERIES } from "./model-colors";
 
 /**
  * Model-series selection and the pure transforms that turn daily usage rows
@@ -56,23 +58,6 @@ interface SeriesRow {
 
 /** The API keeps enough models per stats chart for exactly this many series. */
 const MODEL_SERIES_LIMIT = STATS_CHART_MODEL_LIMIT;
-const OTHER_MODEL_SERIES = STATS_OTHER_MODEL_KEY;
-const OTHER_MODEL_SERIES_COLOR = "#9ca3af";
-
-const DYNAMIC_SERIES_COLORS = [
-  "#f59e0b",
-  "#2563eb",
-  "#dc2626",
-  "#16a34a",
-  "#9333ea",
-  "#0891b2",
-  "#ea580c",
-  "#db2777",
-  "#65a30d",
-  "#7c3aed",
-  "#0d9488",
-  "#475569",
-] as const;
 
 /**
  * Keep the highest-value raw model names and collapse only the remaining long
@@ -112,23 +97,8 @@ function selectModelSeries<Row extends { key: string }>(
   };
 }
 
-/** Stable raw-model color assignment shared by every metric on a page. */
-function seriesColors<Row extends { key: string }>(rows: readonly Row[]): Map<string, string> {
-  const models = [...new Set(rows.map((row) => row.key))].sort((a, b) => a.localeCompare(b));
-  const colors = new Map<string, string>();
-  for (const [index, model] of models.entries()) {
-    colors.set(
-      model,
-      DYNAMIC_SERIES_COLORS[index % DYNAMIC_SERIES_COLORS.length] ?? OTHER_MODEL_SERIES_COLOR,
-    );
-  }
-  colors.set(OTHER_MODEL_SERIES, OTHER_MODEL_SERIES_COLOR);
-
-  return colors;
-}
-
 function seriesColor(colors: ReadonlyMap<string, string>, series: string): string {
-  return colors.get(series) ?? OTHER_MODEL_SERIES_COLOR;
+  return colors.get(series) ?? modelColor(series);
 }
 
 /**
@@ -183,43 +153,50 @@ function buildStackedDays(
 }
 
 /** Ranked legend entries for every series with a non-zero share. */
-function buildLegend(
-  days: readonly StackedDay[],
-  colors: ReadonlyMap<string, string>,
-): LegendEntry[] {
-  const valueBySeries = new Map<string, number>();
+function buildLegend(days: readonly StackedDay[]): LegendEntry[] {
+  const bySeries = new Map<string, { color: string; value: number }>();
   let total = 0;
   for (const day of days) {
     for (const segment of day.segments) {
-      valueBySeries.set(segment.series, (valueBySeries.get(segment.series) ?? 0) + segment.value);
+      const entry = bySeries.get(segment.series) ?? { color: segment.color, value: 0 };
+      entry.value += segment.value;
+      bySeries.set(segment.series, entry);
       total += segment.value;
     }
   }
 
-  return [...colors.keys()]
-    .map((series) => ({
-      color: seriesColor(colors, series),
-      percent: total > 0 ? ((valueBySeries.get(series) ?? 0) / total) * 100 : 0,
+  return [...bySeries.entries()]
+    .filter(([, entry]) => entry.value > 0)
+    .sort(([, a], [, b]) => b.value - a.value)
+    .map(([series, entry]) => ({
+      color: entry.color,
+      percent: total > 0 ? (entry.value / total) * 100 : 0,
       series,
-      value: valueBySeries.get(series) ?? 0,
-    }))
-    .filter((entry) => entry.value > 0)
-    .sort((a, b) => b.value - a.value)
-    .map(({ color, percent, series }) => ({ color, percent, series }));
+    }));
 }
 
-/** Select series by `value`, then build zero-filled stacked days and a legend. */
-function buildStackedSeriesChart<Row extends SeriesRow>(
+/**
+ * One stacked chart per metric over the same rows. Each metric selects its
+ * own top series; colors are assigned once across all of them, so a model
+ * wears one color on the page and never shares it within a chart.
+ */
+function buildStackedSeriesCharts<Row extends SeriesRow, Metric extends string>(
   rows: readonly Row[],
   dates: readonly string[],
-  colors: ReadonlyMap<string, string>,
-  value: (row: Row) => number,
-): StackedSeriesChart {
-  const selection = selectModelSeries(rows, value);
-  const buckets = bucketSeries(rows, selection, value);
-  const days = buildStackedDays(dates, selection.order, colors, buckets);
+  metrics: Readonly<Record<Metric, (row: Row) => number>>,
+): { charts: Record<Metric, StackedSeriesChart>; colors: ReadonlyMap<string, string> } {
+  const entries = (Object.entries(metrics) as [Metric, (row: Row) => number][]).map(
+    ([metric, value]) => ({ metric, selection: selectModelSeries(rows, value), value }),
+  );
+  const colors = assignModelColors(entries.map(({ selection }) => selection.order));
+  const charts = {} as Record<Metric, StackedSeriesChart>;
+  for (const { metric, selection, value } of entries) {
+    const buckets = bucketSeries(rows, selection, value);
+    const days = buildStackedDays(dates, selection.order, colors, buckets);
+    charts[metric] = { buckets, days, legend: buildLegend(days), selection };
+  }
 
-  return { buckets, days, legend: buildLegend(days, colors), selection };
+  return { charts, colors };
 }
 
 /** Non-zero segments, largest first, as tooltip rows. */
@@ -238,14 +215,10 @@ export {
   buildLegend,
   buildSegments,
   buildStackedDays,
-  buildStackedSeriesChart,
+  buildStackedSeriesCharts,
   MODEL_SERIES_LIMIT,
-  OTHER_MODEL_SERIES,
-  OTHER_MODEL_SERIES_COLOR,
   segmentTooltipRows,
   selectModelSeries,
-  seriesColor,
-  seriesColors,
 };
 
 export type {
