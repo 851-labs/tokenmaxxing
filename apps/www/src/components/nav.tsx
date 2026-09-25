@@ -12,7 +12,9 @@ import { Menu } from "./ui/menu";
 function Nav() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur">
-      <div className="mx-4 grid h-14 max-w-5xl grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-x border-border px-4 lg:mx-auto">
+      {/* Phones drop the centered links, so the actions get their natural
+          width instead of an equal share that would wrap "Log in". */}
+      <div className="mx-4 grid h-14 max-w-5xl grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 border-x border-border px-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-x-0 lg:mx-auto">
         <Link className="min-w-0 truncate text-sm font-semibold" to="/">
           tokenmaxxing.sh
         </Link>
@@ -40,7 +42,7 @@ function Nav() {
             FAQ
           </Link>
         </nav>
-        <div className="col-start-3 justify-self-end">
+        <div className="col-start-2 justify-self-end sm:col-start-3">
           <UserMenu />
         </div>
       </div>
@@ -118,7 +120,8 @@ function GithubStarLink() {
       target="_blank"
     >
       <Star className="size-4" weight="bold" />
-      Star
+      {/* Icon-only on the narrowest phones, so the wordmark never truncates. */}
+      <span className="max-[360px]:sr-only">Star</span>
     </a>
   );
 }

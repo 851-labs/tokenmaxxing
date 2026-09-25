@@ -13,9 +13,11 @@ import * as Schema from "effect/Schema";
 import { AGENT_ICONS } from "./-components/agent-icons";
 import { BootstrapCommand } from "./-components/bootstrap-command";
 import { FAQ_ITEMS } from "./-components/faq-items";
+import { DESKTOP_ONLY_CELL, metricColumnClassName } from "./-lib/leaderboard-columns";
 import { Avatar } from "../../components/ui/avatar";
 import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
 import { SUPPORTED_AGENTS } from "../../lib/agents";
+import { cn } from "../../lib/cn";
 import { formatTokens, formatUsd } from "../../lib/format";
 import { faqPageSchema, softwareApplicationSchema } from "../../lib/jsonld";
 import { leaderboardQueryOptions } from "../../lib/queries";
@@ -53,6 +55,16 @@ const AGENTS_WITH_ICONS = SUPPORTED_AGENTS.flatMap((agent) => {
 });
 
 type LeaderboardEntry = (typeof LeaderboardResponse.Type)["entries"][number];
+
+/** Tighter gutters on phones, where every column competes for ~300px. */
+const CELL = "px-2 py-3 sm:px-3";
+const USER_CELL = cn(CELL, "w-full max-w-0 sm:w-1/3");
+const NUMBER_CELL = cn(CELL, "whitespace-nowrap text-right tabular-nums");
+/** Active days / Last active: `sm` and up only, so phone gutters never apply. */
+const DETAIL_CELL = cn(
+  "whitespace-nowrap p-3 text-right tabular-nums text-muted-foreground",
+  DESKTOP_ONLY_CELL,
+);
 
 const Route = createFileRoute("/(home)/")({
   validateSearch: leaderboardSearchSchema,
@@ -127,7 +139,7 @@ function LeaderboardPage() {
           </div>
         </header>
 
-        <LeaderboardTable entries={data.entries} />
+        <LeaderboardTable entries={data.entries} metric={metric} />
       </section>
 
       <FaqSection />
@@ -135,7 +147,16 @@ function LeaderboardPage() {
   );
 }
 
-function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] }) {
+function LeaderboardTable({
+  entries,
+  metric,
+}: {
+  entries: readonly LeaderboardEntry[];
+  metric: LeaderboardMetric;
+}) {
+  const spendColumn = metricColumnClassName("spend", metric);
+  const tokensColumn = metricColumnClassName("tokens", metric);
+
   return (
     <div className="overflow-hidden border-y border-border">
       {entries.length === 0 ? (
@@ -149,22 +170,26 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
           </caption>
           <thead>
             <tr className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wider text-muted-foreground">
-              <th className="w-12 p-3 font-medium" scope="col">
+              <th className={cn(CELL, "w-10 font-medium sm:w-12")} scope="col">
                 #
               </th>
-              <th className="p-3 font-medium" scope="col">
+              {/* max-w-0 drops the column's min-content width, so it can shrink
+                  and long logins truncate instead of widening the table. Phones
+                  give it all the space the numbers leave; from sm up a third of
+                  the table keeps the desktop column balance. */}
+              <th className={cn(USER_CELL, "font-medium")} scope="col">
                 User
               </th>
-              <th className="p-3 text-right font-medium" scope="col">
+              <th className={cn(NUMBER_CELL, "font-medium", spendColumn)} scope="col">
                 Spend
               </th>
-              <th className="p-3 text-right font-medium" scope="col">
+              <th className={cn(NUMBER_CELL, "font-medium", tokensColumn)} scope="col">
                 Tokens
               </th>
-              <th className="hidden p-3 text-right font-medium sm:table-cell" scope="col">
+              <th className={cn(DETAIL_CELL, "font-medium")} scope="col">
                 Active days
               </th>
-              <th className="hidden p-3 text-right font-medium sm:table-cell" scope="col">
+              <th className={cn(DETAIL_CELL, "font-medium")} scope="col">
                 Last active
               </th>
             </tr>
@@ -175,11 +200,14 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
                 className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/40"
                 key={entry.user.login}
               >
-                <td className="p-3 font-mono text-muted-foreground">{entry.rank}</td>
-                <td className="p-3">
+                <td className={cn(CELL, "font-mono tabular-nums text-muted-foreground")}>
+                  {entry.rank}
+                </td>
+                <td className={USER_CELL}>
                   <Link
-                    className="flex items-center gap-2.5 font-medium hover:underline"
+                    className="flex min-w-0 items-center gap-2.5 font-medium hover:underline"
                     params={{ user: entry.user.login }}
+                    title={entry.user.login}
                     to="/$user"
                   >
                     <Avatar
@@ -187,21 +215,17 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
                       size={24}
                       src={entry.user.avatarUrl}
                     />
-                    {entry.user.login}
+                    <span className="min-w-0 truncate">{entry.user.login}</span>
                   </Link>
                 </td>
-                <td className="p-3 text-right font-mono tabular-nums">
+                <td className={cn(NUMBER_CELL, "font-mono", spendColumn)}>
                   {formatUsd(entry.spendUsd)}
                 </td>
-                <td className="p-3 text-right font-mono tabular-nums">
+                <td className={cn(NUMBER_CELL, "font-mono", tokensColumn)}>
                   {formatTokens(entry.totalTokens)}
                 </td>
-                <td className="hidden p-3 text-right tabular-nums text-muted-foreground sm:table-cell">
-                  {entry.activeDays}
-                </td>
-                <td className="hidden p-3 text-right text-muted-foreground sm:table-cell">
-                  {entry.lastDate ?? "—"}
-                </td>
+                <td className={DETAIL_CELL}>{entry.activeDays}</td>
+                <td className={DETAIL_CELL}>{entry.lastDate ?? "—"}</td>
               </tr>
             ))}
           </tbody>
