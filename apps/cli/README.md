@@ -23,7 +23,10 @@ You can also install globally with `bun add -g --trust @851-labs/tokenmaxxing@la
 The background service uses the global `tokenmaxxing` binary and syncs every
 5 minutes. It auto-updates through the package manager that installed the
 global binary (bun, npm, pnpm, or yarn) when that package manager can be
-detected.
+detected. Custom log roots (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HERMES_HOME`)
+are captured at `tokenmaxxing service install` or `tokenmaxxing service
+repair`; rerun one of those after changing them. Without `HERMES_HOME`, Hermes
+usage includes every named profile under `~/.hermes/profiles/`.
 Use `tokenmaxxing service status` for the last run and `tokenmaxxing service
 doctor` to inspect scheduler files, auth, auto-update, locks, and recent logs.
 

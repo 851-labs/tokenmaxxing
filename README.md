@@ -86,6 +86,13 @@ The background service supports macOS, Linux, and Windows. It uses the global
 `tokenmaxxing` binary and keeps itself current through the package manager that
 installed the CLI when that package manager can be detected.
 
+Custom agent log roots (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HERMES_HOME`) are
+captured from your shell when you run `tokenmaxxing service install` or
+`tokenmaxxing service repair`; rerun one of those after changing them, and
+`tokenmaxxing service doctor` warns when they drift. Without `HERMES_HOME`, both
+`sync` and the service read the default Hermes root plus every named profile
+under `~/.hermes/profiles/`.
+
 ## Privacy
 
 Only daily aggregates are uploaded: date, model name, agent name, token counts,

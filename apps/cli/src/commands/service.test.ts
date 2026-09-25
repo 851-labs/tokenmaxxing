@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 
 import { Cause, Effect, Layer } from "effect";
@@ -24,6 +26,9 @@ import {
   backendForPlatform,
   capturedServiceEnv,
   deferredServiceRepairInvocation,
+  doctorServiceEnvCheck,
+  parseServiceWrapperEnv,
+  serviceEnvDrift,
   detectAutoUpdateManager,
   deterministicServiceJitterMs,
   durableTokenmaxxingCommandPath,
@@ -486,7 +491,163 @@ describe("servicePaths", () => {
   });
 });
 
+const execFileAsync = promisify(execFile);
+
+describe("capturedServiceEnv", () => {
+  it("captures nonempty source roots literally and omits empty ones", () => {
+    expect(
+      capturedServiceEnv({
+        CLAUDE_CONFIG_DIR: "/data/Claude Logs, extra",
+        CODEX_HOME: "/data/Codex Logs",
+        HERMES_HOME: "/data/hermes,/data/hermes/profiles/work",
+        HOME: "/home/alex",
+        PATH: "/usr/bin",
+        TOKENMAXXING_API_TOKEN: "tmx_secret",
+      }),
+    ).toEqual({
+      CLAUDE_CONFIG_DIR: "/data/Claude Logs, extra",
+      CODEX_HOME: "/data/Codex Logs",
+      HERMES_HOME: "/data/hermes,/data/hermes/profiles/work",
+      HOME: "/home/alex",
+      PATH: "/usr/bin",
+    });
+
+    expect(
+      capturedServiceEnv({
+        CLAUDE_CONFIG_DIR: "",
+        CODEX_HOME: undefined,
+        HERMES_HOME: "",
+        HOME: "/home/alex",
+        PATH: "/usr/bin",
+      }),
+    ).toEqual({ HOME: "/home/alex", PATH: "/usr/bin" });
+  });
+});
+
+describe("serviceEnvDrift", () => {
+  const shell = {
+    CLAUDE_CONFIG_DIR: "/data/Claude Logs, it's mine",
+    CODEX_HOME: 'C:\\Users\\alex\\Codex "Logs"',
+    HOME: "/home/alex",
+    PATH: "/usr/bin",
+  };
+
+  for (const platform of ["linux", "win32"] as const) {
+    it(`round-trips the source roots of a ${platform} wrapper`, () => {
+      const wrapper = renderServiceWrapper({
+        env: capturedServiceEnv(shell),
+        logPath: "/tmp/tokenmaxxing.log",
+        platform,
+        runnerPointerPath: "/tmp/service-runner-current",
+      });
+
+      expect(parseServiceWrapperEnv(wrapper)).toMatchObject({
+        CLAUDE_CONFIG_DIR: shell.CLAUDE_CONFIG_DIR,
+        CODEX_HOME: shell.CODEX_HOME,
+      });
+      expect(serviceEnvDrift(wrapper, shell)).toEqual([]);
+    });
+  }
+
+  it("reports roots that changed, appeared, or disappeared since install", () => {
+    const wrapper = renderServiceWrapper({
+      env: capturedServiceEnv({ ...shell, HERMES_HOME: "/data/hermes" }),
+      logPath: "/tmp/tokenmaxxing.log",
+      platform: "linux",
+      runnerPointerPath: "/tmp/service-runner-current",
+    });
+
+    expect(
+      serviceEnvDrift(wrapper, {
+        ...shell,
+        CLAUDE_CONFIG_DIR: "/data/claude-new",
+        CODEX_HOME: "",
+      }),
+    ).toEqual([
+      {
+        current: "/data/claude-new",
+        key: "CLAUDE_CONFIG_DIR",
+        service: shell.CLAUDE_CONFIG_DIR,
+      },
+      { current: undefined, key: "CODEX_HOME", service: shell.CODEX_HOME },
+      { current: undefined, key: "HERMES_HOME", service: "/data/hermes" },
+    ]);
+  });
+
+  it("nudges doctor users to repair when roots drifted", () => {
+    const wrapper = renderServiceWrapper({
+      env: capturedServiceEnv({ CODEX_HOME: "/data/codex-old", PATH: "/usr/bin" }),
+      logPath: "/tmp/tokenmaxxing.log",
+      platform: "linux",
+      runnerPointerPath: "/tmp/service-runner-current",
+    });
+
+    expect(doctorServiceEnvCheck(wrapper, { CODEX_HOME: "/data/codex-old" })).toEqual({
+      detail: "match this shell",
+      label: "source roots",
+      status: "ok",
+    });
+    expect(doctorServiceEnvCheck(wrapper, { CODEX_HOME: "/data/codex" })).toEqual({
+      detail:
+        "CODEX_HOME is /data/codex-old for the service but /data/codex here; repair with tokenmaxxing service repair",
+      label: "source roots",
+      status: "warn",
+    });
+    expect(doctorServiceEnvCheck(null, {}).status).toBe("info");
+  });
+});
+
 describe("renderServiceWrapper", () => {
+  it.skipIf(process.platform === "win32")(
+    "exports captured source roots with spaces, commas, and quotes to the runner",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "tokenmaxxing-service-env-"));
+      try {
+        const runnerPath = join(root, "fake-runner");
+        const pointerPath = join(root, "service-runner-current");
+        const logPath = join(root, "service.log");
+        const claudeRoot = join(root, "Claude Logs, extra");
+        const codexRoot = join(root, "Codex's Logs");
+        await writeFile(
+          runnerPath,
+          `#!/bin/sh
+printf 'CLAUDE_CONFIG_DIR=%s\\n' "$CLAUDE_CONFIG_DIR"
+printf 'CODEX_HOME=%s\\n' "$CODEX_HOME"
+printf 'HERMES_HOME=%s\\n' "\${HERMES_HOME-unset}"
+`,
+          { encoding: "utf8", mode: 0o755 },
+        );
+        await writeFile(pointerPath, `${runnerPath}\n`, "utf8");
+        const wrapperPath = join(root, "tokenmaxxing.sh");
+        await writeFile(
+          wrapperPath,
+          renderServiceWrapper({
+            env: capturedServiceEnv({
+              CLAUDE_CONFIG_DIR: claudeRoot,
+              CODEX_HOME: codexRoot,
+              HERMES_HOME: "",
+              HOME: root,
+              PATH: "/usr/bin:/bin",
+            }),
+            logPath,
+            platform: "linux",
+            runnerPointerPath: pointerPath,
+          }),
+          { encoding: "utf8", mode: 0o755 },
+        );
+
+        await execFileAsync("/bin/sh", [wrapperPath], { env: {}, timeout: 5000 });
+
+        const log = await readFile(logPath, "utf8");
+        expect(log).toContain(`CLAUDE_CONFIG_DIR=${claudeRoot}\n`);
+        expect(log).toContain(`CODEX_HOME=${codexRoot}\n`);
+        expect(log).toContain("HERMES_HOME=unset\n");
+      } finally {
+        await rm(root, { force: true, recursive: true });
+      }
+    },
+  );
+
   it("runs sync with a durable command without embedding package-manager updates", () => {
     const env = capturedServiceEnv({
       HERMES_HOME: "/data/hermes",
@@ -550,7 +711,11 @@ describe("renderServiceWrapper", () => {
 
   it("renders Windows wrappers without package-manager updates", () => {
     const wrapper = renderServiceWrapper({
-      env: { PATH: "/usr/bin" },
+      env: capturedServiceEnv({
+        CLAUDE_CONFIG_DIR: "D:\\Claude Logs, extra",
+        CODEX_HOME: "C:\\Users\\alex\\Codex Logs",
+        PATH: "C:\\Windows\\System32",
+      }),
       logPath: "/tmp/tokenmaxxing.log",
       platform: "win32",
       runnerPointerPath: "C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing\\service-runner-current",
@@ -566,6 +731,8 @@ describe("renderServiceWrapper", () => {
     expect(wrapper).toContain('move /y "%TOKENMAXXING_LOG%" "%TOKENMAXXING_LOG%.1"');
     expect(wrapper).toContain("set /p TOKENMAXXING_SERVICE_RUNNER=<");
     expect(wrapper).toContain("service run --scheduled");
+    expect(wrapper).toContain('set "CLAUDE_CONFIG_DIR=D:\\Claude Logs, extra"\r\n');
+    expect(wrapper).toContain('set "CODEX_HOME=C:\\Users\\alex\\Codex Logs"\r\n');
   });
 });
 
@@ -796,6 +963,7 @@ describe("service repair helpers", () => {
   it("schedules linux deferred repairs with systemd-run outside the current service cgroup", () => {
     expect(
       deferredServiceRepairInvocation("/usr/local/bin/tokenmaxxing", "reload-required", "linux", {
+        CODEX_HOME: "/data/Codex Logs, extra",
         PATH: "/usr/local/bin:/usr/bin",
         TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing",
       }),
@@ -807,6 +975,7 @@ describe("service repair helpers", () => {
         "--on-active=2s",
         "--unit=tokenmaxxing-sync-repair-reload-required",
         "--setenv=PATH=/usr/local/bin:/usr/bin",
+        "--setenv=CODEX_HOME=/data/Codex Logs, extra",
         "--setenv=TOKENMAXXING_CONFIG_DIR=/tmp/tokenmaxxing",
         "/usr/local/bin/tokenmaxxing",
         "service",
@@ -2271,6 +2440,34 @@ describe("serviceInstallProgram", () => {
     });
     expect(written[0]?.metadata).not.toHaveProperty("autoUpdate");
     expect(state.logs).toContain("Automatic sync installed");
+  });
+
+  it("writes the installing shell's source roots into the service wrapper", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        token: "tmx_existing",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+    });
+    const { runtime, written } = makeInstallRuntime({
+      env: {
+        CLAUDE_CONFIG_DIR: "/Users/alex/Claude Logs, extra",
+        CODEX_HOME: "/Users/alex/Codex Logs",
+        HERMES_HOME: "",
+      },
+    });
+
+    const exit = await Effect.runPromiseExit(
+      serviceInstallProgram({ force: false, refresh: false }, runtime).pipe(Effect.provide(layer)),
+    );
+
+    expect(exit._tag).toBe("Success");
+    expect(written[0]?.wrapper).toContain(
+      "export CLAUDE_CONFIG_DIR='/Users/alex/Claude Logs, extra'\n",
+    );
+    expect(written[0]?.wrapper).toContain("export CODEX_HOME='/Users/alex/Codex Logs'\n");
+    expect(written[0]?.wrapper).not.toContain("HERMES_HOME");
   });
 
   it("installs the service when the package manager cannot be detected", async () => {

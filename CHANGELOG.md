@@ -5,6 +5,15 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Scheduled syncs now carry custom `CLAUDE_CONFIG_DIR` and `CODEX_HOME` log roots, like
+  `HERMES_HOME`, so the background service reads the same Claude and Codex usage as a manual
+  `sync`. Rerun `tokenmaxxing service repair` after changing a root; `service doctor` now warns
+  when the service's roots differ from your shell. Thanks @maxmoneycash (#71).
+- Hermes usage now includes named profiles (`~/.hermes/profiles/<name>/state.db`) alongside the
+  default root when `HERMES_HOME` is unset, in both `sync` and scheduled runs. Thanks @kvnloo (#68).
+
 ## 0.7.0-alpha.0 - 2026-09-23
 
 ### Changed
