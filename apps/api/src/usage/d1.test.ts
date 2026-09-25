@@ -248,6 +248,154 @@ describe("D1 usage repository", () => {
     });
   });
 
+  describe("cost freeze across re-syncs", () => {
+    const identity = {
+      deviceId: DeviceId.make("device"),
+      tokenId: TokenId.make("token"),
+      user: { avatarUrl: null, id: UserId.make("user"), login: "alex", name: null },
+    };
+    const device = { name: "Mac.localdomain", platform: "darwin" };
+    // 2026-05-06 in prod: identical tokens, priced Fast in July and Standard
+    // after the user's Codex config went back to the default tier.
+    const gpt55Tokens = {
+      cacheReadTokens: 316_000_000,
+      inputTokens: 18_500_000,
+      outputTokens: 807_056,
+      totalTokens: 335_307_056,
+    };
+
+    function codexReport(days: ReadonlyArray<[string, number, Record<string, object>]>) {
+      return {
+        command: ["ccusage@^20.0.19", "codex", "daily", "--json", "--breakdown"],
+        payload: {
+          daily: days.map(([date, costUSD, models]) => ({ costUSD, date, models })),
+        },
+        reportKind: "daily",
+        source: "codex",
+      } satisfies RawUsageReportInput;
+    }
+
+    async function makeService(at: string) {
+      let clock = Date.parse(at);
+      return Effect.runPromise(
+        makeUsageService({ now: () => new Date((clock += 60_000)) }).pipe(
+          Effect.provide(UsageRepositoryLive),
+          Effect.provide(Layer.merge(database.drizzleLayer, bucket.layer)),
+        ),
+      );
+    }
+
+    function costs() {
+      return database.sqlite
+        .prepare(
+          `select date, model, total_tokens as totalTokens, cost_usd as costUsd
+           from usage_days order by date, model`,
+        )
+        .all();
+    }
+
+    it("keeps a Fast-priced gpt-5.5 day when a later upload re-prices it as Standard", async () => {
+      const july = await makeService("2026-07-10T12:00:00.000Z");
+      await Effect.runPromise(
+        july.ingestRaw(identity, device, [
+          codexReport([["2026-05-06", 753.12, { "gpt-5.5": gpt55Tokens }]]),
+        ]),
+      );
+
+      const september = await makeService("2026-09-23T12:00:00.000Z");
+      const repriced = codexReport([["2026-05-06", 301.25, { "gpt-5.5": gpt55Tokens }]]);
+      await Effect.runPromise(september.ingestRaw(identity, device, [repriced]));
+
+      expect(costs()).toEqual([
+        { costUsd: 753.12, date: "2026-05-06", model: "gpt-5.5", totalTokens: 335_307_056 },
+      ]);
+      // The raw payload still records exactly what the client sent.
+      const objects = [...bucket.objects.values()].map((object) => object.value);
+      expect(objects).toHaveLength(2);
+      expect(objects).toContain(JSON.stringify(repriced.payload));
+    });
+
+    it("takes the new cost when a re-sent day carries more usage", async () => {
+      const first = await makeService("2026-05-06T12:00:00.000Z");
+      await Effect.runPromise(
+        first.ingestRaw(identity, device, [
+          codexReport([["2026-05-06", 753.12, { "gpt-5.5": gpt55Tokens }]]),
+        ]),
+      );
+
+      const later = await makeService("2026-05-07T12:00:00.000Z");
+      const grown = { ...gpt55Tokens, outputTokens: 907_056, totalTokens: 335_407_056 };
+      await Effect.runPromise(
+        later.ingestRaw(identity, device, [
+          codexReport([["2026-05-06", 301.5, { "gpt-5.5": grown }]]),
+        ]),
+      );
+
+      expect(costs()).toEqual([
+        { costUsd: 301.5, date: "2026-05-06", model: "gpt-5.5", totalTokens: 335_407_056 },
+      ]);
+    });
+
+    it("prunes dropped models but keeps surviving models' frozen cost", async () => {
+      const gpt5Tokens = { inputTokens: 1_000, outputTokens: 100, totalTokens: 1_100 };
+      const first = await makeService("2026-05-06T12:00:00.000Z");
+      await Effect.runPromise(
+        first.ingestRaw(identity, device, [
+          codexReport([
+            [
+              "2026-05-06",
+              // Unpriced `models` entries split the day cost by token weight.
+              753.12 + 0.01,
+              { "gpt-5": gpt5Tokens, "gpt-5.5": gpt55Tokens },
+            ],
+          ]),
+        ]),
+      );
+      const [, before] = costs() as { costUsd: number }[];
+
+      const later = await makeService("2026-09-23T12:00:00.000Z");
+      const window = codexReport([["2026-05-06", 301.25, { "gpt-5.5": gpt55Tokens }]]);
+      await Effect.runPromise(later.ingestRaw(identity, device, [window]));
+      const afterFirst = costs();
+      await Effect.runPromise(later.ingestRaw(identity, device, [window]));
+
+      expect(afterFirst).toEqual([
+        {
+          costUsd: before!.costUsd,
+          date: "2026-05-06",
+          model: "gpt-5.5",
+          totalTokens: 335_307_056,
+        },
+      ]);
+      expect(costs()).toEqual(afterFirst);
+    });
+
+    it("freezes cost on the legacy structured sync path too", async () => {
+      const day = {
+        cacheCreationTokens: 0,
+        date: "2026-05-06",
+        model: "gpt-5.5",
+        source: "codex" as const,
+        ...gpt55Tokens,
+      };
+      const july = await makeService("2026-07-10T12:00:00.000Z");
+      await Effect.runPromise(july.syncBatch(identity, device, [{ ...day, costUsd: 753.12 }]));
+
+      const september = await makeService("2026-09-23T12:00:00.000Z");
+      await Effect.runPromise(
+        september.syncBatch(identity, device, [
+          { ...day, costUsd: 301.25 },
+          { ...day, costUsd: 12, date: "2026-09-23", totalTokens: 1_000 },
+        ]),
+      );
+
+      expect(costs()).toEqual([
+        { costUsd: 753.12, date: "2026-05-06", model: "gpt-5.5", totalTokens: 335_307_056 },
+        { costUsd: 12, date: "2026-09-23", model: "gpt-5.5", totalTokens: 1_000 },
+      ]);
+    });
+  });
+
   describe("upsertChunk", () => {
     const rows: UsageDayInput[] = [
       usageDay({ costUsd: 1.5, date: "2026-07-20", model: "gpt-5", totalTokens: 100 }),
@@ -267,7 +415,7 @@ describe("D1 usage repository", () => {
       expect(usageRows().map((row) => row.syncedAt)).toEqual([2_000, 2_000, 2_000]);
     });
 
-    it("replaces a key's values with the latest sync (last write wins)", async () => {
+    it("replaces a key's usage and cost when its token counts change", async () => {
       const repository = await makeRepository();
 
       await Effect.runPromise(repository.upsertChunk("user", "device", rows, new Date(1_000)));
@@ -281,6 +429,124 @@ describe("D1 usage repository", () => {
       );
 
       expect(totals()).toEqual({ costUsd: 13, rowCount: 3, totalTokens: 1_200 });
+    });
+
+    it("keeps the stored cost when a re-sync only re-prices unchanged tokens", async () => {
+      const repository = await makeRepository();
+
+      await Effect.runPromise(repository.upsertChunk("user", "device", rows, new Date(1_000)));
+      await Effect.runPromise(
+        repository.upsertChunk(
+          "user",
+          "device",
+          rows.map((row) => ({ ...row, costUsd: row.costUsd * 2.5 })),
+          new Date(2_000),
+        ),
+      );
+
+      expect(totals()).toEqual({ costUsd: 4.5, rowCount: 3, totalTokens: 350 });
+      // syncedAt still advances, so pruning treats the rows as re-sent.
+      expect(usageRows().map((row) => row.syncedAt)).toEqual([2_000, 2_000, 2_000]);
+    });
+
+    it("takes the incoming cost when any token count changes", async () => {
+      const repository = await makeRepository();
+      const base = usageDay({ costUsd: 1, date: "2026-07-21", model: "gpt-5", totalTokens: 100 });
+      const changes: Partial<UsageDayInput>[] = [
+        { inputTokens: 101 },
+        { outputTokens: 1 },
+        { cacheCreationTokens: 1 },
+        { cacheReadTokens: 1 },
+        { totalTokens: 101 },
+      ];
+
+      for (const [index, change] of changes.entries()) {
+        const row = { ...base, model: `model-${index}` };
+        await Effect.runPromise(repository.upsertChunk("user", "device", [row], new Date(1_000)));
+        await Effect.runPromise(
+          repository.upsertChunk(
+            "user",
+            "device",
+            [{ ...row, ...change, costUsd: 3 }],
+            new Date(2_000),
+          ),
+        );
+      }
+
+      expect(usageRows().map((row) => row.costUsd)).toEqual([3, 3, 3, 3, 3]);
+    });
+
+    it("prices a previously unpriced row even when its tokens are unchanged", async () => {
+      const repository = await makeRepository();
+      const unpriced = usageDay({ costUsd: 0, date: "2026-07-21", model: "new", totalTokens: 100 });
+
+      await Effect.runPromise(
+        repository.upsertChunk("user", "device", [unpriced], new Date(1_000)),
+      );
+      await Effect.runPromise(
+        repository.upsertChunk("user", "device", [{ ...unpriced, costUsd: 4 }], new Date(2_000)),
+      );
+
+      expect(usageRows()).toMatchObject([{ costUsd: 4, model: "new" }]);
+    });
+
+    it("keeps a priced row's cost when a re-sync of the same tokens comes back unpriced", async () => {
+      const repository = await makeRepository();
+      const priced = usageDay({ costUsd: 4, date: "2026-07-21", model: "gpt-5", totalTokens: 100 });
+
+      await Effect.runPromise(repository.upsertChunk("user", "device", [priced], new Date(1_000)));
+      await Effect.runPromise(
+        repository.upsertChunk("user", "device", [{ ...priced, costUsd: 0 }], new Date(2_000)),
+      );
+
+      expect(usageRows()).toMatchObject([{ costUsd: 4 }]);
+    });
+
+    it("decides per row in a mixed chunk of new, re-priced and changed rows", async () => {
+      const repository = await makeRepository();
+
+      await Effect.runPromise(repository.upsertChunk("user", "device", rows, new Date(1_000)));
+      await Effect.runPromise(
+        repository.upsertChunk(
+          "user",
+          "device",
+          [
+            // Re-priced only: frozen.
+            { ...rows[0]!, costUsd: 99 },
+            // More usage on the same day: takes the incoming cost.
+            usageDay({ costUsd: 3.75, date: "2026-07-21", model: "gpt-5", totalTokens: 300 }),
+            // Untouched existing row.
+            rows[2]!,
+            // Brand-new key: inserted as sent.
+            usageDay({ costUsd: 7, date: "2026-07-22", model: "gpt-5", totalTokens: 70 }),
+          ],
+          new Date(2_000),
+        ),
+      );
+
+      expect(usageRows().map((row) => [row.date, row.model, row.inputTokens, row.costUsd])).toEqual(
+        [
+          ["2026-07-20", "gpt-5", 100, 1.5],
+          ["2026-07-21", "gpt-5", 300, 3.75],
+          ["2026-07-21", "o3", 50, 0.5],
+          ["2026-07-22", "gpt-5", 70, 7],
+        ],
+      );
+    });
+
+    it("keeps a full chunk within D1's bound-parameter limit", async () => {
+      const repository = await makeRepository();
+      const chunk = Array.from({ length: 40 }, (_, index) =>
+        usageDay({ costUsd: 1, date: "2026-07-21", model: `model-${index}`, totalTokens: 10 }),
+      );
+
+      await Effect.runPromise(repository.upsertChunk("user", "device", chunk, new Date(1_000)));
+      await Effect.runPromise(repository.upsertChunk("user", "device", chunk, new Date(2_000)));
+
+      expect(totals()).toEqual({ costUsd: 40, rowCount: 40, totalTokens: 400 });
+      expect(
+        Math.max(...database.executed.map((query) => query.parameters.length)),
+      ).toBeLessThanOrEqual(100);
     });
 
     it("reassigns the row to the uploading user on conflict", async () => {

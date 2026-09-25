@@ -65,7 +65,7 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
                   cacheCreationTokens: row.cacheCreationTokens,
                   cacheReadTokens: row.cacheReadTokens,
                   totalTokens: row.totalTokens,
-                  costUsd: row.costUsd,
+                  costUsd: frozenCostUsd,
                   syncedAt,
                 },
               }),
@@ -223,6 +223,27 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
       }),
   });
 });
+
+/**
+ * Cost is frozen at first upload unless the usage changes. ccusage prices
+ * unmarked Codex history with the device's *current* speed tier, so a
+ * re-upload of unchanged token counts is a pure re-price and keeps the
+ * stored cost; any token change (new or corrected usage) takes the incoming
+ * cost, as does a row stored unpriced (0) whose model is now priced.
+ * `usage_days.*` is the stored row and `excluded.*` the incoming one; SQLite
+ * evaluates every SET expression before assigning, so the token columns
+ * updated alongside never leak into the comparison.
+ */
+const frozenCostUsd = sql`case
+  when ${usageDays.costUsd} > 0
+    and ${usageDays.inputTokens} = excluded.input_tokens
+    and ${usageDays.outputTokens} = excluded.output_tokens
+    and ${usageDays.cacheCreationTokens} = excluded.cache_creation_tokens
+    and ${usageDays.cacheReadTokens} = excluded.cache_read_tokens
+    and ${usageDays.totalTokens} = excluded.total_tokens
+  then ${usageDays.costUsd}
+  else excluded.cost_usd
+end`;
 
 /** D1 caps bound parameters at 100 per statement. */
 const ID_LOOKUP_CHUNK_SIZE = 90;

@@ -86,7 +86,10 @@ interface UsageRepositoryShape {
     service: UsageServiceCheckIn,
     checkedInAt: Date,
   ): Effect.Effect<void, DatabaseError>;
-  /** One db.batch of single-row upserts (D1 binds ~100 params/statement). */
+  /**
+   * One db.batch of single-row upserts (D1 binds ~100 params/statement). An
+   * existing row keeps its stored cost when the token counts are unchanged.
+   */
   upsertChunk(
     userId: string,
     deviceId: string,
