@@ -1885,6 +1885,35 @@ describe("service run state", () => {
     ]);
   });
 
+  it("logs why a source was skipped and how long each of its reports took", () => {
+    const state = serviceRunSuccessState(
+      { version: 1 },
+      {
+        arch: "arm64",
+        attemptAt: "2026-06-16T10:00:00.000Z",
+        autoUpdate: autoUpdateReport(),
+        durationMs: 1234,
+        result: {
+          ...syncResult,
+          sourceResults: [
+            ...syncResult.sourceResults,
+            { reason: "unchanged", source: "claude", status: "skipped", summary: null },
+          ],
+          timings: { codex: { dailyMs: 95_000, sessionMs: 90_000 }, gemini: { dailyMs: 300 } },
+        },
+        since: "2026-06-16",
+        successAt: "2026-06-16T10:00:01.000Z",
+        version: "0.8.0",
+      },
+    );
+
+    expect(state.lastSources).toEqual([
+      expect.objectContaining({ dailyMs: 95_000, sessionMs: 90_000, source: "codex" }),
+      { dailyMs: 300, source: "gemini", status: "skipped" },
+      { reason: "unchanged", source: "claude", status: "skipped" },
+    ]);
+  });
+
   it("records a completed reconciliation", () => {
     const state = serviceRunSuccessState(
       { lastReconcileAt: "2026-06-16T02:00:00.000Z", version: 1 },
