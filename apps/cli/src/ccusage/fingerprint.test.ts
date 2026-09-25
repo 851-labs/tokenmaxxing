@@ -140,6 +140,17 @@ describe("fingerprintSource", () => {
     expect((await digest("hermes"))?.digest).not.toBe(before?.digest);
   });
 
+  it("covers the Hermes profiles the runner hands ccusage", async () => {
+    await write(join(home, ".hermes", "state.db"), "db");
+    await write(join(home, ".hermes", "profiles", "work", "state.db"), "db");
+    const env = { HOME: home };
+    const before = await digest("hermes", env);
+    expect(before).toMatchObject({ files: 2 });
+
+    await write(join(home, ".hermes", "profiles", "work", "state.db-wal"), "wal");
+    expect((await digest("hermes", env))?.digest).not.toBe(before?.digest);
+  });
+
   it("covers OpenCode message files and databases", async () => {
     const dataDir = join(root, "opencode-data");
     await write(join(dataDir, "storage", "message", "session-a", "msg-1.json"));

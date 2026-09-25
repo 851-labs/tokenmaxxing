@@ -6,12 +6,15 @@ import { basename, isAbsolute, join } from "node:path";
 
 import type { UsageSource } from "@tokenmaxxing/api-contract";
 
+import { ccusageSourceEnv } from "./source-env";
+
 /**
  * Cheap change detection for a source's agent logs, so a scheduled sync can
  * skip re-parsing a corpus that has not changed since it was last uploaded.
  *
  * The roots mirror where ccusage v20 looks (rust/adapters/<source>/src/paths.rs
- * upstream), including the env overrides it honors. A fingerprint covers
+ * upstream), including the env overrides it honors, resolved through the same
+ * `ccusageSourceEnv` the runner hands ccusage (e.g. discovered Hermes profiles). A fingerprint covers
  * every matching file's path, size, and mtime. It deliberately does not look
  * at dates: any change (append, new file, deletion, archive move) produces a
  * new fingerprint, and a false "changed" only costs one extra ccusage run.
@@ -46,7 +49,7 @@ async function sourceLogRoots(
   source: UsageSource,
   options: LogRootOptions = {},
 ): Promise<LogRoot[] | null> {
-  const env = options.env ?? process.env;
+  const env = await ccusageSourceEnv(source, options.env ?? process.env);
   const home = options.home ?? homedir();
   const configFiles = ccusageConfigFiles(env, home, options.cwd ?? process.cwd());
 
