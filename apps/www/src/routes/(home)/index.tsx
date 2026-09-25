@@ -62,19 +62,26 @@ const NUMBER_CELL = cn(CELL, "text-right tabular-nums");
 const DETAIL_CELL = cn(NUMBER_CELL, "text-muted-foreground");
 
 /**
- * Rank and avatar stay pinned while the login and numbers scroll under them;
- * keeping the pinned block this narrow leaves phones room for the data. Both
- * pinned columns have fixed widths so the avatar knows its sticky offset (the
- * rank fits three digits at either gutter). Pinned cells inherit their row's
- * background, so rows are painted with opaque mixes rather than alpha tints.
+ * Rank and avatar share one pinned cell while the login and numbers scroll
+ * under it; keeping the pinned block this narrow leaves phones room for the
+ * data. It inherits its row's background, so rows are painted with opaque
+ * mixes rather than alpha tints.
+ *
+ * At fractional zoom Chromium rounds the scroller's clip outward, so slivers
+ * of scrolled text could show past the pinned cell's left edge. It is one
+ * cell (no seam between pinned boxes) on its own compositor layer, and a
+ * background bleed widens that layer past the clip edge to cover the gap.
  */
-const RANK_CELL = "sticky left-0 w-12 min-w-12 bg-inherit py-3 pr-2 pl-2 sm:pl-3";
-const AVATAR_CELL = cn(
-  "sticky left-12 w-10 min-w-10 max-w-10 bg-inherit py-3 pr-2 pl-2 sm:w-11 sm:min-w-11 sm:max-w-11 sm:pl-3",
+const PINNED_CELL = cn(
+  // w-px: shrink to its content, so desktop tables give spare width to the data.
+  "sticky left-0 z-10 w-px whitespace-nowrap bg-inherit py-3 pr-2 pl-2 will-change-transform sm:pl-3",
+  "before:absolute before:inset-y-0 before:right-full before:w-2 before:bg-inherit",
   // A hairline and soft shadow mark the pinned edge once rows scroll under it.
   "group-data-scrolled/board:shadow-[inset_-1px_0_0_var(--color-border),6px_0_8px_-6px_rgb(0_0_0/0.2)]",
 );
-/** The avatar cell's `pr-2` plus this `pl-0.5` keep the old 10px avatar–login gap. */
+/** Wide enough for a three-digit rank, so avatars line up in one column. */
+const RANK = "inline-block w-12";
+/** The pinned cell's `pr-2` plus this `pl-0.5` keep the old 10px avatar–login gap. */
 const LOGIN_CELL = "whitespace-nowrap py-3 pr-2 pl-0.5 sm:pr-3";
 const HEADER_ROW_BG = "bg-[color-mix(in_oklab,var(--color-muted)_50%,var(--color-background))]";
 const BODY_ROW_BG =
@@ -185,20 +192,22 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
       role="region"
       tabIndex={0}
     >
-      <table className="w-max min-w-full text-sm">
+      {/* Separate borders live on the cells, so they travel with the pinned
+          cell; collapsed borders belong to the table and some engines leave
+          them behind when a sticky cell moves. */}
+      <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
         <caption className="sr-only">Leaderboard of top users by LLM token spend and usage</caption>
         <thead>
           <tr
             className={cn(
-              "border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground",
+              "text-left text-xs uppercase tracking-wider text-muted-foreground [&>th]:border-b [&>th]:border-border",
               HEADER_ROW_BG,
             )}
           >
-            <th className={cn(RANK_CELL, "font-medium")} scope="col">
-              #
-            </th>
-            <th className={AVATAR_CELL} scope="col">
-              <span className="sr-only">Avatar</span>
+            <th className={cn(PINNED_CELL, "font-medium")} scope="col">
+              {/* Spans the avatar too; the spacer keeps the pinned width. */}
+              <span className={RANK}>#</span>
+              <span aria-hidden="true" className="inline-block w-6" />
             </th>
             <th className={cn(LOGIN_CELL, "font-medium")} scope="col">
               User
@@ -221,25 +230,27 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
           {entries.map((entry) => (
             <tr
               className={cn(
-                "border-b border-border transition-colors last:border-b-0",
+                "transition-colors [&>td]:border-b [&>td]:border-border last:[&>td]:border-b-0",
                 BODY_ROW_BG,
               )}
               key={entry.user.login}
             >
-              <td className={cn(RANK_CELL, "font-mono tabular-nums text-muted-foreground")}>
-                {entry.rank}
-              </td>
-              <td className={AVATAR_CELL}>
-                {/* Pointer shortcut only: the login link beside it is the tab stop and name. */}
-                <Link
-                  aria-hidden="true"
-                  className="flex"
-                  params={{ user: entry.user.login }}
-                  tabIndex={-1}
-                  to="/$user"
-                >
-                  <Avatar size={24} src={entry.user.avatarUrl} />
-                </Link>
+              <td className={PINNED_CELL}>
+                <div className="flex items-center">
+                  <span className={cn(RANK, "font-mono tabular-nums text-muted-foreground")}>
+                    {entry.rank}
+                  </span>
+                  {/* Pointer shortcut only: the login link beside it is the tab stop and name. */}
+                  <Link
+                    aria-hidden="true"
+                    className="flex"
+                    params={{ user: entry.user.login }}
+                    tabIndex={-1}
+                    to="/$user"
+                  >
+                    <Avatar size={24} src={entry.user.avatarUrl} />
+                  </Link>
+                </div>
               </td>
               <td className={LOGIN_CELL}>
                 <Link
