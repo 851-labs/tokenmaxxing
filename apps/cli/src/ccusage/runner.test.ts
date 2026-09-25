@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { Cause, Effect, Option } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -119,7 +123,11 @@ describe("execCcusage", () => {
       ),
     ).resolves.toBe('{"daily":[]}');
     expect(run).toHaveBeenCalledOnce();
-    expect(run).toHaveBeenCalledWith("bun", ["x", "ccusage@^20.0.19", "codex", "daily"]);
+    expect(run).toHaveBeenCalledWith(
+      "bun",
+      ["x", "ccusage@^20.0.19", "codex", "daily"],
+      process.env,
+    );
   });
 
   it("falls back to npx.cmd when Bun is missing on Windows", async () => {
@@ -139,8 +147,18 @@ describe("execCcusage", () => {
         execCcusage(["codex", "daily"], "codex", "daily", { platform: "win32", run }),
       ),
     ).resolves.toBe('{"daily":[]}');
-    expect(run).toHaveBeenNthCalledWith(1, "bun", ["x", "ccusage@^20.0.19", "codex", "daily"]);
-    expect(run).toHaveBeenNthCalledWith(2, "npx.cmd", ["-y", "ccusage@^20.0.19", "codex", "daily"]);
+    expect(run).toHaveBeenNthCalledWith(
+      1,
+      "bun",
+      ["x", "ccusage@^20.0.19", "codex", "daily"],
+      process.env,
+    );
+    expect(run).toHaveBeenNthCalledWith(
+      2,
+      "npx.cmd",
+      ["-y", "ccusage@^20.0.19", "codex", "daily"],
+      process.env,
+    );
   });
 
   it("does not mask a Bun execution failure with the npm fallback", async () => {
@@ -173,6 +191,61 @@ describe("execCcusage", () => {
     expect(error.code).toBe("command_timed_out");
     expect(error.report).toBe("daily");
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("runs Hermes with discovered profile roots on both the Bun and npm paths", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tokenmaxxing-runner-hermes-"));
+    try {
+      const hermesRoot = join(home, ".hermes");
+      const profile = join(hermesRoot, "profiles", "work");
+      await mkdir(profile, { recursive: true });
+      await writeFile(join(hermesRoot, "state.db"), "default");
+      await writeFile(join(profile, "state.db"), "work");
+      const realRoot = await realpath(hermesRoot);
+      const missingBun = new CcusageRunError({
+        cause: Object.assign(new Error("bun not found"), { code: "ENOENT" }),
+        code: "command_not_found",
+        report: "daily",
+        source: "hermes",
+      });
+      const run = vi
+        .fn()
+        .mockReturnValueOnce(Effect.fail(missingBun))
+        .mockReturnValueOnce(Effect.succeed('{"daily":[]}'));
+
+      await Effect.runPromise(
+        execCcusage(["hermes", "daily"], "hermes", "daily", {
+          env: { HOME: home, PATH: "/usr/bin" },
+          platform: "linux",
+          run,
+        }),
+      );
+
+      const expectedEnv = {
+        HERMES_HOME: `${realRoot},${join(realRoot, "profiles", "work")}`,
+        HOME: home,
+        PATH: "/usr/bin",
+      };
+      expect(run).toHaveBeenNthCalledWith(1, "bun", expect.any(Array), expectedEnv);
+      expect(run).toHaveBeenNthCalledWith(2, "npx", expect.any(Array), expectedEnv);
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
+  it("passes explicit source roots through unchanged", async () => {
+    const env = {
+      CLAUDE_CONFIG_DIR: "/data/Claude Logs, extra",
+      HERMES_HOME: "/data/hermes",
+      HOME: "/home/alex",
+    };
+    const run = vi.fn(() => Effect.succeed('{"daily":[]}'));
+
+    await Effect.runPromise(
+      execCcusage(["hermes", "daily"], "hermes", "daily", { env, platform: "linux", run }),
+    );
+
+    expect(run).toHaveBeenCalledWith("bun", expect.any(Array), env);
   });
 });
 

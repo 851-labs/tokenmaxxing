@@ -1090,6 +1090,9 @@ function serviceDoctorEffect(options: { json?: boolean | undefined } = {}) {
             : yield* commandExists(autoUpdateManager);
       const lockStatus = yield* readServiceLockStatus(paths.lockPath, now);
       const logTail = yield* readLogTail(paths.logPath, 8);
+      const wrapperContents = yield* Effect.tryPromise(() =>
+        readFile(paths.wrapperPath, "utf8"),
+      ).pipe(Effect.catch(() => Effect.succeed(null)));
 
       const checks = [
         doctorCheck(
@@ -1115,6 +1118,7 @@ function serviceDoctorEffect(options: { json?: boolean | undefined } = {}) {
           paths.definitionPath ?? "tracked by Windows Task Scheduler metadata",
         ),
         doctorCheck(wrapperExists ? "ok" : "warn", "wrapper", paths.wrapperPath),
+        doctorServiceEnvCheck(wrapperContents),
         doctorCheck(
           runnerPointerExists ? "ok" : "warn",
           "runner",
@@ -4131,6 +4135,27 @@ async function isExecutable(path: string, platform: NodeJS.Platform): Promise<bo
   }
 }
 
+// Usage-source roots ccusage reads (one per line). Values are captured
+// literally at install/repair: ccusage splits several of them on commas, so the
+// scheduled run sees exactly what a foreground `sync` in the same shell would.
+// `service doctor` flags drift between these and the current shell.
+const SERVICE_SOURCE_ROOT_ENV_KEYS = ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "HERMES_HOME"] as const;
+
+// Environment the scheduled wrapper re-exports; PATH is always set (with a
+// default) and empty or unset values are omitted.
+const SERVICE_ENV_KEYS = [
+  "HOME",
+  "USERPROFILE",
+  "LOCALAPPDATA",
+  "APPDATA",
+  ...SERVICE_SOURCE_ROOT_ENV_KEYS,
+  "TOKENMAXXING_CONFIG_DIR",
+  "TOKENMAXXING_ENV",
+  "TOKENMAXXING_API_URL",
+  "TOKENMAXXING_WWW_URL",
+  SERVICE_RECONCILE_WINDOW_ENV,
+] as const;
+
 function capturedServiceEnv(
   env: Record<string, string | undefined> = process.env,
 ): Record<string, string> {
@@ -4138,18 +4163,7 @@ function capturedServiceEnv(
     PATH: env["PATH"] ?? defaultPath(),
   };
 
-  for (const key of [
-    "HOME",
-    "USERPROFILE",
-    "LOCALAPPDATA",
-    "APPDATA",
-    "HERMES_HOME",
-    "TOKENMAXXING_CONFIG_DIR",
-    "TOKENMAXXING_ENV",
-    "TOKENMAXXING_API_URL",
-    "TOKENMAXXING_WWW_URL",
-    SERVICE_RECONCILE_WINDOW_ENV,
-  ]) {
+  for (const key of SERVICE_ENV_KEYS) {
     const value = env[key];
     if (value !== undefined && value !== "") {
       captured[key] = value;
@@ -4157,6 +4171,72 @@ function capturedServiceEnv(
   }
 
   return captured;
+}
+
+interface ServiceEnvDrift {
+  current: string | undefined;
+  key: string;
+  service: string | undefined;
+}
+
+/**
+ * Compares the source roots baked into an installed wrapper with the current
+ * shell. Roots are only captured at install/repair, so a changed
+ * `CODEX_HOME` silently keeps the service on the old location until repair.
+ */
+function serviceEnvDrift(
+  wrapper: string,
+  env: Record<string, string | undefined> = process.env,
+): ServiceEnvDrift[] {
+  const serviceEnv = parseServiceWrapperEnv(wrapper);
+  const current = capturedServiceEnv(env);
+
+  return SERVICE_SOURCE_ROOT_ENV_KEYS.flatMap((key) =>
+    serviceEnv[key] === current[key]
+      ? []
+      : [{ current: current[key], key, service: serviceEnv[key] }],
+  );
+}
+
+/** Reads back the env lines `renderPosixWrapper`/`renderWindowsWrapper` emit. */
+function parseServiceWrapperEnv(wrapper: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const line of wrapper.split(/\r?\n/)) {
+    const posix = /^export ([A-Za-z_][A-Za-z0-9_]*)='(.*)'$/.exec(line);
+    if (posix?.[1] !== undefined && posix[2] !== undefined) {
+      env[posix[1]] = posix[2].replaceAll("'\\''", "'");
+      continue;
+    }
+
+    const windows = /^set "([A-Za-z_][A-Za-z0-9_]*)=(.*)"$/.exec(line);
+    if (windows?.[1] !== undefined && windows[2] !== undefined) {
+      env[windows[1]] = windows[2].replaceAll('\\"', '"');
+    }
+  }
+
+  return env;
+}
+
+function doctorServiceEnvCheck(
+  wrapper: string | null,
+  env: Record<string, string | undefined> = process.env,
+): DoctorCheck {
+  if (wrapper === null) {
+    return doctorCheck("info", "source roots", "not checked (wrapper missing)");
+  }
+
+  const drift = serviceEnvDrift(wrapper, env);
+  if (drift.length === 0) {
+    return doctorCheck("ok", "source roots", "match this shell");
+  }
+
+  const changes = drift
+    .map(
+      ({ current, key, service }) =>
+        `${key} is ${service ?? "unset"} for the service but ${current ?? "unset"} here`,
+    )
+    .join("; ");
+  return doctorCheck("warn", "source roots", `${changes}; repair with ${serviceRepairCommand()}`);
 }
 
 function defaultPath(): string {
@@ -4444,6 +4524,9 @@ export {
   autoUpdateCommandDescription,
   backendForPlatform,
   capturedServiceEnv,
+  doctorServiceEnvCheck,
+  parseServiceWrapperEnv,
+  serviceEnvDrift,
   deferredServiceRepairInvocation,
   durableTokenmaxxingCommandPath,
   detectAutoUpdateManager,
