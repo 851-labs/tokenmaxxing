@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const launcher = require("./native-bin-launcher.cjs");
 
 const {
+  CACHED_BINARY_NAME,
   binaryName,
   detectArch,
   detectPlatform,
@@ -22,7 +23,9 @@ const {
   supportsAvx2,
 } = launcher;
 
-const targetBinary = path.join(__dirname, "bin", "tokenmaxxing.exe");
+const targetBinary = path.join(__dirname, "bin", CACHED_BINARY_NAME);
+const launcherBinary = path.join(__dirname, "bin", "tokenmaxxing");
+const launcherSource = path.join(__dirname, "native-bin-launcher.cjs");
 let packageJsonCache;
 
 function copyBinary(source, target = targetBinary) {
@@ -91,17 +94,54 @@ function verifyBinary(target = targetBinary) {
   return result.status === 0;
 }
 
+// npm and bun link POSIX bins as symlinks, so replacing the JS launcher behind
+// the link makes every call exec the native binary directly. Everywhere else the
+// link is a generated shim that pins the runtime by reading the file when it is
+// linked (Windows cmd/ps1/.bunx shims, pnpm's shell shims) — often before this
+// script runs — and would then run node on a native binary. Those keep the JS
+// launcher, which execs the cached binary.
+function canReplaceLauncher(
+  platform = detectPlatform(),
+  userAgent = process.env.npm_config_user_agent ?? "",
+) {
+  return platform !== "windows" && /^(npm|bun)\//.test(userAgent);
+}
+
+function replaceLauncher(source = targetBinary, target = launcherBinary) {
+  try {
+    copyBinary(source, target);
+    if (verifyBinary(target)) return true;
+  } catch {
+    // Fall through and restore the launcher.
+  }
+  try {
+    fs.rmSync(target, { force: true });
+    fs.copyFileSync(launcherSource, target);
+    fs.chmodSync(target, 0o755);
+  } catch {
+    // Leave whatever is there; the cached binary is still in place.
+  }
+  return false;
+}
+
 function installNativeBinary() {
   const packages = nativePackageNames();
   const sourceBinary = binaryName();
 
   for (const packageName of packages) {
+    let installed = false;
     try {
       copyBinary(resolveBinary(packageName, sourceBinary, { packageDir: __dirname }));
-      if (verifyBinary()) return;
+      installed = verifyBinary();
     } catch {
-      if (installPackage(packageName, sourceBinary) && verifyBinary()) return;
+      installed = installPackage(packageName, sourceBinary) && verifyBinary();
     }
+    if (installed) {
+      if (canReplaceLauncher()) replaceLauncher();
+      return;
+    }
+    // The launcher trusts whatever is cached, so never leave a binary that failed.
+    fs.rmSync(targetBinary, { force: true });
   }
 
   throw new Error(
@@ -126,6 +166,7 @@ if (isMainModule()) {
 
 export {
   binaryName,
+  canReplaceLauncher,
   copyBinary,
   detectArch,
   detectPlatform,
@@ -134,6 +175,7 @@ export {
   isMusl,
   nativePackageNames,
   readPackageJson,
+  replaceLauncher,
   supportsAvx2,
   verifyBinary,
 };

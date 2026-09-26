@@ -25,6 +25,11 @@ function detectArch(value = os.arch()) {
   );
 }
 
+// The published package's `bin` points at bin/tokenmaxxing, a copy of this
+// launcher. Preinstall caches the verified native binary beside it under this
+// name so the launcher can exec it without re-running CPU detection.
+const CACHED_BINARY_NAME = "tokenmaxxing.exe";
+
 function binaryName(platform = detectPlatform()) {
   platform = detectPlatform(platform);
   return platform === "windows" ? "tokenmaxxing.exe" : "tokenmaxxing";
@@ -168,6 +173,24 @@ function resolveBinary(packageName, sourceBinary = binaryName(), options = {}) {
   return binaryPath;
 }
 
+function cachedBinaryPaths(packageDir = __dirname) {
+  return [
+    path.join(packageDir, "bin", CACHED_BINARY_NAME),
+    path.join(packageDir, CACHED_BINARY_NAME),
+  ];
+}
+
+function findCachedBinary(packageDir = __dirname) {
+  for (const binaryPath of cachedBinaryPaths(packageDir)) {
+    try {
+      if (fs.statSync(binaryPath).isFile()) return binaryPath;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 function findNativeBinary(options = {}) {
   const packages = options.packages ?? nativePackageNames(options);
   const sourceBinary = options.sourceBinary ?? binaryName(options.platform);
@@ -206,22 +229,59 @@ function recoveryMessage(options = {}) {
   ].join("\n");
 }
 
+function relayedSignals(platform = detectPlatform()) {
+  // Windows delivers console Ctrl+C/Ctrl+Break to every process attached to the
+  // console, and ChildProcess#kill there is TerminateProcess, so the launcher
+  // only stays alive and lets the native binary handle the event itself.
+  return platform === "windows"
+    ? { forward: false, signals: ["SIGINT", "SIGBREAK"] }
+    : { forward: true, signals: ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"] };
+}
+
 function runBinary(target, argv = process.argv.slice(2)) {
-  const result = childProcess.spawnSync(target, argv, {
+  const child = childProcess.spawn(target, argv, {
     stdio: "inherit",
     windowsHide: true,
   });
-  if (result.error) {
-    console.error(result.error.message);
+  const { forward, signals } = relayedSignals();
+  const listeners = signals.map((signal) => {
+    const listener = () => {
+      if (forward) child.kill(signal);
+    };
+    process.on(signal, listener);
+    return [signal, listener];
+  });
+  const removeListeners = () => {
+    for (const [signal, listener] of listeners) process.removeListener(signal, listener);
+  };
+
+  child.on("error", (error) => {
+    removeListeners();
+    console.error(error.message);
     process.exit(1);
-  }
-  process.exit(typeof result.status === "number" ? result.status : 1);
+  });
+  child.on("exit", (code, signal) => {
+    removeListeners();
+    if (signal !== null) {
+      // Die the same way so shells and supervisors see the real signal.
+      process.kill(process.pid, signal);
+      setTimeout(() => process.exit(128 + (os.constants.signals[signal] ?? 0)), 100);
+      return;
+    }
+    process.exit(code ?? 1);
+  });
 }
 
 function runNativeBinary(options = {}) {
   const envPath = process.env.TOKENMAXXING_BIN_PATH;
   if (envPath) {
     runBinary(envPath, options.argv);
+    return;
+  }
+
+  const cachedBinary = findCachedBinary(options.packageDir);
+  if (cachedBinary !== null) {
+    runBinary(cachedBinary, options.argv);
     return;
   }
 
@@ -238,15 +298,19 @@ if (require.main === module) {
 }
 
 module.exports = {
+  CACHED_BINARY_NAME,
   binaryName,
+  cachedBinaryPaths,
   detectArch,
   detectPlatform,
+  findCachedBinary,
   findNativeBinary,
   isMusl,
   nativePackageNames,
   packageJsonPaths,
   readPackageJson,
   recoveryMessage,
+  relayedSignals,
   resolveBinary,
   runNativeBinary,
   supportsAvx2,
