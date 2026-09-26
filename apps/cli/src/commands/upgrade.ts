@@ -7,6 +7,7 @@ import {
   type DistTagVersion,
   fetchDistTags,
   LATEST_DIST_TAG,
+  parseSemVer,
   releaseChannel,
   resolveUpdate,
 } from "../cli-version";
@@ -41,15 +42,21 @@ type ServiceRefreshResult =
 type VersionCheckResult =
   | {
       _tag: "available";
+      /** The dist-tag this install follows: its prerelease channel (`alpha`), or `latest`. */
+      channel: string;
+      /** Version on `channel`; null when the tag is missing or malformed. */
+      channelVersion: string | null;
       currentVersion: string;
-      /** Highest version on the dist-tags this install follows (`latest`, plus its prerelease channel). */
-      latestVersion: string;
+      /** Version on npm's `latest` dist-tag; null when the tag is missing or malformed. */
+      latestVersion: string | null;
       shouldUpdate: boolean;
       /** The dist-tag + version to install; null when already up to date. */
       target: DistTagVersion | null;
     }
   | {
       _tag: "unavailable";
+      channel: string;
+      channelVersion: null;
       currentVersion: string;
       latestVersion: null;
     };
@@ -165,11 +172,14 @@ function upgradeProgram(
 
     if (versionCheck._tag === "available" && versionCheck.target === null) {
       yield* Effect.sync(() =>
-        versionSpinner.stop(`Already up to date (${versionCheck.currentVersion}); upgrade skipped`),
+        versionSpinner.stop(`Already up to date (${versionCheck.currentVersion})`),
       );
       if (options.json) {
         yield* writeJson({
-          command: autoUpdateCommandDescription(manager),
+          channel: versionCheck.channel,
+          channelVersion: versionCheck.channelVersion,
+          // Nothing runs, so there is no command to report.
+          command: null,
           currentVersion: versionCheck.currentVersion,
           distTag: null,
           latestVersion: versionCheck.latestVersion,
@@ -223,6 +233,8 @@ function upgradeProgram(
     }
     if (options.json) {
       yield* writeJson({
+        channel: versionCheck.channel,
+        channelVersion: versionCheck.channelVersion,
         command,
         currentVersion: versionCheck.currentVersion,
         distTag: target?.distTag ?? null,
@@ -244,8 +256,11 @@ function checkLatestVersion(
   currentVersion: string,
   getDistTags: () => Effect.Effect<DistTags, unknown>,
 ): Effect.Effect<VersionCheckResult, never> {
+  const channel = releaseChannel(currentVersion);
   const unavailable = {
     _tag: "unavailable" as const,
+    channel,
+    channelVersion: null,
     currentVersion,
     latestVersion: null,
   };
@@ -259,8 +274,10 @@ function checkLatestVersion(
           ? unavailable
           : {
               _tag: "available",
+              channel,
+              channelVersion: wellFormedDistTagVersion(distTags, channel),
               currentVersion,
-              latestVersion: newest.version,
+              latestVersion: wellFormedDistTagVersion(distTags, LATEST_DIST_TAG),
               shouldUpdate: update !== null,
               target: update,
             };
@@ -269,9 +286,14 @@ function checkLatestVersion(
   );
 }
 
+function wellFormedDistTagVersion(distTags: DistTags, distTag: string): string | null {
+  const version = distTags[distTag];
+  return version !== undefined && parseSemVer(version) !== null ? version : null;
+}
+
 function formatUpgradeSuccess(versionCheck: VersionCheckResult): string {
-  return versionCheck._tag === "available"
-    ? `Upgraded to v${versionCheck.latestVersion}`
+  return versionCheck._tag === "available" && versionCheck.target !== null
+    ? `Upgraded to v${versionCheck.target.version}`
     : "Upgraded tokenmaxxing";
 }
 

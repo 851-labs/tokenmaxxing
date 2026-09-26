@@ -91,7 +91,7 @@ describe("upgradeProgram", () => {
       "Detecting install method",
       "Using method: npm",
       "Checking latest version",
-      "Already up to date (0.4.3); upgrade skipped",
+      "Already up to date (0.4.3)",
     ]);
   });
 
@@ -149,7 +149,9 @@ describe("upgradeProgram", () => {
     expect(managers).toEqual([]);
     expect(logs).toEqual([
       JSON.stringify({
-        command: "npm install -g @851-labs/tokenmaxxing@latest --silent",
+        channel: "latest",
+        channelVersion: "0.4.3",
+        command: null,
         currentVersion: "0.4.3",
         distTag: null,
         latestVersion: "0.4.3",
@@ -188,6 +190,8 @@ describe("upgradeProgram", () => {
     expect(managers).toEqual(["npm"]);
     expect(logs).toEqual([
       JSON.stringify({
+        channel: "latest",
+        channelVersion: "0.4.4",
         command: "npm install -g @851-labs/tokenmaxxing@latest --silent",
         currentVersion: "0.4.3",
         distTag: "latest",
@@ -249,6 +253,7 @@ describe("upgradeProgram", () => {
     async function runUpgrade(input: {
       currentVersion: string;
       distTags: Effect.Effect<Record<string, string>, unknown>;
+      json?: boolean;
       manager?: CommandInstall["autoUpdateManager"];
     }) {
       const { layer, logs } = testConsole();
@@ -266,12 +271,13 @@ describe("upgradeProgram", () => {
                 updates.push({ manager, specifier });
               }),
           },
-          { json: true },
+          { json: input.json ?? true },
         ).pipe(Effect.provide(layer)),
       );
 
       return {
         exit,
+        logs,
         json: logs.length === 1 ? (JSON.parse(logs[0]!) as Record<string, unknown>) : null,
         updates,
       };
@@ -285,14 +291,37 @@ describe("upgradeProgram", () => {
 
       expect(result.exit._tag).toBe("Success");
       expect(result.updates).toEqual([]);
-      expect(result.json).toMatchObject({
+      expect(result.json).toEqual({
+        channel: "alpha",
+        channelVersion: "0.7.0-alpha.0",
+        command: null,
         currentVersion: "0.7.0-alpha.0",
         distTag: null,
-        latestVersion: "0.7.0-alpha.0",
+        latestVersion: "0.6.0",
+        packageManager: "npm",
+        service: { status: "skipped" },
         skipped: true,
+        status: "ok",
         targetVersion: null,
         updated: false,
+        versionCheck: "ok",
       });
+    });
+
+    it("reports a prerelease that is already on its channel head as up to date", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.7.0-alpha.0",
+        distTags: Effect.succeed({ alpha: "0.7.0-alpha.0", latest: "0.6.0" }),
+        json: false,
+      });
+
+      expect(result.updates).toEqual([]);
+      expect(result.logs).toEqual([
+        "Detecting install method",
+        "Using method: npm",
+        "Checking latest version",
+        "Already up to date (0.7.0-alpha.0)",
+      ]);
     });
 
     it("keeps a prerelease when its channel tag is missing and latest is older", async () => {
@@ -302,7 +331,14 @@ describe("upgradeProgram", () => {
       });
 
       expect(result.updates).toEqual([]);
-      expect(result.json).toMatchObject({ latestVersion: "0.6.0", skipped: true, updated: false });
+      expect(result.json).toMatchObject({
+        channel: "alpha",
+        channelVersion: null,
+        command: null,
+        latestVersion: "0.6.0",
+        skipped: true,
+        updated: false,
+      });
     });
 
     it("follows the prerelease channel to the next prerelease by exact version", async () => {
@@ -313,14 +349,20 @@ describe("upgradeProgram", () => {
 
       expect(result.exit._tag).toBe("Success");
       expect(result.updates).toEqual([{ manager: "npm", specifier: "0.7.0-alpha.10" }]);
-      expect(result.json).toMatchObject({
+      expect(result.json).toEqual({
+        channel: "alpha",
+        channelVersion: "0.7.0-alpha.10",
         command: "npm install -g @851-labs/tokenmaxxing@0.7.0-alpha.10 --silent",
         currentVersion: "0.7.0-alpha.9",
         distTag: "alpha",
-        latestVersion: "0.7.0-alpha.10",
+        latestVersion: "0.6.0",
+        packageManager: "npm",
+        service: { status: "not-installed" },
         skipped: false,
+        status: "ok",
         targetVersion: "0.7.0-alpha.10",
         updated: true,
+        versionCheck: "ok",
       });
     });
 
@@ -331,11 +373,20 @@ describe("upgradeProgram", () => {
       });
 
       expect(result.updates).toEqual([{ manager: "npm", specifier: "latest" }]);
-      expect(result.json).toMatchObject({
+      expect(result.json).toEqual({
+        channel: "alpha",
+        channelVersion: "0.7.0-alpha.1",
         command: "npm install -g @851-labs/tokenmaxxing@latest --silent",
+        currentVersion: "0.7.0-alpha.1",
         distTag: "latest",
+        latestVersion: "0.7.0",
+        packageManager: "npm",
+        service: { status: "not-installed" },
+        skipped: false,
+        status: "ok",
         targetVersion: "0.7.0",
         updated: true,
+        versionCheck: "ok",
       });
     });
 
@@ -352,6 +403,56 @@ describe("upgradeProgram", () => {
       });
     });
 
+    it("reports the bun update command for a stable install following latest", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.6.0",
+        distTags: Effect.succeed({ latest: "0.6.1" }),
+        manager: "bun",
+      });
+
+      expect(result.updates).toEqual([{ manager: "bun", specifier: "latest" }]);
+      expect(result.json).toMatchObject({
+        command: "bun update -g @851-labs/tokenmaxxing --latest --silent",
+        targetVersion: "0.6.1",
+      });
+    });
+
+    it("reports no command for any package manager when nothing is installed", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.6.0",
+        distTags: Effect.succeed({ latest: "0.6.0" }),
+        manager: "bun",
+      });
+
+      expect(result.updates).toEqual([]);
+      expect(result.json).toMatchObject({ command: null, packageManager: "bun", skipped: true });
+    });
+
+    it("runs latest for a stable install when the registry is unreachable", async () => {
+      const result = await runUpgrade({
+        currentVersion: "0.6.0",
+        distTags: Effect.fail("offline"),
+      });
+
+      expect(result.exit._tag).toBe("Success");
+      expect(result.updates).toEqual([{ manager: "npm", specifier: "latest" }]);
+      expect(result.json).toEqual({
+        channel: "latest",
+        channelVersion: null,
+        command: "npm install -g @851-labs/tokenmaxxing@latest --silent",
+        currentVersion: "0.6.0",
+        distTag: null,
+        latestVersion: null,
+        packageManager: "npm",
+        service: { status: "not-installed" },
+        skipped: false,
+        status: "ok",
+        targetVersion: null,
+        updated: true,
+        versionCheck: "unavailable",
+      });
+    });
+
     it("keeps stable installs off prerelease channels", async () => {
       const result = await runUpgrade({
         currentVersion: "0.6.0",
@@ -359,7 +460,13 @@ describe("upgradeProgram", () => {
       });
 
       expect(result.updates).toEqual([]);
-      expect(result.json).toMatchObject({ latestVersion: "0.6.0", skipped: true });
+      expect(result.json).toMatchObject({
+        channel: "latest",
+        channelVersion: "0.6.0",
+        command: null,
+        latestVersion: "0.6.0",
+        skipped: true,
+      });
     });
 
     it("never downgrades a stable install that is ahead of latest", async () => {
@@ -369,7 +476,7 @@ describe("upgradeProgram", () => {
       });
 
       expect(result.updates).toEqual([]);
-      expect(result.json).toMatchObject({ latestVersion: "0.6.0", skipped: true });
+      expect(result.json).toMatchObject({ command: null, latestVersion: "0.6.0", skipped: true });
     });
 
     it("refuses to upgrade a prerelease blind when the registry check fails", async () => {
@@ -434,6 +541,8 @@ describe("formatUpgradeSuccess", () => {
     expect(
       formatUpgradeSuccess({
         _tag: "available",
+        channel: "latest",
+        channelVersion: "0.4.4",
         currentVersion: "0.4.3",
         latestVersion: "0.4.4",
         shouldUpdate: true,
@@ -442,10 +551,26 @@ describe("formatUpgradeSuccess", () => {
     ).toBe("Upgraded to v0.4.4");
   });
 
+  it("names the installed target, not npm latest, for a prerelease upgrade", () => {
+    expect(
+      formatUpgradeSuccess({
+        _tag: "available",
+        channel: "alpha",
+        channelVersion: "0.7.0-alpha.2",
+        currentVersion: "0.7.0-alpha.1",
+        latestVersion: "0.6.0",
+        shouldUpdate: true,
+        target: { distTag: "alpha", version: "0.7.0-alpha.2" },
+      }),
+    ).toBe("Upgraded to v0.7.0-alpha.2");
+  });
+
   it("keeps generic copy when the registry check was unavailable", () => {
     expect(
       formatUpgradeSuccess({
         _tag: "unavailable",
+        channel: "latest",
+        channelVersion: null,
         currentVersion: "0.4.3",
         latestVersion: null,
       }),
