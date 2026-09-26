@@ -1,0 +1,132 @@
+# Real-Windows e2e for the CLI's Task Scheduler service and global-install
+# shims. Unit tests cannot see what these catch: a console window flashing on
+# every scheduled sync, cmd.exe mis-parsing a profile path, a deferred repair
+# that never runs. See apps/cli/e2e/windows/README.md.
+#
+# Path-filtered and not a required check. Run it by hand from the Actions tab
+# ("Windows e2e" -> Run workflow) or `gh workflow run windows-e2e.yml --ref <branch>`.
+name: Windows e2e
+
+on:
+  pull_request:
+    paths:
+      - "apps/cli/src/commands/service*.ts"
+      - "apps/cli/src/service-runner-targets.ts"
+      - "apps/cli/src/ccusage/**"
+      - "apps/cli/script/**"
+      - "apps/cli/package.json"
+      - "apps/cli/e2e/windows/**"
+      - "apps/api/script/sandbox-server.ts"
+      - "packages/api-contract/**"
+      - ".github/workflows/windows-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/cli/src/commands/service*.ts"
+      - "apps/cli/src/service-runner-targets.ts"
+      - "apps/cli/src/ccusage/**"
+      - "apps/cli/script/**"
+      - "apps/cli/package.json"
+      - "apps/cli/e2e/windows/**"
+      - "apps/api/script/sandbox-server.ts"
+      - "packages/api-contract/**"
+      - ".github/workflows/windows-e2e.yml"
+  workflow_dispatch:
+    inputs:
+      artifacts:
+        description: Upload logs and screenshots even when the run passes
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # A version no release will ever have, so nothing mistakes this build for one.
+  E2E_VERSION: 99.0.0-e2e.0
+
+jobs:
+  service:
+    name: Service (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fails fast when the runner's session is not interactive: every
+      # no-visible-window check would pass vacuously.
+      - name: Assert an interactive desktop session
+        run: apps/cli/e2e/windows/session-probe.ps1 -OutDir "$env:RUNNER_TEMP\tmx-e2e\out"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.18.0"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build CLI packages for this host
+        run: bun apps/cli/e2e/windows/build-packages.ts --out "$env:RUNNER_TEMP\tmx-e2e\pkgs" --version $env:E2E_VERSION
+
+      - name: Run service e2e
+        run: apps/cli/e2e/windows/run-service-e2e.ps1 -Build "$env:RUNNER_TEMP\tmx-e2e\pkgs\build.json"
+
+      - name: Upload logs and screenshots
+        if: failure() || inputs.artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-e2e-service-${{ matrix.os }}
+          path: ${{ runner.temp }}\tmx-e2e\out
+          if-no-files-found: warn
+
+  shims:
+    name: Shims (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.18.0"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build CLI packages for this host
+        run: bun apps/cli/e2e/windows/build-packages.ts --out "$env:RUNNER_TEMP\tmx-e2e-shims\pkgs" --version $env:E2E_VERSION
+
+      - name: Run shim matrix
+        run: apps/cli/e2e/windows/run-shim-matrix.ps1 -Build "$env:RUNNER_TEMP\tmx-e2e-shims\pkgs\build.json"
+
+      - name: Upload logs
+        if: failure() || inputs.artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-e2e-shims-${{ matrix.os }}
+          path: ${{ runner.temp }}\tmx-e2e-shims\out
+          if-no-files-found: warn
