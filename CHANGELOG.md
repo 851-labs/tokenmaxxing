@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.0-alpha.1 - 2026-09-26
+
 ### Added
 
 - Added Grok Build CLI, Antigravity, ZCode, Amp, Qwen Code, Kimi CLI, Kilo Code, Goose, Droid,
@@ -27,11 +29,26 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   when the service's roots differ from your shell. Thanks @maxmoneycash (#71).
 - Hermes usage now includes named profiles (`~/.hermes/profiles/<name>/state.db`) alongside the
   default root when `HERMES_HOME` is unset, in both `sync` and scheduled runs. Thanks @kvnloo (#68).
+- On Windows, the scheduled sync no longer opens a console window or steals focus every five
+  minutes: the task runs through a hidden `wscript` launcher, existing installs migrate
+  automatically, and config paths with spaces, `&`, `'`, parentheses or non-ASCII characters now
+  work. Thanks @sybrengg (#38) and @tanqyry (#72); fixes #57.
+- `bun add -g --trust` (and `yarn global add`) installs now work on Windows: the package `bin` is
+  a small launcher that runs the verified native binary. Thanks @Iydah (#28).
+- `tokenmaxxing upgrade` and the service's auto-updater never downgrade: prerelease installs follow
+  their channel (e.g. `alpha`) and move to `latest` only when it is newer. `upgrade --json`
+  reports `command: null` when nothing runs and adds `channel`/`channelVersion`.
+- Scheduled syncs skip sources whose logs haven't changed and only rebuild session counts on the
+  6-hourly reconcile, cutting background CPU for large Codex logs. `service run --force` runs every
+  source. Thanks @NubsCarson for the report (#69).
 
 ### Server
 
 - The API accepts the new sources on `/usage/ingest` and `/usage/sync`, and the site labels them
   on the stats page, home page, FAQ, privacy policy, and llms.txt.
+- Re-syncing unchanged usage no longer re-prices history: stored cost is kept unless token counts
+  change (ccusage prices older Codex sessions from your current Fast/Standard config).
+- The production API only trusts `https://tokenmaxxing.sh` for CORS and sign-out.
 
 ## 0.7.0-alpha.0 - 2026-09-23
 
