@@ -2,7 +2,7 @@
 # writes the summary. Everything runs in one step because the sandbox API and
 # the registry must outlive every phase.
 #
-#   run-service-e2e.ps1 -Build <build.json> [-Root <dir>] [-OutDir <dir>] [-LegacyVersion 0.7.0-alpha.0] [-Force]
+#   run-service-e2e.ps1 -BuildJson <build.json> [-Root <dir>] [-OutDir <dir>] [-LegacyVersion 0.7.0-alpha.0] [-Force]
 #
 # 1. fake bun (fakes/) first on PATH, so scheduled runs never start real ccusage
 # 2. the local API sandbox (apps/api/script/sandbox-server.ts) on 127.0.0.1:8799
@@ -12,7 +12,7 @@
 #    scheduled run (or runner auto-update) can reach either
 # 6. service-e2e.ps1, then summarize.ps1
 param(
-  [Parameter(Mandatory)] [string]$Build,
+  [Parameter(Mandatory)] [string]$BuildJson,
   [string]$Root = (Join-Path $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }) "tmx-e2e"),
   [string]$OutDir = (Join-Path $Root "out"),
   [string]$LegacyVersion = "0.7.0-alpha.0",
@@ -24,7 +24,8 @@ Assert-DisposableMachine -Force:$Force
 Initialize-E2E -OutDir $OutDir -Suite "setup"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..\..")).Path
-$build = Get-Content -LiteralPath $Build -Raw | ConvertFrom-Json
+$build = Get-Content -LiteralPath $BuildJson -Raw | ConvertFrom-Json
+if (-not $build.version) { throw "no version in $BuildJson" }
 $api = "http://127.0.0.1:8799"
 $fakeBin = Join-Path $Root "fakebin"
 $hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
@@ -52,8 +53,8 @@ try {
   Write-Host "::group::local registry + npm install -g"
   $registry = Start-E2ERegistry -Root $Root -PackageDirs @($build.nativeDir, $build.mainDir)
   $servers += $registry.process
-  $install = Invoke-Logged "npm install -g" { npm install -g "@851-labs/tokenmaxxing@$($build.version)" --registry "$($registry.url)/" --no-audit --no-fund }
-  $tmxBin = (npm prefix -g | Out-String).Trim()
+  $install = Invoke-Logged "npm install -g" { npm.cmd install -g "@851-labs/tokenmaxxing@$($build.version)" --registry "$($registry.url)/" --no-audit --no-fund }
+  $tmxBin = (npm.cmd prefix -g | Out-String).Trim()
   $shim = Invoke-Logged "tokenmaxxing.cmd --version" { cmd.exe /d /c "`"$tmxBin\tokenmaxxing.cmd`" --version" }
   Add-Check "setup" "npm install -g from the e2e registry" ($install.code -eq 0 -and $shim.out -match [regex]::Escape($build.version)) "prefix=$tmxBin; $(Format-OneLine $shim.out)"
   Write-Host "::endgroup::"
@@ -63,7 +64,7 @@ try {
   $legacyDir = Join-Path $Root "legacy"
   $legacyPackage = "$($build.nativePackageName)@$LegacyVersion"
   New-Item -ItemType Directory -Force -Path $legacyDir | Out-Null
-  $pack = Invoke-Logged "npm pack $legacyPackage" { npm pack $legacyPackage --pack-destination $legacyDir --registry https://registry.npmjs.org/ }
+  $pack = Invoke-Logged "npm pack $legacyPackage" { npm.cmd pack $legacyPackage --pack-destination $legacyDir --registry https://registry.npmjs.org/ }
   $tarball = Get-ChildItem -LiteralPath $legacyDir -Filter "*.tgz" | Select-Object -First 1
   $legacyBin = ""
   if ($pack.code -eq 0 -and $tarball) {
@@ -94,11 +95,17 @@ try {
   } else {
     Write-Host "::error::setup failed; skipping the service scenarios"
   }
+} catch {
+  Add-Check "setup" "harness ran without errors" $false "$($_.Exception.Message) $(Format-OneLine $_.InvocationInfo.PositionMessage 300)"
 } finally {
   Copy-Item -LiteralPath (Join-Path $fakeBin "calls.log") -Destination (Join-Path $OutDir "fake-ccusage-calls.log") -ErrorAction SilentlyContinue
   try { Invoke-RestMethod -Uri "$api/__sandbox/requests" | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $OutDir "sandbox-requests.json") -Encoding utf8 } catch { }
   Stop-E2E
 }
+
+# A crash anywhere must never read as a pass.
+$completed = @(Get-Content -LiteralPath (Join-Path $OutDir "results.jsonl") | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object check -EQ "all scenarios ran")
+if ($completed.Count -eq 0) { Add-Check "setup" "service scenarios completed" $false "service-e2e.ps1 never reached its end; see the failures above and service.log" }
 
 & "$PSScriptRoot\summarize.ps1" -OutDir $OutDir -Title "Windows service e2e"
 exit $(if ((Get-FailedChecks).Count -gt 0) { 1 } else { 0 })

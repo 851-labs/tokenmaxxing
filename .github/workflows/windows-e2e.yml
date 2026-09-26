@@ -83,7 +83,7 @@ jobs:
         run: bun apps/cli/e2e/windows/build-packages.ts --out "$env:RUNNER_TEMP\tmx-e2e\pkgs" --version $env:E2E_VERSION
 
       - name: Run service e2e
-        run: apps/cli/e2e/windows/run-service-e2e.ps1 -Build "$env:RUNNER_TEMP\tmx-e2e\pkgs\build.json"
+        run: apps/cli/e2e/windows/run-service-e2e.ps1 -BuildJson "$env:RUNNER_TEMP\tmx-e2e\pkgs\build.json"
 
       - name: Upload logs and screenshots
         if: failure() || inputs.artifacts
@@ -121,7 +121,7 @@ jobs:
         run: bun apps/cli/e2e/windows/build-packages.ts --out "$env:RUNNER_TEMP\tmx-e2e-shims\pkgs" --version $env:E2E_VERSION
 
       - name: Run shim matrix
-        run: apps/cli/e2e/windows/run-shim-matrix.ps1 -Build "$env:RUNNER_TEMP\tmx-e2e-shims\pkgs\build.json"
+        run: apps/cli/e2e/windows/run-shim-matrix.ps1 -BuildJson "$env:RUNNER_TEMP\tmx-e2e-shims\pkgs\build.json"
 
       - name: Upload logs
         if: failure() || inputs.artifacts
