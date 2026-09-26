@@ -49,7 +49,8 @@ function Get-FailedChecks([string]$Results = $script:E2EResults) {
 }
 
 function Format-OneLine([string]$Text, [int]$Max = 600) {
-  $flat = ($Text -replace "\r?\n", " | ").Trim()
+  # Control bytes (say, an .exe printed as text) would garble the summary table.
+  $flat = ($Text -replace "\r?\n", " | " -replace "[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", ".").Trim()
   if ($flat.Length -gt $Max) { $flat.Substring(0, $Max) + "..." } else { $flat }
 }
 
