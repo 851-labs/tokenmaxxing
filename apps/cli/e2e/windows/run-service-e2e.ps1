@@ -15,6 +15,9 @@ param(
   [Parameter(Mandatory)] [string]$BuildJson,
   [string]$Root = (Join-Path $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }) "tmx-e2e"),
   [string]$OutDir = (Join-Path $Root "out"),
+  # Must predate the hidden launcher (#100, first released in 0.7.0-alpha.1):
+  # its task runs the .cmd directly, which the upgrade scenario migrates and
+  # whose visible console is the window watcher's positive control.
   [string]$LegacyVersion = "0.7.0-alpha.0",
   [switch]$Force
 )

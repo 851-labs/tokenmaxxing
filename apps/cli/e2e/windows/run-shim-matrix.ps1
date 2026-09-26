@@ -23,10 +23,9 @@ if (-not $build.version) { throw "no version in $BuildJson" }
 $package = "@851-labs/tokenmaxxing"
 $spec = "$package@$($build.version)"
 
-$KnownIssues = @{
-  # bun links the bin as a node script before preinstall swaps in the native exe.
-  "bun add -g --trust" = "851-labs/tokenmaxxing#28"
-}
+# installer name -> issue, e.g. "bun add -g --trust" = "851-labs/tokenmaxxing#28"
+# (fixed by #107). Empty while every installer works.
+$KnownIssues = @{}
 
 $Installers = [ordered]@{
   "npm i -g" = @{
@@ -71,8 +70,8 @@ function Test-Installer([string]$Name) {
   $env:PATH = "$(& $installer.bin);$basePath"
   try {
     $where = (where.exe tokenmaxxing 2>&1 | Out-String).Trim()
-    $packageBin = Join-Path (& $installer.packageDir) "bin\tokenmaxxing.exe"
-    Add-Check $Name "resolved shim" "INFO" "$(Format-OneLine $where); package bin/tokenmaxxing.exe: $(Describe-File $packageBin)"
+    $packageBin = Join-Path (& $installer.packageDir) "bin"
+    Add-Check $Name "resolved shim" "INFO" "$(Format-OneLine $where); package bin/tokenmaxxing: $(Describe-File (Join-Path $packageBin 'tokenmaxxing')); bin/tokenmaxxing.exe: $(Describe-File (Join-Path $packageBin 'tokenmaxxing.exe'))"
     foreach ($shell in $Shells.Keys) {
       $run = Invoke-Logged "$Name via $shell" $Shells[$shell]
       $ok = $run.code -eq 0 -and $run.out -match [regex]::Escape($build.version)

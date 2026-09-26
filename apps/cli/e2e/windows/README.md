@@ -55,10 +55,12 @@ package, which happens before the block.
 **Shims** (`run-shim-matrix.ps1`) installs the build with `npm i -g`,
 `bun add -g` and `bun add -g --trust`. It runs `tokenmaxxing --version` through
 `cmd.exe`, `pwsh` and Windows PowerShell 5.1 for each. To extend it, add a row
-to `$Installers` or `$Shells`. An installer listed in `$KnownIssues` records
-XFAIL while it fails. Once it passes it records XPASS, which fails the job, so
-the entry is removed together with the fix. `bun add -g --trust` is listed
-there for [#28](https://github.com/851-labs/tokenmaxxing/pull/28).
+to `$Installers` or `$Shells`. To land a check before its fix, list the installer in
+`$KnownIssues`: it records XFAIL while it fails. Once it passes it records
+XPASS, which fails the job, so the entry is removed together with the fix.
+`bun add -g --trust` was listed there until
+[#107](https://github.com/851-labs/tokenmaxxing/pull/107) fixed
+[#28](https://github.com/851-labs/tokenmaxxing/pull/28); the table is empty now.
 
 ## Results
 
