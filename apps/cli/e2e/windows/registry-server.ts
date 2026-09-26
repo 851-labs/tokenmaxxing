@@ -1,37 +1,30 @@
 #!/usr/bin/env bun
 /**
- * A read-only npm registry for the e2e: packs each package directory with
- * `npm pack` and serves just enough of the registry protocol (packuments and
- * tarballs) for `npm install -g` and `bun add -g`. There is no uplink, so a
- * package that is not listed here fails to install instead of reaching
- * registry.npmjs.org.
+ * A read-only npm registry for the e2e. Serves just enough of the registry
+ * protocol (packuments and tarballs) for `npm install -g` and `bun add -g`
+ * from `npm pack` tarballs. There is no uplink, so a package that is not
+ * listed here fails to install instead of reaching registry.npmjs.org.
  *
- *   bun apps/cli/e2e/windows/registry-server.ts --port 4873 --out <dir> <package dir>...
+ *   bun apps/cli/e2e/windows/registry-server.ts --port 4873 <package .tgz>...
  */
-import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-
-interface PackResult {
-  filename: string;
-  integrity: string;
-  shasum: string;
-}
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { basename, resolve } from "node:path";
+import { gunzipSync } from "node:zlib";
 
 type Manifest = Record<string, unknown> & { name: string; version: string };
 
 const argv = process.argv.slice(2);
 const port = Number(takeFlag("port") ?? "4873");
-const outDir = resolve(takeFlag("out") ?? "registry");
 const origin = `http://127.0.0.1:${port}`;
-mkdirSync(outDir, { recursive: true });
 
 const packuments = new Map<string, { "dist-tags": Record<string, string>; versions: object }>();
 const tarballs = new Map<string, string>();
-for (const packageDir of argv.map((dir) => resolve(dir))) {
-  const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as Manifest;
-  const packed = npmPack(packageDir);
-  tarballs.set(packed.filename, join(outDir, packed.filename));
+for (const tarball of argv.map((file) => resolve(file))) {
+  const bytes = readFileSync(tarball);
+  const manifest = readPackageJson(bytes);
+  const filename = basename(tarball);
+  tarballs.set(filename, tarball);
   packuments.set(manifest.name, {
     "dist-tags": { latest: manifest.version },
     versions: {
@@ -39,15 +32,15 @@ for (const packageDir of argv.map((dir) => resolve(dir))) {
         ...manifest,
         _id: `${manifest.name}@${manifest.version}`,
         dist: {
-          integrity: packed.integrity,
-          shasum: packed.shasum,
-          tarball: `${origin}/-/tarballs/${packed.filename}`,
+          integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+          shasum: createHash("sha1").update(bytes).digest("hex"),
+          tarball: `${origin}/-/tarballs/${filename}`,
         },
         hasInstallScript: manifest.scripts !== undefined,
       },
     },
   });
-  console.log(`serving ${manifest.name}@${manifest.version} (${packed.filename})`);
+  console.log(`serving ${manifest.name}@${manifest.version} (${filename})`);
 }
 
 const server = Bun.serve({
@@ -73,21 +66,26 @@ const server = Bun.serve({
 
 console.log(`e2e registry listening on http://127.0.0.1:${server.port}`);
 
-function npmPack(packageDir: string): PackResult {
-  // Bun starts npm's .cmd shim on Windows directly, without a shell.
-  const result = spawnSync(
-    process.platform === "win32" ? "npm.cmd" : "npm",
-    ["pack", packageDir, "--json", "--ignore-scripts", "--pack-destination", outDir],
-    { encoding: "utf8" },
-  );
-  if (result.status !== 0) {
-    throw new Error(`npm pack ${packageDir} failed: ${result.stderr}`);
+/** package/package.json from a gzipped tarball (512-byte ustar headers). */
+function readPackageJson(tgz: Uint8Array): Manifest {
+  const tar = gunzipSync(tgz);
+  const text = (start: number, length: number) =>
+    tar
+      .subarray(start, start + length)
+      .toString("utf8")
+      .replace(/\0.*$/s, "");
+  for (let offset = 0; offset + 512 <= tar.length;) {
+    const name = text(offset, 100);
+    if (name === "") {
+      break;
+    }
+    const size = Number.parseInt(text(offset + 124, 12).trim() || "0", 8);
+    if (name === "package/package.json") {
+      return JSON.parse(text(offset + 512, size)) as Manifest;
+    }
+    offset += 512 + Math.ceil(size / 512) * 512;
   }
-  const [packed] = JSON.parse(result.stdout) as PackResult[];
-  if (packed === undefined) {
-    throw new Error(`npm pack ${packageDir} printed no result`);
-  }
-  return packed;
+  throw new Error("tarball has no package/package.json");
 }
 
 function notFound(path: string): Response {
