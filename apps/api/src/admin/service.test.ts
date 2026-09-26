@@ -12,7 +12,6 @@ import { device, latestRelease, now, snapshot } from "./test-fixtures";
 const appConfig = AppConfig.of({
   adminEmails: ["alexandru@851.sh", "pondorasti@gmail.com"],
   apiWorkerName: "tokenmaxxing-api",
-  corsOrigins: ["https://tokenmaxxing.sh"],
   github: { clientId: "github-client", clientSecret: "github-secret" },
   google: { clientId: "google-client", clientSecret: "google-secret" },
   productName: "Tokenmaxxing",

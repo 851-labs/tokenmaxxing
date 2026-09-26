@@ -13,7 +13,7 @@ import {
 } from "../../auth/cookies";
 import { generateToken, pkceChallenge, toBase64Url } from "../../auth/crypto";
 import { AuthService, SESSION_TTL_MS } from "../../auth/service";
-import { AppConfig, type Deployment, deploymentForHost } from "../../config";
+import { type Deployment, deploymentForHost } from "../../config";
 import { OAuthProviders } from "../../oauth/registry";
 import { resolveViewer } from "../viewer";
 
@@ -205,8 +205,9 @@ const SIGNOUT_PATH = "/auth/signout";
  * CSRF: a cross-site page can POST here without a preflight (a form post or
  * a no-cors fetch is a CORS "simple request"), and the response's cookie
  * clear applies even when the Lax session cookie was not sent. Browsers send
- * `Origin` on every cross-origin POST, so only www (and the API itself) may
- * sign out; www's `fetch(..., { credentials: "include" })` qualifies as is.
+ * `Origin` on every cross-origin POST, so only the serving deployment's www
+ * (and the API itself) may sign out; www's
+ * `fetch(..., { credentials: "include" })` qualifies as is.
  */
 const signoutRoute = HttpRouter.add(
   "POST",
@@ -214,8 +215,7 @@ const signoutRoute = HttpRouter.add(
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const deployment = deploymentForHost(request.headers["host"] ?? "");
-    const config = yield* AppConfig;
-    if (isCrossSiteRequest(request, [...config.corsOrigins, deployment.apiOrigin])) {
+    if (isCrossSiteRequest(request, [deployment.wwwOrigin, deployment.apiOrigin])) {
       const error = new Forbidden({ message: "Cross-site sign-out is not allowed." });
       return HttpServerResponse.jsonUnsafe(
         { _tag: error._tag, message: error.message },
