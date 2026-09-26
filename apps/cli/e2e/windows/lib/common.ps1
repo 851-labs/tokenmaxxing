@@ -81,13 +81,19 @@ function Stop-Background($Process) {
   if ($Process -and -not $Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }
 }
 
-# Starts the local npm registry (registry-server.ts) serving the given
-# package directories; returns { process, url }.
+# Packs the given package directories with npm and serves them from the
+# local registry (registry-server.ts); returns { process, url }.
 function Start-E2ERegistry([string]$Root, [string[]]$PackageDirs, [int]$Port = 4873) {
   $url = "http://127.0.0.1:$Port"
-  $serverArgs = @("$PSScriptRoot\..\registry-server.ts", "--port", "$Port", "--out", (Join-Path $Root "registry")) + $PackageDirs
-  $process = Start-Background "registry" "bun" $serverArgs
-  if (-not (Wait-Http "$url/-/ping" 120)) {
+  $tarballDir = Join-Path $Root "registry"
+  New-Item -ItemType Directory -Force -Path $tarballDir | Out-Null
+  $tarballs = foreach ($dir in $PackageDirs) {
+    $packed = (npm.cmd pack $dir --json --ignore-scripts --pack-destination $tarballDir | Out-String) | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or -not $packed) { throw "npm pack $dir failed" }
+    Join-Path $tarballDir $packed[0].filename
+  }
+  $process = Start-Background "registry" "bun" (@("$PSScriptRoot\..\registry-server.ts", "--port", "$Port") + $tarballs)
+  if (-not (Wait-Http "$url/-/ping" 60)) {
     Get-Content -LiteralPath (Join-Path $script:E2EOutDir "registry.err.log") -ErrorAction SilentlyContinue | Write-Host
     throw "e2e registry did not start"
   }
