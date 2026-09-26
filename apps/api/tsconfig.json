@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["@cloudflare/workers-types", "bun"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["script/**/*.ts", "src/**/*.ts"]
 }
