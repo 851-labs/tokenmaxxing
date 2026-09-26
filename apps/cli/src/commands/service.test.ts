@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 
@@ -43,14 +43,18 @@ import {
   isTransientCommandShimPath,
   legacyServiceWrapperPaths,
   readCurrentServiceRunnerInstall,
+  readWindowsLauncherStatus,
+  removeServiceFiles,
   resolveExecutableSiblingPackageJson,
   renderLaunchdPlist,
   renderServiceWrapper,
   renderSystemdTimer,
+  renderWindowsLauncher,
   runServiceAutoUpdate,
   scheduleDescription,
   serviceLockCanBeReplaced,
   serviceRepairCanInstallScheduler,
+  serviceReloadRequired,
   serviceRepairNeedsSchedulerInstall,
   serviceRepairReason,
   serviceRepairState,
@@ -76,8 +80,15 @@ import {
   servicePaths,
   serviceStateJson,
   verifyNpmIntegrity,
+  waitForServiceRunExit,
+  encodeWindowsTaskXml,
+  renderWindowsTaskXml,
+  windowsLauncherDoctorCheck,
+  windowsLauncherPath,
+  windowsScriptHostPath,
   windowsTaskCreateArgs,
   windowsTaskNames,
+  writeServiceFiles,
 } from "./service";
 import type { SyncResult } from "./sync";
 
@@ -734,6 +745,43 @@ printf 'HERMES_HOME=%s\\n' "\${HERMES_HOME-unset}"
     expect(wrapper).toContain('set "CLAUDE_CONFIG_DIR=D:\\Claude Logs, extra"\r\n');
     expect(wrapper).toContain('set "CODEX_HOME=C:\\Users\\alex\\Codex Logs"\r\n');
   });
+
+  it("addresses its own files through %~dp0 so no profile path is embedded", () => {
+    const configDir = "C:\\Users\\Zoë O'Neil (Work)\\Tm & Co\\tokenmaxxing";
+    const wrapper = renderServiceWrapper({
+      env: { PATH: "C:\\Program Files (x86)\\Tools;C:\\100%\\bin" },
+      logPath: `${configDir}\\service.log`,
+      platform: "win32",
+      runnerPointerPath: `${configDir}\\service-runner-current`,
+    });
+    const lines = wrapper.split("\r\n");
+
+    expect(wrapper.endsWith("\r\n")).toBe(true);
+    expect(wrapper.replaceAll("\r\n", "")).not.toMatch(/[\r\n]/);
+    expect(wrapper).not.toContain(configDir);
+    expect(wrapper).not.toContain("Zo");
+    expect(lines[1]).toBe('"%SystemRoot%\\System32\\chcp.com" 65001 >nul');
+    expect(lines).toContain('set "TOKENMAXXING_LOG=%~dp0service.log"');
+    expect(lines).toContain('set /p TOKENMAXXING_SERVICE_RUNNER=<"%~dp0service-runner-current"');
+    // A literal percent sign must not start a variable expansion.
+    expect(lines).toContain('set "PATH=C:\\Program Files (x86)\\Tools;C:\\100%%\\bin"');
+    // The runner path may contain & ( ): expand it only inside quotes, never inside a block.
+    expect(lines).toContain("if not defined TOKENMAXXING_SERVICE_RUNNER goto runner_pointer_empty");
+    expect(lines).toContain('if not exist "%TOKENMAXXING_SERVICE_RUNNER%" goto runner_missing');
+    expect(lines).toContain(
+      '"%TOKENMAXXING_SERVICE_RUNNER%" service run --scheduled >> "%TOKENMAXXING_LOG%" 2>&1',
+    );
+    expect(lines).toContain(
+      '>> "%TOKENMAXXING_LOG%" echo tokenmaxxing service runner missing: "%TOKENMAXXING_SERVICE_RUNNER%"',
+    );
+    for (const line of lines) {
+      expect(line.replaceAll(/"[^"]*"/g, '""')).not.toContain("%TOKENMAXXING_SERVICE_RUNNER%");
+    }
+    const blockStart = lines.findIndex((line) => line.endsWith("("));
+    const blockEnd = lines.indexOf(")");
+    expect(lines.filter((line) => line.endsWith("(")).length).toBe(1);
+    expect(lines.slice(blockStart, blockEnd).join("\n")).not.toContain("SERVICE_RUNNER");
+  });
 });
 
 describe("native scheduler templates", () => {
@@ -767,16 +815,382 @@ describe("native scheduler templates", () => {
       "/Create",
       "/TN",
       "tokenmaxxing-sync",
-      "/SC",
-      "MINUTE",
-      "/MO",
-      "5",
-      "/TR",
-      '"C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-sync.cmd"',
+      "/XML",
+      "C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing/service-task.xml",
       "/F",
     ]);
+    expect(
+      renderWindowsTaskXml(
+        windowsPaths!,
+        { SystemRoot: "C:\\Windows" },
+        new Date(2026, 8, 5, 7, 3, 44),
+      ),
+    ).toContain(
+      "<TimeTrigger>\r\n      <StartBoundary>2026-09-05T07:03:00</StartBoundary>\r\n      <Repetition>\r\n        <Interval>PT5M</Interval>",
+    );
   });
 });
+
+describe("Windows hidden launcher", () => {
+  const windowsPaths = (configDir: string) =>
+    servicePaths({
+      env: { TOKENMAXXING_CONFIG_DIR: configDir },
+      home: "C:\\Users\\alex",
+      platform: "win32",
+    })!;
+
+  it("imports a task that starts the launcher through wscript", () => {
+    const paths = windowsPaths(
+      "C:\\Users\\Zoë O'Neil (Work)\\AppData\\Roaming\\token maxxing & <co>",
+    );
+    const xml = renderWindowsTaskXml(paths, { SystemRoot: "D:\\WINDOWS\\" });
+    const exec = {
+      arguments: xmlElementText(xml, "Arguments"),
+      command: xmlElementText(xml, "Command"),
+      workingDirectory: xmlElementText(xml, "WorkingDirectory"),
+    };
+
+    // Task Scheduler splits Command/Arguments like any Windows command line and wscript parses
+    // its own arguments the same way, so the launcher path must survive as one argument. The
+    // apostrophe stays an apostrophe (schtasks /TR would have turned it into a quote).
+    expect(splitWindowsCommandLine(exec.command)).toEqual(["D:\\WINDOWS\\System32\\wscript.exe"]);
+    expect(splitWindowsCommandLine(exec.arguments)).toEqual([
+      "//B",
+      "//NoLogo",
+      "//E:VBScript",
+      windowsLauncherPath(paths),
+    ]);
+    expect(exec.workingDirectory).toBe(paths.configDir);
+    expect(windowsLauncherPath(paths)).toBe(join(paths.configDir, "service-sync.vbs"));
+    expect(xml).not.toContain("service-sync.cmd");
+    expect(xml).toContain("&amp; &lt;co&gt;");
+    expect(xml).toContain("<LogonType>InteractiveToken</LogonType>");
+    expect(xml).toContain("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>");
+    expect(xml).not.toContain("<UserId>");
+    expect(xml).not.toContain("<RunLevel>HighestAvailable</RunLevel>");
+  });
+
+  it("encodes the task XML as UTF-16 LE with a byte-order mark", () => {
+    const xml = renderWindowsTaskXml(windowsPaths("C:\\Users\\Zoë\\tm"), {});
+    const bytes = Buffer.from(encodeWindowsTaskXml(xml));
+
+    expect(xml.startsWith('<?xml version="1.0" encoding="UTF-16"?>\r\n')).toBe(true);
+    expect([...bytes.subarray(0, 2)]).toEqual([0xff, 0xfe]);
+    expect(bytes.subarray(2).toString("utf16le")).toBe(xml);
+    expect(bytes.subarray(2).toString("utf16le")).toContain("Zoë");
+  });
+
+  it("uses the native System32 script host", () => {
+    expect(windowsScriptHostPath({ SystemRoot: "C:\\Windows" })).toBe(
+      "C:\\Windows\\System32\\wscript.exe",
+    );
+    expect(windowsScriptHostPath({ SYSTEMROOT: "E:\\Win" })).toBe("E:\\Win\\System32\\wscript.exe");
+    expect(windowsScriptHostPath({})).toBe("C:\\Windows\\System32\\wscript.exe");
+    expect(windowsScriptHostPath({ SystemRoot: "C:\\Windows" })).not.toMatch(/SysWOW64|Sysnative/i);
+  });
+
+  it("only tracks a launcher for the Windows backend", () => {
+    const darwinPaths = servicePaths({
+      env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
+      home: "/Users/alex",
+      platform: "darwin",
+    })!;
+
+    expect(windowsLauncherPath(darwinPaths)).toBeNull();
+  });
+
+  it("renders a pure-ASCII VBScript that hides the wrapper and propagates its exit code", () => {
+    const launcher = renderWindowsLauncher();
+    const lines = launcher.split("\r\n");
+
+    expect(launcher.endsWith("\r\n")).toBe(true);
+    expect(launcher.replaceAll("\r\n", "")).not.toMatch(/[\r\n]/);
+    expect(launcher).toMatch(/^[\x20-\x7e\r\n]*$/);
+    expect(lines).toContain("Option Explicit");
+    expect(lines).toContain(
+      'cmd = """" & shell.ExpandEnvironmentStrings("%SystemRoot%") & "\\System32\\cmd.exe"""',
+    );
+    // The wrapper runs by relative name from the launcher's folder, so no profile path is embedded
+    // or re-parsed by cmd.exe; /d skips AutoRun commands that could change directory.
+    expect(lines).toContain('command = cmd & " /d /c .\\service-sync.cmd"');
+    expect(basename(windowsPaths("C:\\tokenmaxxing").wrapperPath)).toBe("service-sync.cmd");
+    expect(lines).toContain(
+      'shell.CurrentDirectory = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\\"))',
+    );
+    // Style 0 hides the console; waiting returns the wrapper exit code for WScript.Quit.
+    expect(lines).toContain("If Err.Number = 0 Then exitCode = shell.Run(command, 0, True)");
+    expect(lines).toContain("If Err.Number <> 0 Then exitCode = 127");
+    expect(lines.at(-2)).toBe("WScript.Quit exitCode");
+    expect(launcher).not.toMatch(/[A-Z]:\\/);
+    expect(launcher).not.toMatch(/powershell|timeout/i);
+  });
+
+  it("builds the deferred repair command line in the launcher's repair mode", () => {
+    const repairLine = renderWindowsLauncher()
+      .split("\r\n")
+      .find((line) => line.trim().startsWith('command = cmd & " /d /s /c'))!;
+    const commandPath = "C:\\Users\\Zoë O'Neil (Work)\\Tm & Co\\tokenmaxxing.exe";
+    const commandLine = evaluateVbsConcatenation(repairLine.trim().slice("command = ".length), {
+      cmd: '"C:\\Windows\\System32\\cmd.exe"',
+      'shell.Environment("PROCESS")("TOKENMAXXING_SERVICE_REPAIR_COMMAND")': commandPath,
+      "WScript.Arguments(1)": "reload-required",
+    });
+
+    expect(commandLine).toBe(
+      `"C:\\Windows\\System32\\cmd.exe" /d /s /c ""${commandPath}" service repair --deferred --json --reason reload-required"`,
+    );
+    // cmd /s strips exactly the outer pair of quotes, leaving the command path quoted.
+    const afterC = commandLine.slice(commandLine.indexOf(" /c ") + 4);
+    expect(afterC.slice(1, -1)).toBe(
+      `"${commandPath}" service repair --deferred --json --reason reload-required`,
+    );
+  });
+
+  it("passes schtasks and wscript arguments through Windows argv quoting intact", () => {
+    const configDir = "C:\\Users\\Zoë O'Neil (Work)\\token maxxing & co";
+    const args = windowsTaskCreateArgs(windowsPaths(configDir));
+    const repair = deferredServiceRepairInvocation(
+      "C:\\x\\tokenmaxxing.exe",
+      "reload-required",
+      "win32",
+      {
+        SystemRoot: "C:\\Windows",
+        TOKENMAXXING_CONFIG_DIR: configDir,
+      },
+    );
+    // execFile/spawn quote each argument the way libuv does before CreateProcessW; schtasks and
+    // wscript parse their command lines back with CommandLineToArgvW rules.
+    const roundTrip = (argv: string[]) =>
+      splitWindowsCommandLine(argv.map(quoteWindowsArg).join(" "));
+
+    expect(roundTrip(["schtasks", ...args])).toEqual(["schtasks", ...args]);
+    expect(roundTrip([repair.command, ...repair.args])).toEqual([repair.command, ...repair.args]);
+  });
+
+  it("writes the launcher on install and repair and removes it on uninstall", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-windows-launcher-"));
+
+    try {
+      const paths = windowsPaths(join(dir, "Zoë (Work)"));
+      const launcherPath = windowsLauncherPath(paths)!;
+      const metadata: ServiceMetadata = {
+        autoUpdateManager: "registry",
+        backend: "windows-task-scheduler",
+        commandPath: join(paths.runnersDir, "tokenmaxxing.exe"),
+        installedAt: "2026-06-16T09:00:00.000Z",
+        schedule: "syncs every 5 minutes",
+        templateVersion: 6,
+        version: 1,
+      };
+
+      expect(await Effect.runPromise(readWindowsLauncherStatus(launcherPath))).toBe("missing");
+
+      await Effect.runPromise(writeServiceFiles(paths, "@echo off\r\n", metadata));
+      expect(await readFile(launcherPath, "utf8")).toBe(renderWindowsLauncher());
+      expect(await readFile(paths.wrapperPath, "utf8")).toBe("@echo off\r\n");
+      expect(await Effect.runPromise(readWindowsLauncherStatus(launcherPath))).toBe("current");
+
+      // A current launcher is left in place, so a running wscript.exe never sees it replaced.
+      const installedLauncher = await stat(launcherPath);
+      await Effect.runPromise(writeServiceFiles(paths, "@echo off\r\n", metadata));
+      expect((await stat(launcherPath)).ino).toBe(installedLauncher.ino);
+
+      // Repair rewrites an outdated launcher in place.
+      await writeFile(launcherPath, "' stale launcher\r\n");
+      expect(await Effect.runPromise(readWindowsLauncherStatus(launcherPath))).toBe("outdated");
+      await Effect.runPromise(writeServiceFiles(paths, "@echo off\r\n", metadata));
+      expect(await Effect.runPromise(readWindowsLauncherStatus(launcherPath))).toBe("current");
+
+      await writeFile(join(paths.configDir, "service-task.xml"), "leftover");
+      await Effect.runPromise(removeServiceFiles(paths));
+      expect(await Effect.runPromise(readWindowsLauncherStatus(launcherPath))).toBe("missing");
+      await expect(readFile(join(paths.configDir, "service-task.xml"))).rejects.toThrow();
+      await expect(readFile(paths.wrapperPath, "utf8")).rejects.toThrow();
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("does not write a launcher for POSIX backends", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-posix-launcher-"));
+
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: dir, XDG_CONFIG_HOME: join(dir, "xdg") },
+        home: dir,
+        platform: "linux",
+      })!;
+
+      await Effect.runPromise(
+        writeServiceFiles(paths, "#!/bin/sh\n", {
+          backend: "systemd",
+          commandPath: "/usr/local/bin/tokenmaxxing",
+          installedAt: "2026-06-16T09:00:00.000Z",
+          schedule: "syncs every 5 minutes",
+          version: 1,
+        }),
+      );
+
+      expect(
+        await Effect.runPromise(readWindowsLauncherStatus(join(dir, "service-sync.vbs"))),
+      ).toBe("missing");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("reports missing or outdated launchers in service doctor", () => {
+    expect(windowsLauncherDoctorCheck("C:\\tm\\service-sync.vbs", "current")).toEqual({
+      detail: "C:\\tm\\service-sync.vbs",
+      label: "launcher",
+      status: "ok",
+    });
+    expect(windowsLauncherDoctorCheck("C:\\tm\\service-sync.vbs", "missing")).toEqual({
+      detail: "C:\\tm\\service-sync.vbs missing; repair with tokenmaxxing service repair",
+      label: "launcher",
+      status: "warn",
+    });
+    expect(windowsLauncherDoctorCheck("C:\\tm\\service-sync.vbs", "outdated").status).toBe("warn");
+  });
+
+  it("marks installs from older templates for repair so their task is re-registered", () => {
+    const metadata: ServiceMetadata = {
+      autoUpdateManager: "registry",
+      backend: "windows-task-scheduler",
+      commandPath: "C:\\tm\\service-runners\\0.7.0\\windows-x64\\tokenmaxxing.exe",
+      installedAt: "2026-06-16T09:00:00.000Z",
+      runnerTarget: "windows-x64",
+      runnerVersion: "0.7.0",
+      schedule: "syncs every 5 minutes",
+      templateVersion: 5,
+      version: 1,
+    };
+
+    expect(serviceReloadRequired(metadata)).toBe(true);
+    expect(serviceReloadRequired({ ...metadata, templateVersion: 6 })).toBe(false);
+    expect(
+      serviceRepairNeedsSchedulerInstall({
+        reason: serviceRepairReason({ reloadRequired: true, schedulerActive: true })!,
+        reloadRequired: true,
+        schedulerActive: true,
+      }),
+    ).toBe(true);
+  });
+});
+
+function xmlElementText(xml: string, name: string): string {
+  const match = new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml);
+  if (match === null) {
+    throw new Error(`missing <${name}>`);
+  }
+
+  return match[1]!
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
+}
+
+// Evaluates a VBScript `a & "literal" & b` expression: string literals double their quotes, and
+// every other operand is looked up in `values`.
+function evaluateVbsConcatenation(expression: string, values: Record<string, string>): string {
+  let result = "";
+  let rest = expression.trim();
+  while (rest !== "") {
+    if (rest.startsWith('"')) {
+      let index = 1;
+      let literal = "";
+      while (index < rest.length) {
+        if (rest[index] === '"') {
+          if (rest[index + 1] === '"') {
+            literal += '"';
+            index += 2;
+            continue;
+          }
+          break;
+        }
+        literal += rest[index];
+        index += 1;
+      }
+      result += literal;
+      rest = rest.slice(index + 1).trim();
+    } else {
+      const end = rest.indexOf(" & ");
+      const operand = end === -1 ? rest : rest.slice(0, end);
+      if (!(operand in values)) {
+        throw new Error(`unknown VBScript operand ${operand}`);
+      }
+      result += values[operand];
+      rest = end === -1 ? "" : rest.slice(end).trim();
+    }
+    rest = rest.replace(/^&\s*/, "").trim();
+  }
+
+  return result;
+}
+
+// libuv quote_cmd_arg: quote arguments with whitespace or quotes, escape embedded quotes, and
+// double the backslashes that precede an escaped or closing quote.
+function quoteWindowsArg(arg: string): string {
+  if (arg === "") {
+    return '""';
+  }
+  if (!/[\s"]/.test(arg)) {
+    return arg;
+  }
+
+  return `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
+}
+
+// CommandLineToArgvW rules: 2n backslashes + quote -> n backslashes and a quote toggle,
+// 2n+1 backslashes + quote -> n backslashes and a literal quote, other backslashes are literal.
+function splitWindowsCommandLine(commandLine: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let hasArg = false;
+
+  for (let index = 0; index < commandLine.length; index += 1) {
+    const char = commandLine[index]!;
+    if (char === "\\") {
+      let backslashes = 0;
+      while (commandLine[index] === "\\") {
+        backslashes += 1;
+        index += 1;
+      }
+      if (commandLine[index] === '"') {
+        current += "\\".repeat(Math.floor(backslashes / 2));
+        if (backslashes % 2 === 1) {
+          current += '"';
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else {
+        current += "\\".repeat(backslashes);
+        index -= 1;
+      }
+      hasArg = true;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+      hasArg = true;
+    } else if ((char === " " || char === "\t") && !inQuotes) {
+      if (hasArg) {
+        args.push(current);
+        current = "";
+        hasArg = false;
+      }
+    } else {
+      current += char;
+      hasArg = true;
+    }
+  }
+  if (hasArg) {
+    args.push(current);
+  }
+
+  return args;
+}
 
 describe("legacyServiceWrapperPaths", () => {
   it("tracks old POSIX wrapper names for cleanup", () => {
@@ -951,13 +1365,80 @@ describe("service repair helpers", () => {
       ],
       command: "sh",
     });
+  });
+
+  it("spawns Windows deferred repairs through the hidden launcher", () => {
+    const env = {
+      PATH: "C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+      TOKENMAXXING_CONFIG_DIR: "C:\\Users\\Zoë\\tm",
+    };
+
     expect(
       deferredServiceRepairInvocation(
         "C:\\Users\\alex\\AppData\\Roaming\\npm\\tokenmaxxing.cmd",
         "auto-updated",
         "win32",
-      ).args.at(-1),
-    ).toContain('service repair --deferred --json --reason "auto-updated"');
+        env,
+      ),
+    ).toEqual({
+      args: [
+        "//B",
+        "//NoLogo",
+        "//E:VBScript",
+        join("C:\\Users\\Zoë\\tm", "service-sync.vbs"),
+        "repair",
+        "auto-updated",
+      ],
+      command: "C:\\Windows\\System32\\wscript.exe",
+      options: {
+        detached: true,
+        env: {
+          ...env,
+          TOKENMAXXING_SERVICE_REPAIR_COMMAND:
+            "C:\\Users\\alex\\AppData\\Roaming\\npm\\tokenmaxxing.cmd",
+        },
+        stdio: "ignore",
+        windowsHide: true,
+      },
+    });
+  });
+
+  it("waits for the scheduled sync to release the run lock before a Windows repair", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-repair-wait-"));
+
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: dir },
+        home: "C:\\Users\\alex",
+        platform: "win32",
+      })!;
+      await writeFile(
+        paths.lockPath,
+        JSON.stringify({
+          acquiredAt: new Date().toISOString(),
+          ownerId: "sync",
+          pid: 1,
+          version: 1,
+        }),
+      );
+      const sleeps: number[] = [];
+      const clock = Layer.succeed(ClockService)({
+        sleep: (ms: number) =>
+          Effect.promise(async () => {
+            sleeps.push(ms);
+            if (sleeps.length === 2) {
+              await rm(paths.lockPath, { force: true });
+            }
+          }),
+      });
+
+      await Effect.runPromise(waitForServiceRunExit(paths).pipe(Effect.provide(clock)));
+
+      expect(sleeps).toEqual([500, 500, 2000]);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
   });
 
   it("schedules linux deferred repairs with systemd-run outside the current service cgroup", () => {
@@ -2617,7 +3098,7 @@ describe("serviceInstallProgram", () => {
       installedAt: "2026-06-16T12:00:00.000Z",
       runnerTarget: "darwin-arm64",
       runnerVersion: "0.4.17",
-      templateVersion: 5,
+      templateVersion: 6,
     });
     expect(written[0]?.metadata).not.toHaveProperty("autoUpdate");
     expect(state.logs).toContain("Automatic sync installed");
