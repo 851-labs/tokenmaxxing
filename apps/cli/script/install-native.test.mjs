@@ -1,16 +1,61 @@
 import { describe, expect, it } from "vite-plus/test";
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { binaryName, nativePackageNames } from "./install-native.mjs";
+import {
+  binaryName,
+  canReplaceLauncher,
+  nativePackageNames,
+  replaceLauncher,
+} from "./install-native.mjs";
 import launcher from "./native-bin-launcher.cjs";
 import {
   serviceRunnerPackageName,
   serviceRunnerTargetCandidates,
 } from "../src/service-runner-targets";
 
-const { findNativeBinary, recoveryMessage } = launcher;
+const { findCachedBinary, findNativeBinary, recoveryMessage, relayedSignals } = launcher;
+const launcherSource = path.join(import.meta.dirname, "native-bin-launcher.cjs");
+
+async function withTempDir(run) {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "tokenmaxxing-native-launcher-"));
+  try {
+    return await run(temp);
+  } finally {
+    fs.rmSync(temp, { force: true, recursive: true });
+  }
+}
+
+function writeExecutable(filePath, content) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content);
+  fs.chmodSync(filePath, 0o755);
+}
+
+/** Lays out a published main package: bin/tokenmaxxing is the launcher, bin/tokenmaxxing.exe the cached binary. */
+function writeMainPackage(temp, cachedBinary) {
+  writeExecutable(path.join(temp, "bin", "tokenmaxxing"), fs.readFileSync(launcherSource));
+  fs.writeFileSync(
+    path.join(temp, "package.json"),
+    JSON.stringify({ name: "@851-labs/tokenmaxxing" }),
+  );
+  writeExecutable(path.join(temp, "bin", "tokenmaxxing.exe"), cachedBinary);
+}
+
+function runLauncher(temp, args = []) {
+  const env = { ...process.env };
+  delete env.TOKENMAXXING_BIN_PATH;
+  return childProcess.spawnSync(
+    process.execPath,
+    [path.join(temp, "bin", "tokenmaxxing"), ...args],
+    {
+      encoding: "utf8",
+      env,
+    },
+  );
+}
 
 describe("native preinstall package selection", () => {
   it("matches service runner candidate ordering", () => {
@@ -110,4 +155,103 @@ describe("native preinstall package selection", () => {
     expect(message).toContain("bun remove -g @851-labs/tokenmaxxing");
     expect(message).toContain("npx -y @851-labs/tokenmaxxing@latest bootstrap");
   });
+});
+
+describe("native bin launcher", () => {
+  it("prefers the binary preinstall cached beside the launcher", async () => {
+    await withTempDir((temp) => {
+      writeMainPackage(temp, "#!/bin/sh\nexit 0\n");
+
+      const cached = fs.realpathSync(path.join(temp, "bin", "tokenmaxxing.exe"));
+      expect(fs.realpathSync(findCachedBinary(path.join(temp, "bin")))).toBe(cached);
+      expect(fs.realpathSync(findCachedBinary(temp))).toBe(cached);
+    });
+    await withTempDir((temp) => {
+      expect(findCachedBinary(temp)).toBeNull();
+    });
+  });
+
+  it("only forwards signals where the native binary is not already signalled", () => {
+    expect(relayedSignals("windows")).toEqual({ forward: false, signals: ["SIGINT", "SIGBREAK"] });
+    expect(relayedSignals("darwin").forward).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "passes arguments through and propagates the native exit code",
+    async () => {
+      await withTempDir((temp) => {
+        writeMainPackage(temp, '#!/bin/sh\nprintf "%s|" "$@"\nexit 7\n');
+
+        const result = runLauncher(temp, ["sync", "--json", "two words"]);
+
+        expect(result.stdout).toBe("sync|--json|two words|");
+        expect(result.status).toBe(7);
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("dies with the native binary's signal", async () => {
+    await withTempDir((temp) => {
+      writeMainPackage(temp, "#!/bin/sh\nkill -TERM $$\n");
+
+      const result = runLauncher(temp);
+
+      expect(result.signal).toBe("SIGTERM");
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("forwards SIGTERM to the native binary", async () => {
+    await withTempDir(async (temp) => {
+      const marker = path.join(temp, "terminated");
+      writeMainPackage(
+        temp,
+        `#!/bin/sh\ntrap 'echo term > "${marker}"; exit 143' TERM\necho ready\nwhile :; do sleep 0.05; done\n`,
+      );
+
+      const child = childProcess.spawn(process.execPath, [path.join(temp, "bin", "tokenmaxxing")], {
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      await new Promise((resolve) => child.stdout.once("data", resolve));
+      child.kill("SIGTERM");
+      const [code] = await new Promise((resolve) => child.on("exit", (...exit) => resolve(exit)));
+
+      expect(code).toBe(143);
+      expect(fs.readFileSync(marker, "utf8")).toBe("term\n");
+    });
+  });
+});
+
+describe("native preinstall launcher replacement", () => {
+  it("replaces the launcher only for npm and Bun on macOS/Linux", () => {
+    expect(canReplaceLauncher("darwin", "npm/11.6.0 node/v24.18.0 darwin arm64")).toBe(true);
+    expect(canReplaceLauncher("linux", "bun/1.4.2 npm/? node/v24.3.0 linux x64")).toBe(true);
+    expect(canReplaceLauncher("windows", "npm/11.6.0 node/v24.18.0 win32 x64")).toBe(false);
+    expect(canReplaceLauncher("windows", "bun/1.4.2 npm/? node/v24.3.0 win32 x64")).toBe(false);
+    expect(canReplaceLauncher("linux", "pnpm/10.18.0 npm/? node/v24.18.0 linux x64")).toBe(false);
+    expect(canReplaceLauncher("darwin", "yarn/1.22.22 npm/? node/v24.18.0 darwin arm64")).toBe(
+      false,
+    );
+    expect(canReplaceLauncher("linux", "")).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "swaps in a verified native binary and restores the launcher otherwise",
+    async () => {
+      await withTempDir((temp) => {
+        const launcherPath = path.join(temp, "bin", "tokenmaxxing");
+        const good = path.join(temp, "good");
+        const bad = path.join(temp, "bad");
+        writeExecutable(launcherPath, fs.readFileSync(launcherSource));
+        writeExecutable(good, "#!/bin/sh\nexit 0\n");
+        writeExecutable(bad, "#!/bin/sh\nexit 1\n");
+
+        expect(replaceLauncher(bad, launcherPath)).toBe(false);
+        expect(fs.readFileSync(launcherPath, "utf8")).toBe(fs.readFileSync(launcherSource, "utf8"));
+        expect(fs.statSync(launcherPath).mode & 0o111).not.toBe(0);
+
+        expect(replaceLauncher(good, launcherPath)).toBe(true);
+        expect(fs.readFileSync(launcherPath, "utf8")).toBe("#!/bin/sh\nexit 0\n");
+      });
+    },
+  );
 });

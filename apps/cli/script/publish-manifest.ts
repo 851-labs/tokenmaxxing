@@ -9,11 +9,16 @@ function createMainPackageJson() {
     keywords: packageJson.keywords,
     license: packageJson.license,
     repository: packageJson.repository,
+    // Always a JS launcher when the package manager links it. Windows shims
+    // (npm, pnpm, yarn, and Bun's .bunx) and pnpm's POSIX shims record the
+    // runtime from the file at link time, and Bun links before preinstall, so a
+    // file that preinstall later swaps for a native binary gets run by node.
+    // Preinstall caches the native binary at bin/tokenmaxxing.exe for the
+    // launcher, and only replaces bin/tokenmaxxing itself under npm/Bun on
+    // macOS/Linux, where the link is a plain symlink.
     bin: {
-      tokenmaxxing: "./bin/tokenmaxxing.exe",
+      tokenmaxxing: "./bin/tokenmaxxing",
     },
-    // npm links Windows shims after preinstall and before postinstall. Keep
-    // native installation here so shims see the final .exe instead of Node JS.
     scripts: {
       preinstall: "bun ./install-native.mjs || node ./install-native.mjs",
     },

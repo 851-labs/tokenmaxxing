@@ -75,8 +75,8 @@ async function writeMainPackage(outDir: string): Promise<void> {
     join(cliDir, "script", "native-bin-launcher.cjs"),
     join(packageDir, "native-bin-launcher.cjs"),
   );
-  await cp(join(cliDir, "script", "native-bin-launcher.cjs"), join(binDir, "tokenmaxxing.exe"));
-  await chmod(join(binDir, "tokenmaxxing.exe"), 0o755);
+  await cp(join(cliDir, "script", "native-bin-launcher.cjs"), join(binDir, "tokenmaxxing"));
+  await chmod(join(binDir, "tokenmaxxing"), 0o755);
   await Bun.write(
     join(packageDir, "package.json"),
     `${JSON.stringify(createMainPackageJson(), null, 2)}\n`,

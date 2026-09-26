@@ -27,13 +27,12 @@ describe("publish script generated main package", () => {
   it("publishes a native CLI installer package with new target optional dependencies", () => {
     const manifest = createMainPackageJson();
 
-    expect(manifest.bin).toEqual({ tokenmaxxing: "./bin/tokenmaxxing.exe" });
-    // npm links Windows shims after preinstall and before postinstall; using
-    // postinstall here makes those shims run Node against the final native exe.
+    // The bin must be the JS launcher at link time: Bun links Windows .bunx
+    // shims before preinstall and records node as the runtime.
+    expect(manifest.bin).toEqual({ tokenmaxxing: "./bin/tokenmaxxing" });
     expect(manifest.scripts).toEqual({
       preinstall: "bun ./install-native.mjs || node ./install-native.mjs",
     });
-    expect(manifest.scripts).not.toHaveProperty("postinstall");
     expect(manifest.files).toEqual([
       "bin",
       "native-bin-launcher.cjs",
