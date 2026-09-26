@@ -28,7 +28,6 @@ import { makeApiFetch, makeApiHttpEffect } from "./layer";
 const config: AppConfigShape = {
   adminEmails: [],
   apiWorkerName: "tokenmaxxing-api",
-  corsOrigins: ["https://tokenmaxxing.sh"],
   github: { clientId: "github-id", clientSecret: "github-secret" },
   google: { clientId: "google-id", clientSecret: "google-secret" },
   productName: "Tokenmaxxing",
@@ -151,6 +150,23 @@ describe("api error responses through the worker bridge", () => {
     expect(tooLarge.headers.get("x-request-id")).toBe("req-err");
     expect(await tooLarge.json()).toMatchObject({ _tag: "PayloadTooLarge" });
   });
+
+  it("scopes CORS on actual responses to the serving deployment", async () => {
+    const fetch = await buildFetch(makeHarness().services);
+    const devWww = "http://tokenmaxxing.localhost:3002";
+    const request = (host: string) =>
+      serve(fetch, new Request(`https://${host}/health`, { headers: { host, origin: devWww } }));
+
+    const granted = await request("api.tokenmaxxing.localhost:8788");
+    const refused = await request("api.tokenmaxxing.sh");
+
+    expect(granted.status).toBe(200);
+    expect(granted.headers.get("access-control-allow-origin")).toBe(devWww);
+    expect(granted.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(refused.status).toBe(200);
+    expect(refused.headers.get("access-control-allow-origin")).toBeNull();
+    expect(refused.headers.get("vary")).toContain("Origin");
+  });
 });
 
 async function expectEnvelope(response: Response, status: number, tag: string) {
@@ -203,20 +219,47 @@ describe("API HTTP responses", () => {
       expect(response.headers.get("access-control-max-age")).toBe("7200");
     });
 
-    it("does not grant unknown origins", async () => {
+    const PROD_HOST = "api.tokenmaxxing.sh";
+    const DEV_HOST = "api.tokenmaxxing.localhost:8788";
+    const PROD_WWW = "https://tokenmaxxing.sh";
+    const DEV_WWW = "http://tokenmaxxing.localhost:3002";
+
+    function preflight(host: string, origin: string) {
+      return new Request(`https://${host}/me`, {
+        headers: { "access-control-request-method": "GET", host, origin },
+        method: "OPTIONS",
+      });
+    }
+
+    it.each([
+      ["prod", PROD_HOST, PROD_WWW],
+      ["dev", DEV_HOST, DEV_WWW],
+      // The local dev provider proxies with a rewritten loopback Host.
+      ["proxied dev", "127.0.0.1:8788", DEV_WWW],
+    ])("grants the %s deployment's own www", async (_deployment, host, origin) => {
       app = await makeTestApp();
 
-      const response = await app.fetch(
-        new Request("https://api.tokenmaxxing.sh/me", {
-          headers: {
-            "access-control-request-method": "GET",
-            origin: "https://evil.example",
-          },
-          method: "OPTIONS",
-        }),
-      );
+      const response = await app.fetch(preflight(host, origin));
 
-      expect(response.headers.get("access-control-allow-origin")).not.toBe("https://evil.example");
+      expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+      expect(response.headers.get("access-control-max-age")).toBe("7200");
+    });
+
+    it.each([
+      ["local dev www on the prod host", PROD_HOST, DEV_WWW],
+      ["prod www on the dev host", DEV_HOST, PROD_WWW],
+      ["another origin on the prod host", PROD_HOST, "https://evil.example"],
+      ["another origin on the dev host", DEV_HOST, "https://evil.example"],
+      ["a look-alike subdomain", PROD_HOST, "https://tokenmaxxing.sh.evil.example"],
+      ["an opaque origin", PROD_HOST, "null"],
+    ])("does not grant %s", async (_from, host, origin) => {
+      app = await makeTestApp();
+
+      const response = await app.fetch(preflight(host, origin));
+
+      expect(response.headers.get("access-control-allow-origin")).toBeNull();
     });
   });
 

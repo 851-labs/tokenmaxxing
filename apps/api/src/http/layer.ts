@@ -32,7 +32,7 @@ import { AdminService } from "../admin/service";
 import { sessionTokenFrom } from "../auth/cookies";
 import { AuthService } from "../auth/service";
 import { CliLoginService } from "../clilogin/service";
-import { AppConfig, deploymentForHost } from "../config";
+import { AppConfig, type Deployment, deploymentForHost, deployments } from "../config";
 import { LeaderboardService } from "../leaderboard/service";
 import type { OAuthProviders } from "../oauth/registry";
 import { ProfilesService } from "../profiles/service";
@@ -389,33 +389,47 @@ function recoverDefects<E, R>(
   );
 }
 
-const corsLayer = Layer.unwrap(
-  Effect.gen(function* () {
-    const config = yield* AppConfig;
-    return HttpRouter.middleware(
-      HttpMiddleware.cors({
-        allowedOrigins: config.corsOrigins,
-        // The Effect-derived client propagates trace context as BOTH W3C
-        // traceparent and compact B3 (HttpTraceContext.toHeaders); a missing
-        // entry here fails the preflight and the app reads every authed
-        // call as signed-out.
-        allowedHeaders: [
-          "authorization",
-          "b3",
-          "content-type",
-          "traceparent",
-          "tracestate",
-          "x-request-id",
-        ],
-        allowedMethods: ["DELETE", "GET", "PATCH", "POST", "PUT", "OPTIONS"],
-        credentials: true,
-        // Let browsers reuse a preflight instead of sending one per request
-        // (Chromium caps this at two hours).
-        maxAge: 7_200,
-      }),
-      { global: true },
-    );
-  }),
+/**
+ * Each deployment answers browser CORS for its own www only (prod never
+ * trusts the local dev origin), so the allow-list follows the request host
+ * like every other deployment-scoped value. A predicate rather than a
+ * one-entry list: the list form echoes its origin to any caller.
+ */
+function corsFor(deployment: Deployment) {
+  return HttpMiddleware.cors({
+    allowedOrigins: (origin) => origin === deployment.wwwOrigin,
+    // The Effect-derived client propagates trace context as BOTH W3C
+    // traceparent and compact B3 (HttpTraceContext.toHeaders); a missing
+    // entry here fails the preflight and the app reads every authed
+    // call as signed-out.
+    allowedHeaders: [
+      "authorization",
+      "b3",
+      "content-type",
+      "traceparent",
+      "tracestate",
+      "x-request-id",
+    ],
+    allowedMethods: ["DELETE", "GET", "PATCH", "POST", "PUT", "OPTIONS"],
+    credentials: true,
+    // Let browsers reuse a preflight instead of sending one per request
+    // (Chromium caps this at two hours).
+    maxAge: 7_200,
+  });
+}
+
+const developmentCors = corsFor(deployments.development);
+const productionCors = corsFor(deployments.production);
+
+const corsLayer = HttpRouter.middleware(
+  (httpApp) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const deployment = deploymentForHost(request.headers["host"] ?? "");
+      const cors = deployment === deployments.development ? developmentCors : productionCors;
+      return yield* cors(httpApp);
+    }),
+  { global: true },
 );
 
 const OPENAPI_PATH = "/openapi.json";

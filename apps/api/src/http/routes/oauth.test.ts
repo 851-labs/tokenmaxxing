@@ -243,11 +243,11 @@ describe("oauth routes", () => {
 });
 
 describe("sign-out", () => {
-  function signout(headers: Record<string, string>) {
+  function signout(headers: Record<string, string>, host = "api.tokenmaxxing.sh") {
     const oauth = oauthHandler();
     const response = oauth.handler(
-      new Request("https://api.tokenmaxxing.sh/auth/signout", {
-        headers: { cookie: "tmx_session=old-session", host: "api.tokenmaxxing.sh", ...headers },
+      new Request(`https://${host}/auth/signout`, {
+        headers: { cookie: "tmx_session=old-session", host, ...headers },
         method: "POST",
       }),
     );
@@ -275,6 +275,7 @@ describe("sign-out", () => {
     ["an opaque origin", { origin: "null" }],
     ["a look-alike subdomain", { origin: "https://tokenmaxxing.sh.evil.example" }],
     ["a cross-site request without Origin", { "sec-fetch-site": "cross-site" }],
+    ["the local dev www", { origin: "http://tokenmaxxing.localhost:3002" }],
   ])("refuses a cross-site sign-out from %s", async (_from, headers) => {
     const { calls, response } = signout(headers);
     const refused = await response;
@@ -287,6 +288,17 @@ describe("sign-out", () => {
     });
     expect(refused.headers.get("set-cookie")).toBeNull();
     expect(calls.signOuts).toEqual([]);
+  });
+
+  it("trusts only the dev www on the dev host", async () => {
+    const devHost = "api.tokenmaxxing.localhost:8788";
+    const fromDev = signout({ origin: "http://tokenmaxxing.localhost:3002" }, devHost);
+    const fromProd = signout({ origin: "https://tokenmaxxing.sh" }, devHost);
+
+    expect((await fromDev.response).status).toBe(200);
+    expect(fromDev.calls.signOuts).toEqual(["old-session"]);
+    expect((await fromProd.response).status).toBe(403);
+    expect(fromProd.calls.signOuts).toEqual([]);
   });
 });
 
@@ -303,7 +315,6 @@ const USER = { avatarUrl: null, id: UserId.make("user_1"), login: "alex", name: 
 const CONFIG = AppConfig.of({
   adminEmails: [],
   apiWorkerName: "tokenmaxxing-api",
-  corsOrigins: ["https://tokenmaxxing.sh"],
   github: { clientId: "github-client", clientSecret: "github-secret" },
   google: { clientId: "google-client", clientSecret: "google-secret" },
   productName: "Tokenmaxxing",

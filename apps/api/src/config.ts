@@ -34,7 +34,8 @@ const deployments = {
  * One deploy serves dev (api.tokenmaxxing.localhost, http) and prod
  * (api.tokenmaxxing.sh, https); the request host picks which. The local dev
  * provider proxies with a rewritten Host (127.0.0.1:port), so any
- * loopback-ish host means dev.
+ * loopback-ish host means dev. Browser trust (CORS, sign-out CSRF) is scoped
+ * the same way: each deployment trusts only its own www.
  */
 function deploymentForHost(host: string): Deployment {
   const hostname = host.split(":")[0] ?? host;
@@ -55,7 +56,6 @@ interface OAuthClientConfig {
 interface AppConfigShape {
   adminEmails: readonly string[];
   apiWorkerName: string;
-  corsOrigins: string[];
   github: OAuthClientConfig;
   google: OAuthClientConfig;
   productName: string;
@@ -80,8 +80,6 @@ class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
     return AppConfig.of({
       adminEmails,
       apiWorkerName,
-      // Local dev always passes browser CORS, regardless of the serving host.
-      corsOrigins: [deployments.production.wwwOrigin, deployments.development.wwwOrigin],
       github: {
         clientId: githubClientId,
         clientSecret: Redacted.value(githubClientSecret),
@@ -95,6 +93,6 @@ class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
   });
 }
 
-export { AppConfig, deploymentForHost };
+export { AppConfig, deploymentForHost, deployments };
 
 export type { AppConfigShape, Deployment };
