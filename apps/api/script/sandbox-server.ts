@@ -61,7 +61,6 @@ const InfrastructureLive = Layer.mergeAll(
   Layer.succeed(AppConfig, {
     adminEmails: [],
     apiWorkerName: "tokenmaxxing-api-sandbox",
-    corsOrigins: [origin],
     github: { clientId: "sandbox", clientSecret: "sandbox" },
     google: { clientId: "sandbox", clientSecret: "sandbox" },
     productName: "Tokenmaxxing",
