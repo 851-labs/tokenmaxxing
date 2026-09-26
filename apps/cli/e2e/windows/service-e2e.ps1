@@ -443,13 +443,20 @@ function Invoke-LegacyUpgrade {
   Assert-Uninstall $scenario
 }
 
+# A scenario that throws records a FAIL and the next scenario still runs.
+function Invoke-Scenario([string]$Name, [scriptblock]$Body) {
+  try { & $Body } catch {
+    Add-Check $Name "scenario ran to completion" $false "$($_.Exception.Message) $(Format-OneLine $_.InvocationInfo.PositionMessage 300)"
+  }
+}
+
 # ------------------------------------------------------------ main
 Use-Cli $TmxBin
 $version = Tmx @("--version")
 Add-Check "setup" "tokenmaxxing --version" ($version.code -eq 0) "$(Format-OneLine $version.out) ($((Get-Command tokenmaxxing -ErrorAction SilentlyContinue).Source))"
 schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null
 
-Invoke-Core
+Invoke-Scenario "core" { Invoke-Core }
 
 # Trimmed from the original harness: plain spaces and "Zoë (Work)" are
 # covered by the cases below.
@@ -462,12 +469,14 @@ $pathCases = [ordered]@{
 }
 foreach ($case in $pathCases.Keys) {
   Use-Cli $TmxBin
-  Invoke-PathCase $case (Join-Path $Root $pathCases[$case])
+  Invoke-Scenario $case { Invoke-PathCase $case (Join-Path $Root $pathCases[$case]) }
 }
 
 if ($LegacyBin) {
-  Invoke-LegacyUpgrade
+  Invoke-Scenario "legacy upgrade" { Invoke-LegacyUpgrade }
 } else {
   Add-Check "legacy upgrade" "legacy release available" $false "no -LegacyBin"
 }
 schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null
+# run-service-e2e.ps1 fails the job if this marker is missing.
+Add-Check "service" "all scenarios ran" $true "$((Get-Content -LiteralPath $script:E2EResults).Count) checks recorded"

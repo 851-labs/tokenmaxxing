@@ -2,13 +2,13 @@
 # with each package manager, then runs `tokenmaxxing --version` through each
 # shell. Extend it by adding rows to $Installers or $Shells.
 #
-#   run-shim-matrix.ps1 -Build <build.json> [-Root <dir>] [-OutDir <dir>] [-Force]
+#   run-shim-matrix.ps1 -BuildJson <build.json> [-Root <dir>] [-OutDir <dir>] [-Force]
 #
 # $KnownIssues lists installers whose --version checks currently fail: they
 # record XFAIL instead of FAIL, and XPASS (which fails the job) once they
 # pass, so the entry is removed together with the fix.
 param(
-  [Parameter(Mandatory)] [string]$Build,
+  [Parameter(Mandatory)] [string]$BuildJson,
   [string]$Root = (Join-Path $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }) "tmx-e2e-shims"),
   [string]$OutDir = (Join-Path $Root "out"),
   [switch]$Force
@@ -18,7 +18,8 @@ $ErrorActionPreference = "Continue"
 Assert-DisposableMachine -Force:$Force
 Initialize-E2E -OutDir $OutDir -Suite "shims"
 
-$build = Get-Content -LiteralPath $Build -Raw | ConvertFrom-Json
+$build = Get-Content -LiteralPath $BuildJson -Raw | ConvertFrom-Json
+if (-not $build.version) { throw "no version in $BuildJson" }
 $package = "@851-labs/tokenmaxxing"
 $spec = "$package@$($build.version)"
 
@@ -29,10 +30,10 @@ $KnownIssues = @{
 
 $Installers = [ordered]@{
   "npm i -g" = @{
-    install = { npm install -g $spec --registry "$registryUrl/" --no-audit --no-fund }
-    bin = { (npm prefix -g | Out-String).Trim() }
-    packageDir = { Join-Path (npm prefix -g | Out-String).Trim() "node_modules\$package" }
-    uninstall = { npm uninstall -g $package }
+    install = { npm.cmd install -g $spec --registry "$registryUrl/" --no-audit --no-fund }
+    bin = { (npm.cmd prefix -g | Out-String).Trim() }
+    packageDir = { Join-Path (npm.cmd prefix -g | Out-String).Trim() "node_modules\$package" }
+    uninstall = { npm.cmd uninstall -g $package }
   }
   "bun add -g" = @{
     install = { bun add -g $spec --registry "$registryUrl/" }
@@ -50,8 +51,8 @@ $Installers = [ordered]@{
 
 $Shells = [ordered]@{
   "cmd.exe" = { cmd.exe /d /c "tokenmaxxing --version" }
-  "pwsh" = { pwsh -NoProfile -Command "tokenmaxxing --version; exit `$LASTEXITCODE" }
-  "Windows PowerShell 5.1" = { powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "tokenmaxxing --version; exit `$LASTEXITCODE" }
+  "pwsh" = { pwsh -NoProfile -Command "`$ErrorActionPreference = 'Stop'; tokenmaxxing --version; exit `$LASTEXITCODE" }
+  "Windows PowerShell 5.1" = { powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "`$ErrorActionPreference = 'Stop'; tokenmaxxing --version; exit `$LASTEXITCODE" }
 }
 
 function Describe-File([string]$Path) {
@@ -63,35 +64,48 @@ function Describe-File([string]$Path) {
   "$kind, $($bytes.Length) bytes"
 }
 
-$registry = Start-E2ERegistry -Root $Root -PackageDirs @($build.nativeDir, $build.mainDir)
-$registryUrl = $registry.url
+function Test-Installer([string]$Name) {
+  $installer = $Installers[$Name]
+  $install = Invoke-Logged "$Name install" $installer.install
+  Add-Check $Name "install" ($install.code -eq 0) "exit $($install.code): $(Format-OneLine (($install.out -split "\r?\n" | Select-Object -Last 6) -join "`n"))"
+  $env:PATH = "$(& $installer.bin);$basePath"
+  try {
+    $where = (where.exe tokenmaxxing 2>&1 | Out-String).Trim()
+    $packageBin = Join-Path (& $installer.packageDir) "bin\tokenmaxxing.exe"
+    Add-Check $Name "resolved shim" "INFO" "$(Format-OneLine $where); package bin/tokenmaxxing.exe: $(Describe-File $packageBin)"
+    foreach ($shell in $Shells.Keys) {
+      $run = Invoke-Logged "$Name via $shell" $Shells[$shell]
+      $ok = $run.code -eq 0 -and $run.out -match [regex]::Escape($build.version)
+      Add-Check $Name "tokenmaxxing --version via $shell" $ok "exit $($run.code): $(Format-OneLine $run.out 300)" -KnownIssue ($KnownIssues[$Name] ?? "")
+    }
+  } finally {
+    $env:PATH = $basePath
+    Invoke-Logged "$Name uninstall" $installer.uninstall | Out-Null
+  }
+}
+
 $basePath = $env:PATH
+$registry = $null
 try {
+  $registry = Start-E2ERegistry -Root $Root -PackageDirs @($build.nativeDir, $build.mainDir)
+  $registryUrl = $registry.url
   foreach ($name in $Installers.Keys) {
     Write-Host "::group::$name"
-    $installer = $Installers[$name]
-    $install = Invoke-Logged "$name install" $installer.install
-    Add-Check $name "install" ($install.code -eq 0) "exit $($install.code): $(Format-OneLine (($install.out -split "\r?\n" | Select-Object -Last 6) -join "`n"))"
-    $bin = & $installer.bin
-    $env:PATH = "$bin;$basePath"
-    try {
-      $where = (where.exe tokenmaxxing 2>&1 | Out-String).Trim()
-      $packageBin = Join-Path (& $installer.packageDir) "bin\tokenmaxxing.exe"
-      Add-Check $name "resolved shim" "INFO" "$(Format-OneLine $where); package bin/tokenmaxxing.exe: $(Describe-File $packageBin)"
-      foreach ($shell in $Shells.Keys) {
-        $run = Invoke-Logged "$name via $shell" $Shells[$shell]
-        $ok = $run.code -eq 0 -and $run.out -match [regex]::Escape($build.version)
-        Add-Check $name "tokenmaxxing --version via $shell" $ok "exit $($run.code): $(Format-OneLine $run.out 300)" -KnownIssue ($KnownIssues[$name] ?? "")
-      }
-    } finally {
-      $env:PATH = $basePath
-      Invoke-Logged "$name uninstall" $installer.uninstall | Out-Null
+    # An installer that throws records a FAIL and the next one still runs.
+    try { Test-Installer $name } catch {
+      Add-Check $name "installer ran to completion" $false "$($_.Exception.Message) $(Format-OneLine $_.InvocationInfo.PositionMessage 300)"
     }
     Write-Host "::endgroup::"
   }
+  Add-Check "shims" "all installers ran" $true ""
+} catch {
+  Add-Check "shims" "harness ran without errors" $false "$($_.Exception.Message) $(Format-OneLine $_.InvocationInfo.PositionMessage 300)"
 } finally {
-  Stop-Background $registry.process
+  if ($registry) { Stop-Background $registry.process }
 }
 
+if (-not (Select-String -LiteralPath (Join-Path $OutDir "results.jsonl") -SimpleMatch '"all installers ran"' -Quiet)) {
+  Add-Check "shims" "matrix completed" $false "run-shim-matrix.ps1 never reached its end"
+}
 & "$PSScriptRoot\summarize.ps1" -OutDir $OutDir -Title "Windows global-install shims"
 exit $(if ((Get-FailedChecks).Count -gt 0) { 1 } else { 0 })

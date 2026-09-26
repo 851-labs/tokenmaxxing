@@ -92,5 +92,5 @@ interactive session:
 bun install
 bun apps/cli/e2e/windows/build-packages.ts --out $env:TEMP\tmx-e2e\pkgs --version 99.0.0-e2e.0
 apps/cli/e2e/windows/session-probe.ps1 -OutDir $env:TEMP\tmx-e2e\out
-apps/cli/e2e/windows/run-service-e2e.ps1 -Build $env:TEMP\tmx-e2e\pkgs\build.json -Force
+apps/cli/e2e/windows/run-service-e2e.ps1 -BuildJson $env:TEMP\tmx-e2e\pkgs\build.json -Force
 ```
