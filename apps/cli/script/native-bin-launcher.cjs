@@ -239,10 +239,11 @@ function relayedSignals(platform = detectPlatform()) {
 }
 
 function runBinary(target, argv = process.argv.slice(2)) {
-  const child = childProcess.spawn(target, argv, {
-    stdio: "inherit",
-    windowsHide: true,
-  });
+  // Listen before spawning: the child can be up and visible to a supervisor
+  // before spawn() returns, and a signal that lands before process.on() would
+  // kill the launcher with the default action instead of reaching the child.
+  // Listeners run on a later tick, so `child` is always assigned by then.
+  let child;
   const { forward, signals } = relayedSignals();
   const listeners = signals.map((signal) => {
     const listener = () => {
@@ -250,6 +251,10 @@ function runBinary(target, argv = process.argv.slice(2)) {
     };
     process.on(signal, listener);
     return [signal, listener];
+  });
+  child = childProcess.spawn(target, argv, {
+    stdio: "inherit",
+    windowsHide: true,
   });
   const removeListeners = () => {
     for (const [signal, listener] of listeners) process.removeListener(signal, listener);
