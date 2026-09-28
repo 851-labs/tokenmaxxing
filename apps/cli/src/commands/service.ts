@@ -4769,8 +4769,10 @@ function escapeCmdSetValue(value: string): string {
   return value.replaceAll('"', '\\"').replaceAll("%", "%%");
 }
 
+// systemd expands %-specifiers everywhere in a unit file, quoted or not, so a
+// literal % (a config dir like "Co 100%") must be written as %%.
 function systemdQuote(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
 }
 
 function escapeXml(value: string): string {
@@ -4809,6 +4811,7 @@ export {
   resolveServiceRunnerPackageJson,
   renderLaunchdPlist,
   renderServiceWrapper,
+  renderSystemdService,
   renderSystemdTimer,
   renderWindowsLauncher,
   refreshServiceAfterUpdate,

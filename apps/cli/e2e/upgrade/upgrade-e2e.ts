@@ -32,6 +32,7 @@ import {
   npmCommand,
   oneLine,
   parseCliJson,
+  processEnv,
   readBuild,
   repoDir,
   run,
@@ -49,6 +50,7 @@ import {
   prepareSystemdUser,
   systemdUserEnv,
   triggerScheduledRun,
+  waitForSystemdRun,
 } from "../shared/scheduler";
 import {
   assertSuccessfulRun,
@@ -177,7 +179,7 @@ async function setup(): Promise<boolean> {
   context = {
     agentLogsDir: join(root, "agent-logs"),
     baseEnv: {
-      ...process.env,
+      ...processEnv(),
       ...(backend === "systemd" ? systemdUserEnv() : {}),
       npm_config_update_notifier: "false",
     },
@@ -540,7 +542,7 @@ async function installService(
   );
   if (backend === "systemd") {
     // Enabling the timer starts a run right away; let it finish first.
-    await new Promise((done) => setTimeout(done, 8000));
+    await waitForSystemdRun(60_000);
   }
   return ok ? { install, profile } : null;
 }

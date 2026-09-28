@@ -168,18 +168,14 @@ function pnpmInstaller(name: string, allowBuild: boolean): Installer {
       ],
       command: "pnpm",
     }),
+    // pnpm keeps global packages in <global-dir>/<layout version>/node_modules.
     packageDir: () => {
-      const rootDir = run(
-        "pnpm root -g",
-        "pnpm",
-        ["root", "-g", `--config.global-dir=${globalDir}`],
-        {
-          cwd: join(root, "cwd"),
-          env: { ...baseEnv(), PNPM_HOME: home },
-          quiet: true,
-        },
-      ).stdout;
-      return join(rootDir, pkg);
+      const layout = existsSync(globalDir)
+        ? readdirSync(globalDir).find((entry) =>
+            existsSync(join(globalDir, entry, "node_modules", pkg)),
+          )
+        : undefined;
+      return join(globalDir, layout ?? "5", "node_modules", pkg);
     },
   };
 }

@@ -166,9 +166,9 @@ async function scenario(name: string, body: () => Promise<void> | void) {
   }
 }
 
-function oneLine(text: string, max = 600): string {
+function oneLine(text: string | undefined, max = 600): string {
   // Control bytes (say, a binary printed as text) would garble the summary table.
-  const flat = text
+  const flat = (text ?? "")
     .replace(/\r?\n/g, " | ")
     // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ".")
@@ -184,12 +184,15 @@ function oneLine(text: string, max = 600): string {
 function run(label: string, command: string, args: string[], options: RunOptions = {}): RunResult {
   const viaCmd = isWindows && !/\.(exe|com)$/i.test(command) && !isWindowsBuiltinExe(command);
   const argv = viaCmd
-    ? ["cmd.exe", ["/d", "/s", "/c", `"${[command, ...args].map(cmdArg).join(" ")}"`]]
+    ? [
+        process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe",
+        ["/d", "/s", "/c", `"${[command, ...args].map(cmdArg).join(" ")}"`],
+      ]
     : [command, args];
   const result = spawnSync(argv[0] as string, argv[1] as string[], {
     cwd: options.cwd,
     encoding: "utf8",
-    env: cleanEnv(options.env ?? process.env),
+    env: cleanEnv(options.env ?? processEnv()),
     maxBuffer: 64 * 1024 * 1024,
     timeout: options.timeoutMs ?? 5 * 60 * 1000,
     windowsHide: true,
@@ -218,9 +221,31 @@ function cmdArg(value: string): string {
 }
 
 function cleanEnv(env: Record<string, string | undefined>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  const entries = Object.entries(env).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
   );
+  // Windows env names are case-insensitive: keep one PATH (the upper-case one
+  // the suites set), not also the inherited `Path`.
+  return Object.fromEntries(
+    isWindows && entries.some(([key]) => key === "PATH")
+      ? entries.filter(([key]) => key === "PATH" || key.toUpperCase() !== "PATH")
+      : entries,
+  );
+}
+
+/**
+ * process.env as a plain object with PATH under that exact name. On Windows
+ * it is inherited as `Path`, and a spread copy loses the case-insensitive
+ * lookup, so `env.PATH` would be undefined.
+ */
+function processEnv(): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env };
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+  if (pathKey !== undefined && pathKey !== "PATH") {
+    env.PATH = env[pathKey];
+    delete env[pathKey];
+  }
+  return env;
 }
 
 async function sleep(ms: number) {
@@ -260,7 +285,7 @@ function startBackground(
   outDir: string,
   name: string,
   cmd: string[],
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined> = processEnv(),
 ) {
   const stdout = openSync(join(outDir, `${name}.out.log`), "a");
   const stderr = openSync(join(outDir, `${name}.err.log`), "a");
@@ -638,6 +663,7 @@ export {
   npmCommand,
   oneLine,
   parseCliJson,
+  processEnv,
   readBuild,
   readJson,
   readResults,

@@ -47,6 +47,7 @@ import {
   removeServiceFiles,
   resolveExecutableSiblingPackageJson,
   renderLaunchdPlist,
+  renderSystemdService,
   renderServiceWrapper,
   renderSystemdTimer,
   renderWindowsLauncher,
@@ -805,6 +806,17 @@ describe("native scheduler templates", () => {
     expect(renderSystemdTimer()).toContain("OnUnitActiveSec=5min");
     expect(renderSystemdTimer()).toContain("Persistent=true");
     expect(scheduleDescription()).toBe("syncs every 5 minutes");
+
+    const linuxPaths = servicePaths({
+      env: { TOKENMAXXING_CONFIG_DIR: `/home/alex/Zoë O'Neil (Work) & Co 100%/tm "x"\\y` },
+      home: "/home/alex",
+      platform: "linux",
+    });
+    // systemd expands %-specifiers inside quotes too; an unescaped % made the
+    // unit fail to load (the Linux service e2e caught it).
+    expect(renderSystemdService(linuxPaths!)).toContain(
+      `ExecStart="/home/alex/Zoë O'Neil (Work) & Co 100%%/tm \\"x\\"\\\\y/tokenmaxxing.sh"`,
+    );
 
     const windowsPaths = servicePaths({
       env: { TOKENMAXXING_CONFIG_DIR: "C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing" },

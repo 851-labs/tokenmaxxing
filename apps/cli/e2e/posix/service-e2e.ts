@@ -19,6 +19,7 @@
  */
 import {
   accessSync,
+  statSync,
   constants,
   existsSync,
   mkdirSync,
@@ -42,6 +43,7 @@ import {
   npmCommand,
   oneLine,
   parseCliJson,
+  processEnv,
   readBuild,
   repoDir,
   requiredFlag,
@@ -68,6 +70,7 @@ import {
   SYSTEMD_UNIT,
   triggerScheduledRun,
   waitForLaunchdRun,
+  waitForSystemdRun,
   type SchedulerRun,
 } from "../shared/scheduler";
 import {
@@ -187,7 +190,7 @@ async function setup(): Promise<boolean> {
   context = {
     agentLogsDir: join(root, "agent-logs"),
     baseEnv: {
-      ...process.env,
+      ...processEnv(),
       ...(backend === "systemd" ? systemdUserEnv() : {}),
       npm_config_update_notifier: "false",
       // Runner auto-update checks the e2e registry (which serves this build
@@ -246,7 +249,7 @@ async function waitForRepair(profile: Profile, since: string | undefined, timeou
 }
 
 function systemdQuoted(path: string) {
-  return `"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  return `"${path.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
 }
 
 // The scheduler definition the install registered, as the scheduler sees it.
@@ -556,22 +559,7 @@ async function core() {
       if (!install(name, profile)) {
         return { detail: "install failed", exitCode: null, finished: false, seconds: 0 };
       }
-      const fired = await waitUntil(
-        () => {
-          const show = systemdShow(`${SYSTEMD_UNIT}.service`, [
-            "ActiveState",
-            "Result",
-            "ExecMainStatus",
-            "ExecMainExitTimestampMonotonic",
-          ]);
-          return Number(show.ExecMainExitTimestampMonotonic ?? "0") > 0 &&
-            show.ActiveState !== "activating"
-            ? show
-            : undefined;
-        },
-        6.5 * 60_000,
-        1000,
-      );
+      const fired = await waitForSystemdRun(6.5 * 60_000);
       const timer = systemdShow(`${SYSTEMD_UNIT}.timer`, [
         "LastTriggerUSec",
         "NextElapseUSecMonotonic",
@@ -709,14 +697,7 @@ async function pathCase(name: string, configDir: string) {
   }
   if (backend === "systemd") {
     // Let the timer's own first run finish before triggering ours.
-    await waitUntil(
-      () =>
-        Number(
-          systemdShow(`${SYSTEMD_UNIT}.service`, ["ExecMainExitTimestampMonotonic"])
-            .ExecMainExitTimestampMonotonic ?? "0",
-        ) > 0,
-      30_000,
-    );
+    await waitForSystemdRun(30_000);
   }
   assertDefinition(name, profile, keepAs);
   const first = await scheduledRun(profile, `${keepAs}-run`);
@@ -740,14 +721,7 @@ async function installLegacy(name: string, configDir: string): Promise<Profile |
     `templateVersion=${meta?.templateVersion} runnerVersion=${meta?.runnerVersion}`,
   );
   if (backend === "systemd") {
-    await waitUntil(
-      () =>
-        Number(
-          systemdShow(`${SYSTEMD_UNIT}.service`, ["ExecMainExitTimestampMonotonic"])
-            .ExecMainExitTimestampMonotonic ?? "0",
-        ) > 0,
-      30_000,
-    );
+    await waitForSystemdRun(30_000);
   }
   const legacyRun = await scheduledRun(profile, `${label(name)}-legacy-run`);
   assertSuccessfulRun(name, legacyRun, { allowCooldown: backend === "systemd" });
@@ -801,6 +775,7 @@ async function legacyUpgrade() {
     return;
   }
   const oldWrapper = readText(wrapperPath(profile));
+  const oldWrapperMtime = statSync(wrapperPath(profile)).mtimeMs;
   stageRunnerLikeAutoUpdate(profile);
   const before = serviceState(profile)?.lastRepairAttemptAt as string | undefined;
   const upgraded = await scheduledRun(profile, "legacy-upgraded-run");
@@ -828,11 +803,14 @@ async function legacyUpgrade() {
   );
   keep(outDir, writeTemp("legacy-wrapper-before.txt", oldWrapper), "legacy-wrapper-before.txt");
   keep(outDir, wrapperPath(profile), "legacy-wrapper-after.txt");
+  // Templates 5 and 6 render the same POSIX wrapper, so the rewrite shows in
+  // the mtime rather than the content.
   check(
     name,
-    "wrapper rewritten by the repair",
-    newWrapper !== oldWrapper && newWrapper.includes("tokenmaxxing service sync"),
-    `${oldWrapper.length} -> ${newWrapper.length} bytes`,
+    "repair rewrote the wrapper",
+    statSync(wrapperPath(profile)).mtimeMs > oldWrapperMtime &&
+      newWrapper.includes("tokenmaxxing service sync"),
+    `${oldWrapper.length} -> ${newWrapper.length} bytes; ${newWrapper === oldWrapper ? "same content" : "content changed"}`,
   );
   if (backend === "systemd") {
     // The deferred repair runs in its own transient unit and re-registers.
@@ -845,8 +823,16 @@ async function legacyUpgrade() {
     check(
       name,
       "repair ran in its transient systemd unit",
-      /status|repair|Started|Finished|Deactivated/i.test(journal.out) || journal.out === "",
-      oneLine(journal.out, 400) || "(no journal access)",
+      journal.out
+        .split("\n")
+        .some((line) => line.startsWith("Started") && line.includes(profile!.configDir)),
+      oneLine(
+        journal.out
+          .split("\n")
+          .filter((line) => line.includes(profile!.configDir))
+          .join("\n"),
+        400,
+      ),
     );
   }
   assertSchedulerStillRegistered(name);

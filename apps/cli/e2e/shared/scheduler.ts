@@ -181,9 +181,11 @@ async function triggerScheduledRun(timeoutMs = 180_000): Promise<SchedulerRun> {
       "ExecMainStatus",
       "ActiveState",
     ]);
+    // A unit that fails to load never runs; its ExecMainStatus is stale.
+    const ran = start.code === 0 || show.Result !== "success";
     return {
-      detail: `systemctl start exit ${start.code}; Result=${show.Result} ExecMainStatus=${show.ExecMainStatus} ActiveState=${show.ActiveState}`,
-      exitCode: show.ExecMainStatus ?? null,
+      detail: `systemctl start exit ${start.code}; Result=${show.Result} ExecMainStatus=${show.ExecMainStatus} ActiveState=${show.ActiveState}${ran ? "" : `; ${oneLine(start.out, 200)}`}`,
+      exitCode: ran ? (show.ExecMainStatus ?? null) : `systemctl start exit ${start.code}`,
       finished: show.ActiveState !== "activating",
       seconds: seconds(),
     };
@@ -217,7 +219,13 @@ async function waitForLaunchdRun(runsBefore: number, timeoutMs: number) {
   const job = await waitUntil(
     () => {
       const current = launchdJob();
-      return current.runs > runsBefore && current.state !== "running" ? current : undefined;
+      // Right after a kickstart the job is "spawn scheduled", then "running";
+      // it has finished once it is back to "not running" with an exit code.
+      return current.runs > runsBefore &&
+        current.state === "not running" &&
+        /^-?\d+$/.test(current.lastExitCode ?? "")
+        ? current
+        : undefined;
     },
     timeoutMs,
     500,
@@ -227,6 +235,30 @@ async function waitForLaunchdRun(runsBefore: number, timeoutMs: number) {
     await sleep(500);
   }
   return job;
+}
+
+/**
+ * systemd: waits until the sync service has finished a run since it was
+ * (re)loaded. Enabling the timer starts one on its own (OnBootSec has long
+ * passed), so this is how the suites wait for, and observe, that run.
+ */
+async function waitForSystemdRun(timeoutMs: number) {
+  return waitUntil(
+    () => {
+      const show = systemdShow(`${SYSTEMD_UNIT}.service`, [
+        "ActiveState",
+        "Result",
+        "ExecMainStatus",
+        "ExecMainExitTimestampMonotonic",
+      ]);
+      return Number(show.ExecMainExitTimestampMonotonic ?? "0") > 0 &&
+        show.ActiveState !== "activating"
+        ? show
+        : undefined;
+    },
+    timeoutMs,
+    1000,
+  );
 }
 
 function fileSize(path: string): number {
@@ -262,6 +294,7 @@ export {
   triggerScheduledRun,
   uid,
   waitForLaunchdRun,
+  waitForSystemdRun,
   windowsTask,
   WINDOWS_TASK,
 };
