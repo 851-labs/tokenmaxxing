@@ -317,7 +317,11 @@ function assertDefinition(scenarioName: string, profile: Profile, keepAs: string
     check(
       scenarioName,
       "service unit: oneshot running the quoted wrapper",
-      service.includes("Type=oneshot") && service.includes(`ExecStart=${systemdQuoted(wrapper)}`),
+      service.includes("Type=oneshot") &&
+        (service.includes(`ExecStart=${systemdQuoted(wrapper)}\n`) ||
+          // Paths with quotes or backslashes run as /bin/sh's argument.
+          (/["'\\]/.test(wrapper) &&
+            service.includes(`ExecStart=/bin/sh ${systemdQuoted(wrapper)}\n`))),
       oneLine(service, 400),
     );
     check(
@@ -338,7 +342,9 @@ function assertDefinition(scenarioName: string, profile: Profile, keepAs: string
     check(
       scenarioName,
       "systemd parses ExecStart to the wrapper path",
-      execStart.LoadState === "loaded" && (execStart.ExecStart ?? "").includes(`path=${wrapper} ;`),
+      execStart.LoadState === "loaded" &&
+        (execStart.ExecStart ?? "").includes(`argv[]=`) &&
+        (execStart.ExecStart ?? "").includes(`${wrapper} ;`),
       `LoadState=${execStart.LoadState} LoadError=${execStart.LoadError ?? ""} ExecStart=${execStart.ExecStart ?? ""}`,
     );
     const verify = run(
@@ -661,17 +667,15 @@ async function core() {
 
   if (backend === "launchd") {
     // Positive control: launchd starts the agent on its StartInterval with no
-    // kickstart. Kickstarts do not move the interval, so the first one lands
-    // about 300 s after bootstrap.
+    // kickstart. The interval counts from the job's last start (a kickstart
+    // included), so the run lands about 300 s after the last one above.
     const job = launchdJob();
+    const lastRunAt = Date.now();
     const interval = await observeRun(context, profile, "core-interval", async () => {
       const waitedFrom = Date.now();
-      const fired = await waitForLaunchdRun(
-        job.runs,
-        Math.max(60_000, bootstrapAt + 400_000 - Date.now()),
-      );
+      const fired = await waitForLaunchdRun(job.runs, 360_000);
       return {
-        detail: `launchd runs ${job.runs} -> ${fired?.runs ?? "?"}; last exit code ${fired?.lastExitCode ?? "?"}; fired ${fired ? Math.round((Date.now() - bootstrapAt) / 1000) : "?"} s after bootstrap`,
+        detail: `launchd runs ${job.runs} -> ${fired?.runs ?? "?"}; last exit code ${fired?.lastExitCode ?? "?"}; fired ${fired ? Math.round((Date.now() - lastRunAt) / 1000) : "?"} s after the last triggered run, ${fired ? Math.round((Date.now() - bootstrapAt) / 1000) : "?"} s after bootstrap`,
         exitCode: fired?.lastExitCode ?? null,
         finished: fired !== undefined,
         seconds: Math.round((Date.now() - waitedFrom) / 1000),
@@ -975,7 +979,12 @@ try {
             ),
           }
         : {
-            [`spaces + non-ASCII (${zoe} (Work))`]: join(home, ".config", `${zoe} (Work)`, "tm"),
+            [`spaces + non-ASCII + % (${zoe} (Work) 100%)`]: join(
+              home,
+              ".config",
+              `${zoe} (Work) 100%`,
+              "tm",
+            ),
             [`everything path (${zoe} O'Neil (Work) & Co 100%)`]: join(
               root,
               `${zoe} O'Neil (Work) & Co 100%`,

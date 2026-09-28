@@ -592,12 +592,15 @@ async function assertAutoUpdateRun(
 
 async function serviceStable() {
   const name = "auto-update: stable runner";
-  await distTags({ alpha: ALPHA_LATEST, latest: STABLE_LATEST });
+  // Installed while it is the newest release: on Linux, enabling the timer
+  // starts a run at once, and that run must not take the update below.
+  await distTags({ alpha: ALPHA_LATEST, latest: STABLE_OLD });
   const installed = await installService(name, "svc-stable", STABLE_OLD);
   if (installed === null) {
     return;
   }
   const { profile } = installed;
+  await distTags({ alpha: ALPHA_LATEST, latest: STABLE_LATEST });
   await assertAutoUpdateRun(
     name,
     profile,
@@ -636,12 +639,13 @@ async function serviceStable() {
 
 async function servicePrerelease() {
   const name = "auto-update: prerelease runner";
-  await distTags({ alpha: ALPHA_LATEST, latest: STABLE_LATEST });
+  await distTags({ alpha: ALPHA_PR, latest: STABLE_LATEST });
   const installed = await installService(name, "svc-alpha", ALPHA_PR);
   if (installed === null) {
     return;
   }
   const { profile } = installed;
+  await distTags({ alpha: ALPHA_LATEST, latest: STABLE_LATEST });
   await assertAutoUpdateRun(
     name,
     profile,

@@ -4046,8 +4046,17 @@ Description=tokenmaxxing automatic usage sync
 
 [Service]
 Type=oneshot
-ExecStart=${systemdQuote(paths.wrapperPath)}
+ExecStart=${systemdExecStart(paths.wrapperPath)}
 `;
+}
+
+// systemd rejects an executable path containing a quote or backslash ("Executable name contains
+// special characters") however it is escaped, so such a wrapper (a config dir like "O'Neil") runs
+// as /bin/sh's argument instead. Other paths keep the plain form existing units already have.
+function systemdExecStart(wrapperPath: string): string {
+  return /["'\\]/.test(wrapperPath)
+    ? `/bin/sh ${systemdQuote(wrapperPath)}`
+    : systemdQuote(wrapperPath);
 }
 
 function renderSystemdTimer(): string {
@@ -4293,19 +4302,44 @@ function findTokenmaxxingCommandInstall(
       const resolvedCommandPath = await resolveCommandPath(commandPath);
       const durableCommandPath = durableTokenmaxxingCommandPath(commandPath, resolvedCommandPath);
 
+      const detectedManager = detectAutoUpdateManager({
+        commandPath,
+        env,
+        platform,
+        resolvedCommandPath,
+      });
+
       return {
-        autoUpdateManager: detectAutoUpdateManager({
-          commandPath,
-          env,
-          platform,
-          resolvedCommandPath,
-        }),
+        autoUpdateManager:
+          detectedManager ?? ((await isWindowsNpmPrefixShim(commandPath, platform)) ? "npm" : null),
         commandPath: durableCommandPath,
         resolvedCommandPath,
       };
     },
     catch: (cause) => cause,
   });
+}
+
+// npm's Windows shims (tokenmaxxing.cmd/.ps1) sit directly in the global prefix
+// (%APPDATA%\npm by default, or any --prefix), next to its node_modules, and
+// resolve to nothing more telling than themselves; no path pattern covers them.
+async function isWindowsNpmPrefixShim(
+  commandPath: string,
+  platform: NodeJS.Platform,
+): Promise<boolean> {
+  if (platform !== "win32") {
+    return false;
+  }
+
+  try {
+    await access(
+      join(dirname(commandPath), "node_modules", "@851-labs", "tokenmaxxing", "package.json"),
+      constants.F_OK,
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function resolveCommandPath(commandPath: string): Promise<string> {
@@ -4800,6 +4834,7 @@ export {
   formatServiceStatusAutoUpdate,
   isEphemeralCommandPath,
   isTransientCommandShimPath,
+  isWindowsNpmPrefixShim,
   isServiceInstalled,
   legacyServiceWrapperPaths,
   deterministicServiceJitterMs,
