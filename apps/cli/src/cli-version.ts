@@ -40,7 +40,12 @@ class CliVersionCheckError extends Data.TaggedError("CliVersionCheckError")<{
 }> {}
 
 const LATEST_DIST_TAG = "latest";
-const NPM_DIST_TAGS_URL = "https://registry.npmjs.org/-/package/@851-labs%2Ftokenmaxxing/dist-tags";
+const PACKAGE_NAME = "@851-labs/tokenmaxxing";
+const DEFAULT_NPM_REGISTRY_URL = "https://registry.npmjs.org";
+// Where version checks and service-runner downloads go. Only meant for mirrors
+// and the e2e's local registry; package-manager upgrades keep using the
+// package manager's own registry config.
+const NPM_REGISTRY_ENV = "TOKENMAXXING_NPM_REGISTRY";
 const DIST_TAGS_TIMEOUT_MS = 15 * 1000;
 
 const NUMERIC_IDENTIFIER = "0|[1-9]\\d*";
@@ -130,12 +135,30 @@ function distTagsFromRegistry(body: unknown): DistTags | null {
   return distTags;
 }
 
+/** The registry origin, without a trailing slash. */
+function npmRegistryUrl(env: Record<string, string | undefined> = process.env): string {
+  const override = env[NPM_REGISTRY_ENV]?.trim();
+  return override ? override.replace(/\/+$/, "") : DEFAULT_NPM_REGISTRY_URL;
+}
+
+/** A package's packument URL (`/@scope%2Fname`); append `/<version or dist-tag>` for one version. */
+function npmRegistryPackageUrl(
+  packageName: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return `${npmRegistryUrl(env)}/${packageName.replace("/", "%2F")}`;
+}
+
+function npmDistTagsUrl(env: Record<string, string | undefined> = process.env): string {
+  return `${npmRegistryUrl(env)}/-/package/${PACKAGE_NAME.replace("/", "%2F")}/dist-tags`;
+}
+
 function fetchDistTags(
   timeoutMs: number = DIST_TAGS_TIMEOUT_MS,
 ): Effect.Effect<DistTags, CliVersionCheckError> {
   return Effect.tryPromise({
     try: async () => {
-      const response = await fetch(NPM_DIST_TAGS_URL, {
+      const response = await fetch(npmDistTagsUrl(), {
         headers: { accept: "application/json" },
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -212,6 +235,10 @@ export {
   followedDistTags,
   isNewerVersion,
   LATEST_DIST_TAG,
+  NPM_REGISTRY_ENV,
+  npmDistTagsUrl,
+  npmRegistryPackageUrl,
+  npmRegistryUrl,
   parseSemVer,
   releaseChannel,
   resolveUpdate,

@@ -491,6 +491,7 @@ describe("capturedServiceEnv", () => {
         HOME: "/home/alex",
         PATH: "/usr/bin",
         TOKENMAXXING_API_TOKEN: "tmx_secret",
+        TOKENMAXXING_NPM_REGISTRY: "http://127.0.0.1:4873",
       }),
     ).toEqual({
       CLAUDE_CONFIG_DIR: "/data/Claude Logs, extra",
@@ -498,6 +499,7 @@ describe("capturedServiceEnv", () => {
       HERMES_HOME: "/data/hermes,/data/hermes/profiles/work",
       HOME: "/home/alex",
       PATH: "/usr/bin",
+      TOKENMAXXING_NPM_REGISTRY: "http://127.0.0.1:4873",
     });
 
     expect(

@@ -36,6 +36,8 @@ import {
   fetchDistTags,
   followedDistTags,
   LATEST_DIST_TAG,
+  NPM_REGISTRY_ENV,
+  npmRegistryPackageUrl,
   parseSemVer,
   resolveUpdate,
 } from "../cli-version";
@@ -2949,10 +2951,6 @@ function fetchServiceRunnerRelease(
   });
 }
 
-function npmRegistryPackageUrl(packageName: string): string {
-  return `https://registry.npmjs.org/${packageName.replace("/", "%2F")}`;
-}
-
 function serviceRunnerReleaseFromPackageJson(
   body: unknown,
   target: ServiceRunnerTarget,
@@ -4388,6 +4386,7 @@ const SERVICE_ENV_KEYS = [
   "TOKENMAXXING_ENV",
   "TOKENMAXXING_API_URL",
   "TOKENMAXXING_WWW_URL",
+  NPM_REGISTRY_ENV,
   SERVICE_RECONCILE_WINDOW_ENV,
 ] as const;
 
