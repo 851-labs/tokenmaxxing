@@ -258,10 +258,16 @@ function browserLoginEffect(options: BrowserLoginOptions) {
       );
     }
 
-    for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
-      const poll = yield* client.cliLogin
-        .poll({ payload: { deviceCode: start.deviceCode } })
-        .pipe(Effect.mapError((cause) => new PollCliLoginError({ cause })));
+    let attempt = 0;
+    while (attempt < MAX_POLL_ATTEMPTS) {
+      const poll = yield* client.cliLogin.poll({ payload: { deviceCode: start.deviceCode } }).pipe(
+        // Over the server's per-network cap (a shared NAT, say): wait as
+        // told and keep polling instead of failing the login.
+        Effect.catchTag("TooManyRequests", ({ retryAfterSeconds }) =>
+          Effect.succeed({ retryAfterSeconds, status: "rate_limited" as const }),
+        ),
+        Effect.mapError((cause) => new PollCliLoginError({ cause })),
+      );
 
       if (poll.status === "complete") {
         const written = yield* config
@@ -278,8 +284,22 @@ function browserLoginEffect(options: BrowserLoginOptions) {
         return { config: nextConfig, user: poll.user };
       }
 
+      let waitSeconds = start.intervalSeconds;
+      if (poll.status === "rate_limited") {
+        waitSeconds = Math.max(poll.retryAfterSeconds, start.intervalSeconds);
+        yield* humanLog(
+          "info",
+          `Too many login checks from this network; retrying in ${waitSeconds}s`,
+          options,
+        );
+      }
+
+      // A long wait spends the attempts it replaces, so waiting out a rate
+      // limit never stretches the login past MAX_POLL_ATTEMPTS intervals,
+      // which stays inside the login code's lifetime.
+      attempt += Math.max(1, Math.ceil(waitSeconds / Math.max(start.intervalSeconds, 1)));
       yield* clock
-        .sleep(start.intervalSeconds * 1000)
+        .sleep(waitSeconds * 1000)
         .pipe(Effect.mapError((cause) => new LoginSleepError({ cause })));
     }
 

@@ -11,6 +11,11 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   another npm registry (a mirror, or the CLI e2e's local registry). A service install captures
   it for scheduled syncs.
 
+### Changed
+
+- `tokenmaxxing login` now waits out the server's new per-network login rate limit (HTTP 429,
+  honouring its retry delay) instead of failing mid-login, and explains a rate-limited start.
+
 ### Fixed
 
 - `tokenmaxxing upgrade` now works for npm global installs on Windows. Their shim sits directly

@@ -29,6 +29,7 @@ import { AppConfig } from "../src/config";
 import { Drizzle } from "../src/database";
 import { makeApiHttpEffect } from "../src/http/layer";
 import { OAuthProviders } from "../src/oauth/registry";
+import { RateLimiter, unlimitedRateLimiter } from "../src/ratelimit/service";
 import { ServicesLive } from "../src/services";
 import { makeMemoryBucket } from "../src/testing/r2";
 import { makeD1Database } from "../src/testing/sqlite-d1";
@@ -67,6 +68,8 @@ const InfrastructureLive = Layer.mergeAll(
   }),
   Drizzle.layer({ raw: Effect.succeed(d1) }),
   makeMemoryBucket().layer,
+  // Requests here never carry cf-connecting-ip, so nothing is limited anyway.
+  Layer.succeed(RateLimiter, unlimitedRateLimiter),
 );
 
 const scope = Effect.runSync(Scope.make());
