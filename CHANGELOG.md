@@ -25,6 +25,9 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   backslash (for example `/home/o'neil`). systemd refused to load the unit (`bad-setting`), so
   the timer never synced even though `service install` reported success. Run
   `tokenmaxxing service repair` to rewrite an affected unit.
+- On macOS and Linux, a Ctrl+C or `kill` that arrives while `tokenmaxxing` is still starting
+  is now passed on to the native binary instead of killing only the npm launcher and leaving
+  the binary running.
 
 ## 0.7.0-alpha.1 - 2026-09-26
 
