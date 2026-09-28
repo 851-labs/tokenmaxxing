@@ -5,9 +5,11 @@ import { Context, Effect, Layer, Scope } from "effect";
 import { CleanupService } from "./cleanup/service";
 import { Bucket } from "./cloudflare/bucket";
 import { Database } from "./cloudflare/database";
+import { RateLimiterBindings } from "./cloudflare/rate-limits";
 import { AppConfig } from "./config";
 import { Drizzle } from "./database";
 import { makeApiFetch } from "./http/layer";
+import { RateLimiter } from "./ratelimit/service";
 import { ServicesLive } from "./services";
 import { RawUsageObjectStore } from "./usage/raw-store";
 
@@ -35,6 +37,7 @@ const ApiWorker = Cloudflare.Worker(
   Effect.gen(function* () {
     const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
     const connection = yield* Cloudflare.D1.QueryDatabase(Database);
+    const rateLimiter = yield* RateLimiterBindings;
 
     // Config reads stay in this outer Effect so alchemy's deploy-time
     // binding discovery sees them (secrets bind as secret_text).
@@ -45,6 +48,7 @@ const ApiWorker = Cloudflare.Worker(
     // the type.
     const InfrastructureLive = Layer.mergeAll(
       Layer.succeed(AppConfig, config),
+      Layer.succeed(RateLimiter, rateLimiter),
       Drizzle.layer({ raw: connection.raw.pipe(Effect.provide(RuntimeContext.phantom)) }),
       RawUsageObjectStore.layer({
         put: (key, value, options) =>
@@ -79,6 +83,7 @@ const ApiWorker = Cloudflare.Worker(
       Cloudflare.D1.QueryDatabaseBinding,
       Cloudflare.R2.ReadWriteBucketBinding,
       Cloudflare.Workers.CronEventSourceLive,
+      Cloudflare.Workers.RateLimitBinding,
     ]),
   ),
 );

@@ -26,6 +26,7 @@ import {
   PayloadTooLarge,
   RouteNotFound,
   TokenmaxxingApi,
+  TooManyRequests,
 } from "@tokenmaxxing/api-contract";
 
 import { AdminService } from "../admin/service";
@@ -36,6 +37,12 @@ import { AppConfig, type Deployment, deploymentForHost, deployments } from "../c
 import { LeaderboardService } from "../leaderboard/service";
 import type { OAuthProviders } from "../oauth/registry";
 import { ProfilesService } from "../profiles/service";
+import {
+  RATE_LIMIT_RULES,
+  RateLimiter,
+  rateLimitKey,
+  type RateLimitRule,
+} from "../ratelimit/service";
 import { STATS_CACHE_TTL_SECONDS, StatsService } from "../stats/service";
 import { TokensService } from "../tokens/service";
 import { UsageService } from "../usage/service";
@@ -88,6 +95,40 @@ function rejectUndeclaredProperties(endpoint: { readonly payload: HttpApiEndpoin
       Effect.mapError((cause) =>
         badRequest(new HttpApiError.HttpApiSchemaError({ cause, kind: "Payload" })),
       ),
+    );
+  });
+}
+
+/**
+ * Counts the request against `rule` for the client IP and fails with 429
+ * TooManyRequests once over the cap (ErrorBoundaryLive adds Retry-After). Handlers
+ * call it before any D1 work, so a flood never reaches the database.
+ *
+ * The key is `cf-connecting-ip`: Cloudflare sets it on every request through
+ * its edge and overwrites any client-sent value. X-Forwarded-For is
+ * client-controlled and never used. Without the header the request did not
+ * come through the edge (local dev, the sandbox, tests), so it is not
+ * limited: a shared fallback bucket would let one client lock out everyone.
+ */
+function enforceRateLimit(rule: RateLimitRule) {
+  return Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const ip = request.headers["cf-connecting-ip"];
+    if (ip === undefined || ip === "") {
+      return;
+    }
+
+    const limiter = yield* RateLimiter;
+    if (yield* limiter.limit(rule, rateLimitKey(ip))) {
+      return;
+    }
+
+    const { message, period } = RATE_LIMIT_RULES[rule];
+    return yield* Effect.fail(
+      new TooManyRequests({
+        message: `${message}; try again in ${period} seconds.`,
+        retryAfterSeconds: period,
+      }),
     );
   });
 }
@@ -170,6 +211,7 @@ const cliLoginHandlers = HttpApiBuilder.group(TokenmaxxingApi, "cliLogin", (hand
   handlers
     .handle("start", ({ endpoint, payload }) =>
       Effect.gen(function* () {
+        yield* enforceRateLimit("cliLoginStart");
         yield* rejectUndeclaredProperties(endpoint);
         const request = yield* HttpServerRequest.HttpServerRequest;
         const cliLogin = yield* CliLoginService;
@@ -181,6 +223,7 @@ const cliLoginHandlers = HttpApiBuilder.group(TokenmaxxingApi, "cliLogin", (hand
     )
     .handle("poll", ({ endpoint, payload }) =>
       Effect.gen(function* () {
+        yield* enforceRateLimit("cliLoginPoll");
         yield* rejectUndeclaredProperties(endpoint);
         const cliLogin = yield* CliLoginService;
         return yield* cliLogin.poll(payload);
@@ -665,6 +708,7 @@ type ApiServices =
   | LeaderboardService
   | OAuthProviders
   | ProfilesService
+  | RateLimiter
   | StatsService
   | TokensService
   | UsageService;

@@ -17,9 +17,11 @@ import {
   AlreadyLoggedInError,
   browserLoginEffect,
   loginEffect,
+  LoginTimeoutError,
   LoginTokenInvalidError,
   LoginValidationError,
   PollCliLoginError,
+  StartCliLoginError,
 } from "./login";
 
 const promptCalls = vi.hoisted((): string[] => []);
@@ -52,6 +54,7 @@ interface TestLayerOptions {
 
 interface TestState {
   madeClients: Array<{ baseUrl: string; token?: string | undefined }>;
+  sleeps: number[];
 }
 
 const user: AuthUser = {
@@ -70,6 +73,7 @@ const originalTerm = process.env.TERM;
 function makeTestLayer(options: TestLayerOptions) {
   const state: TestState = {
     madeClients: [],
+    sleeps: [],
   };
 
   const layer = Layer.mergeAll(
@@ -94,7 +98,7 @@ function makeTestLayer(options: TestLayerOptions) {
       open: () => Effect.succeed(undefined),
     }),
     Layer.succeed(ClockService)({
-      sleep: () => Effect.succeed(undefined),
+      sleep: (ms) => Effect.sync(() => void state.sleeps.push(ms)),
     }),
     Layer.succeed(ConfigService)({
       clearToken: () =>
@@ -362,5 +366,100 @@ describe("browserLoginEffect poll failures", () => {
     const error = firstFailure(exit);
     expect(error).toBeInstanceOf(PollCliLoginError);
     expect(error.message).toBe(message);
+  });
+});
+
+describe("browserLoginEffect rate limits", () => {
+  const config = {
+    apiUrl: "https://api.tokenmaxxing.example",
+    wwwUrl: "https://tokenmaxxing.example",
+  };
+  const startResponse: StubResponse = {
+    body: {
+      code: "ABCD-1234",
+      deviceCode: "device-code-secret",
+      expiresAt: "2026-06-21T18:10:00.000Z",
+      intervalSeconds: 2,
+      userCode: "ABCD-1234",
+      verificationUri: "https://tokenmaxxing.example/login/cli?code=ABCD-1234",
+    },
+    status: 200,
+  };
+  const tooManyRequests = (message: string): StubResponse => ({
+    body: { _tag: "TooManyRequests", message, retryAfterSeconds: 60 },
+    status: 429,
+  });
+  const pollLimited = tooManyRequests("Checking login status too often; try again in 60 seconds.");
+
+  it("waits out a rate-limited poll and completes the login", async () => {
+    const requests: string[] = [];
+    const { layer, state } = makeTestLayer({
+      client: makeStubApiClient(
+        {
+          "POST /cli/login/poll": [
+            pollLimited,
+            { body: { status: "pending" }, status: 200 },
+            { body: { status: "complete", token: "tmx_new", user }, status: 200 },
+          ],
+          "POST /cli/login/start": startResponse,
+        },
+        requests,
+      ),
+      initialConfig: config,
+      interactive: true,
+    });
+
+    const result = await Effect.runPromise(
+      browserLoginEffect({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    expect(result.user).toEqual(user);
+    expect(result.config.token).toBe("tmx_new");
+    // Retry-After first, then back to the server's poll interval.
+    expect(state.sleeps).toEqual([60_000, 2_000]);
+    expect(requests.filter((request) => request === "POST /cli/login/poll")).toHaveLength(3);
+  });
+
+  it("gives up within the login's attempt budget when every poll is limited", async () => {
+    const requests: string[] = [];
+    const { layer, state } = makeTestLayer({
+      client: makeStubApiClient(
+        { "POST /cli/login/poll": pollLimited, "POST /cli/login/start": startResponse },
+        requests,
+      ),
+      initialConfig: config,
+      interactive: true,
+    });
+
+    const exit = await Effect.runPromiseExit(
+      browserLoginEffect({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    expect(firstFailure(exit)).toBeInstanceOf(LoginTimeoutError);
+    // 150 attempts x 2 s: five 60 s waits use the whole budget.
+    expect(state.sleeps).toEqual(Array(5).fill(60_000));
+    expect(requests.filter((request) => request === "POST /cli/login/poll")).toHaveLength(5);
+  });
+
+  it("explains a rate-limited start", async () => {
+    const { layer } = makeTestLayer({
+      client: makeStubApiClient({
+        "POST /cli/login/start": tooManyRequests(
+          "Too many login attempts from this network; try again in 60 seconds.",
+        ),
+      }),
+      initialConfig: config,
+      interactive: true,
+    });
+
+    const exit = await Effect.runPromiseExit(
+      browserLoginEffect({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    const error = firstFailure(exit);
+    expect(error).toBeInstanceOf(StartCliLoginError);
+    expect(error.message).toBe(
+      "error: Too many login attempts from this network; try again in 60 seconds.",
+    );
   });
 });

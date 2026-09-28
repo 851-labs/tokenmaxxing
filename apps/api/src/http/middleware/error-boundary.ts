@@ -1,11 +1,13 @@
 import { Cause, Effect, Layer, Result, type Types } from "effect";
 import * as SchemaIssue from "effect/SchemaIssue";
+import { HttpServerResponse } from "effect/unstable/http";
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
 
 import {
   BadRequest,
   ErrorBoundary,
   InternalServerError,
+  TooManyRequests,
   UnsupportedMediaType,
 } from "@tokenmaxxing/api-contract";
 
@@ -17,6 +19,9 @@ import {
  * text/plain 415, and a defect becomes an empty 500. Here they become typed
  * contract errors, so the builder encodes them like any other: a JSON
  * `{ _tag, message }` body that clients decode.
+ *
+ * TooManyRequests is rendered here too, because it needs a Retry-After
+ * header the builder's error encoding cannot add.
  *
  * Applied to every endpoint and outermost (see TokenmaxxingApi), so it also
  * sees faults raised by the auth middlewares.
@@ -32,27 +37,46 @@ const ErrorBoundaryLive = Layer.succeed(
           ? Effect.fail(new UnsupportedMediaType())
           : Effect.succeed(response),
       ),
-      Effect.catchCause((cause): Effect.Effect<never, BoundaryError | Types.unhandled> => {
-        const error = Cause.findErrorOption(cause);
-        if (error._tag === "Some") {
-          return HttpApiError.HttpApiSchemaError.is(error.value)
-            ? schemaFailure(error.value)
-            : Effect.failCause(cause);
-        }
+      Effect.catchCause(
+        (
+          cause,
+        ): Effect.Effect<
+          HttpServerResponse.HttpServerResponse,
+          BoundaryError | Types.unhandled
+        > => {
+          const error = Cause.findErrorOption(cause);
+          if (error._tag === "Some") {
+            if (error.value instanceof TooManyRequests) {
+              return Effect.succeed(tooManyRequestsResponse(error.value));
+            }
 
-        const defect = Cause.findDefect(cause);
-        if (Result.isFailure(defect)) {
-          // Interrupted (client went away): nothing to render.
-          return Effect.failCause(cause);
-        }
+            return HttpApiError.HttpApiSchemaError.is(error.value)
+              ? schemaFailure(error.value)
+              : Effect.failCause(cause);
+          }
 
-        return HttpApiError.HttpApiSchemaError.is(defect.success)
-          ? schemaFailure(defect.success)
-          : internalServerError(cause);
-      }),
+          const defect = Cause.findDefect(cause);
+          if (Result.isFailure(defect)) {
+            // Interrupted (client went away): nothing to render.
+            return Effect.failCause(cause);
+          }
+
+          return HttpApiError.HttpApiSchemaError.is(defect.success)
+            ? schemaFailure(defect.success)
+            : internalServerError(cause);
+        },
+      ),
     ),
   ),
 );
+
+/** The encoded error (same body the builder would produce) plus Retry-After. */
+function tooManyRequestsResponse(error: TooManyRequests) {
+  return HttpServerResponse.jsonUnsafe(
+    { _tag: error._tag, message: error.message, retryAfterSeconds: error.retryAfterSeconds },
+    { headers: { "retry-after": String(error.retryAfterSeconds) }, status: 429 },
+  );
+}
 
 type BoundaryError = BadRequest | InternalServerError | UnsupportedMediaType;
 

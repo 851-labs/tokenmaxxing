@@ -15,6 +15,7 @@ import {
   RouteNotFound,
   TokenDeviceUnbound,
   TokenNotFound,
+  TooManyRequests,
   UserNotFound,
 } from "./errors";
 import { AllowCliToken, Authorization, CliAuth, ErrorBoundary } from "./middleware";
@@ -124,19 +125,20 @@ class MeGroup extends HttpApiGroup.make("me")
   )
   .middleware(Authorization) {}
 
+/** Unauthenticated, so both endpoints are rate-limited per client IP. */
 class CliLoginGroup extends HttpApiGroup.make("cliLogin")
   .add(
     HttpApiEndpoint.post("start", "/cli/login/start", {
       payload: CliLoginStartInput,
       success: CliLoginStartResponse,
-      error: CliUpgradeRequired,
+      error: [CliUpgradeRequired, TooManyRequests],
     }),
   )
   .add(
     HttpApiEndpoint.post("poll", "/cli/login/poll", {
       payload: CliLoginPollInput,
       success: CliLoginPollResponse,
-      error: [LoginCodeNotFound, LoginCodeExpired],
+      error: [LoginCodeNotFound, LoginCodeExpired, TooManyRequests],
     }),
   ) {}
 

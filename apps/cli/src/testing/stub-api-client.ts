@@ -16,16 +16,29 @@ interface StubResponse {
  * The real contract client over canned HTTP responses, keyed
  * `"<METHOD> <path>"`. Tests use it where the behaviour depends on how the
  * client decodes a response (status + body → typed error), which fake client
- * objects would paper over. Unmatched requests get an empty 500.
+ * objects would paper over. A list answers successive requests in order and
+ * then keeps repeating its last entry. Unmatched requests get an empty 500.
+ * Every request's key is appended to `requests`.
  */
-function makeStubApiClient(responses: Record<string, StubResponse>) {
+function makeStubApiClient(
+  responses: Record<string, StubResponse | ReadonlyArray<StubResponse>>,
+  requests: string[] = [],
+) {
   const httpClient = HttpClient.make((request, url) =>
-    Effect.sync(() =>
-      HttpClientResponse.fromWeb(
+    Effect.sync(() => {
+      const key = `${request.method} ${url.pathname}`;
+      const answered = requests.filter((previous) => previous === key).length;
+      requests.push(key);
+      const response = responses[key] ?? { status: 500 };
+      return HttpClientResponse.fromWeb(
         request,
-        toWebResponse(responses[`${request.method} ${url.pathname}`] ?? { status: 500 }),
-      ),
-    ),
+        toWebResponse(
+          Array.isArray(response)
+            ? response[Math.min(answered, response.length - 1)]!
+            : (response as StubResponse),
+        ),
+      );
+    }),
   );
 
   return HttpApiClient.make(TokenmaxxingApi, { baseUrl: "https://api.tokenmaxxing.example" }).pipe(
