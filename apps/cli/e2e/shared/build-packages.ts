@@ -3,7 +3,7 @@
  * Builds the CLI packages for THIS host the way a release does
  * (script/build-native-packages.ts + script/publish.ts writeMainPackage):
  *
- *   bun apps/cli/e2e/windows/build-packages.ts --out <dir> --version <version>
+ *   bun apps/cli/e2e/shared/build-packages.ts --out <dir> --version <version>
  *
  * Writes <dir>/@851-labs/tokenmaxxing, <dir>/@851-labs/tokenmaxxing-<host
  * target> and <dir>/build.json. The version is stamped into package.json for

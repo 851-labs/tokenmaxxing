@@ -41,12 +41,14 @@ import {
   installServiceRunnerFromOptionalPackage,
   isEphemeralCommandPath,
   isTransientCommandShimPath,
+  isWindowsNpmPrefixShim,
   legacyServiceWrapperPaths,
   readCurrentServiceRunnerInstall,
   readWindowsLauncherStatus,
   removeServiceFiles,
   resolveExecutableSiblingPackageJson,
   renderLaunchdPlist,
+  renderSystemdService,
   renderServiceWrapper,
   renderSystemdTimer,
   renderWindowsLauncher,
@@ -491,6 +493,7 @@ describe("capturedServiceEnv", () => {
         HOME: "/home/alex",
         PATH: "/usr/bin",
         TOKENMAXXING_API_TOKEN: "tmx_secret",
+        TOKENMAXXING_NPM_REGISTRY: "http://127.0.0.1:4873",
       }),
     ).toEqual({
       CLAUDE_CONFIG_DIR: "/data/Claude Logs, extra",
@@ -498,6 +501,7 @@ describe("capturedServiceEnv", () => {
       HERMES_HOME: "/data/hermes,/data/hermes/profiles/work",
       HOME: "/home/alex",
       PATH: "/usr/bin",
+      TOKENMAXXING_NPM_REGISTRY: "http://127.0.0.1:4873",
     });
 
     expect(
@@ -803,6 +807,23 @@ describe("native scheduler templates", () => {
     expect(renderSystemdTimer()).toContain("OnUnitActiveSec=5min");
     expect(renderSystemdTimer()).toContain("Persistent=true");
     expect(scheduleDescription()).toBe("syncs every 5 minutes");
+
+    const linuxPath = (configDir: string) =>
+      renderSystemdService(
+        servicePaths({
+          env: { TOKENMAXXING_CONFIG_DIR: configDir },
+          home: "/home/alex",
+          platform: "linux",
+        })!,
+      );
+    // The Linux service e2e caught both: systemd expands %-specifiers inside
+    // quotes, and refuses an executable path with a quote or backslash at all.
+    expect(linuxPath("/home/alex/Zoë (Work) & Co 100%/tm")).toContain(
+      'ExecStart="/home/alex/Zoë (Work) & Co 100%%/tm/tokenmaxxing.sh"\n',
+    );
+    expect(linuxPath(`/home/alex/Zoë O'Neil "x"\\y/tm`)).toContain(
+      `ExecStart=/bin/sh "/home/alex/Zoë O'Neil \\"x\\"\\\\y/tm/tokenmaxxing.sh"\n`,
+    );
 
     const windowsPaths = servicePaths({
       env: { TOKENMAXXING_CONFIG_DIR: "C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing" },
@@ -3409,6 +3430,28 @@ describe("command lookup", () => {
         "/Users/alex/.npm/_npx/123/node_modules/@851-labs/tokenmaxxing/dist/index.js",
       ),
     ).toBe(commandPath);
+  });
+
+  it("detects npm's Windows prefix shims by the package next to them", async () => {
+    // npm on Windows puts tokenmaxxing.cmd straight in the prefix
+    // (%APPDATA%\npm or --prefix), which matches no path pattern; the upgrade
+    // e2e caught `tokenmaxxing upgrade` failing with UpgradeManagerError there.
+    const prefix = await mkdtemp(join(tmpdir(), "tokenmaxxing-npm-prefix-"));
+    try {
+      const shim = join(prefix, "tokenmaxxing.cmd");
+      expect(detectAutoUpdateManager({ commandPath: shim, resolvedCommandPath: shim })).toBeNull();
+      expect(await isWindowsNpmPrefixShim(shim, "win32")).toBe(false);
+
+      await mkdir(join(prefix, "node_modules", "@851-labs", "tokenmaxxing"), { recursive: true });
+      await writeFile(
+        join(prefix, "node_modules", "@851-labs", "tokenmaxxing", "package.json"),
+        "{}",
+      );
+      expect(await isWindowsNpmPrefixShim(shim, "win32")).toBe(true);
+      expect(await isWindowsNpmPrefixShim(shim, "linux")).toBe(false);
+    } finally {
+      await rm(prefix, { force: true, recursive: true });
+    }
   });
 
   it("detects the package manager for common global install paths", () => {

@@ -1,0 +1,258 @@
+# Real-OS e2e for the CLI: the background service on each OS's own scheduler
+# (Task Scheduler, launchd, systemd --user), the global-install shims, and
+# upgrade / auto-update version selection. Unit tests cannot see what these
+# catch: a console window flashing on every Windows sync, a scheduler that
+# never runs the job, a path the unit file mis-parses, a deferred repair that
+# never runs, an upgrade that picks the wrong dist-tag. See apps/cli/e2e/README.md.
+#
+# Path-filtered and not a required check. Run it by hand from the Actions tab
+# ("CLI e2e" -> Run workflow) or `gh workflow run cli-e2e.yml --ref <branch>`
+# (add `-f suites=upgrade` to run one suite).
+name: CLI e2e
+
+on:
+  pull_request:
+    paths:
+      - "apps/cli/src/commands/service*.ts"
+      - "apps/cli/src/commands/upgrade.ts"
+      - "apps/cli/src/cli-version.ts"
+      - "apps/cli/src/service-runner-targets.ts"
+      - "apps/cli/src/ccusage/**"
+      - "apps/cli/script/**"
+      - "apps/cli/package.json"
+      - "apps/cli/e2e/**"
+      - "apps/api/script/sandbox-server.ts"
+      - "packages/api-contract/**"
+      - ".github/workflows/cli-e2e.yml"
+  push:
+    # e2e/canary-* branches deliberately break version selection to prove the
+    # upgrade suite fails; they only run that suite.
+    branches: [main, "e2e/canary-*"]
+    paths:
+      - "apps/cli/src/commands/service*.ts"
+      - "apps/cli/src/commands/upgrade.ts"
+      - "apps/cli/src/cli-version.ts"
+      - "apps/cli/src/service-runner-targets.ts"
+      - "apps/cli/src/ccusage/**"
+      - "apps/cli/script/**"
+      - "apps/cli/package.json"
+      - "apps/cli/e2e/**"
+      - "apps/api/script/sandbox-server.ts"
+      - "packages/api-contract/**"
+      - ".github/workflows/cli-e2e.yml"
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: Which suites to run
+        type: choice
+        options: [all, service, shims, upgrade]
+        default: all
+      artifacts:
+        description: Upload logs and screenshots even when the run passes
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # A version no release will ever have, so nothing mistakes this build for one.
+  E2E_VERSION: 99.0.0-e2e.0
+
+jobs:
+  windows-service:
+    name: Service (${{ matrix.os }})
+    if: (github.event_name != 'workflow_dispatch' || inputs.suites == 'all' || inputs.suites == 'service') && !startsWith(github.ref_name, 'e2e/canary-')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fails fast when the runner's session is not interactive: every
+      # no-visible-window check would pass vacuously.
+      - name: Assert an interactive desktop session
+        run: apps/cli/e2e/windows/session-probe.ps1 -OutDir "$env:RUNNER_TEMP\tmx-e2e\out"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.18.0"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build CLI packages for this host
+        run: bun apps/cli/e2e/shared/build-packages.ts --out "$env:RUNNER_TEMP\tmx-e2e\pkgs" --version $env:E2E_VERSION
+
+      - name: Run service e2e
+        run: apps/cli/e2e/windows/run-service-e2e.ps1 -BuildJson "$env:RUNNER_TEMP\tmx-e2e\pkgs\build.json"
+
+      - name: Upload logs and screenshots
+        if: failure() || inputs.artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-e2e-service-${{ matrix.os }}
+          path: ${{ runner.temp }}\tmx-e2e\out
+          if-no-files-found: warn
+
+  posix-service:
+    name: Service (${{ matrix.os }})
+    if: (github.event_name != 'workflow_dispatch' || inputs.suites == 'all' || inputs.suites == 'service') && !startsWith(github.ref_name, 'e2e/canary-')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.18.0"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build CLI packages for this host
+        run: bun apps/cli/e2e/shared/build-packages.ts --out "$RUNNER_TEMP/tmx-e2e/pkgs" --version "$E2E_VERSION"
+
+      - name: Run service e2e
+        run: bun apps/cli/e2e/posix/service-e2e.ts --build "$RUNNER_TEMP/tmx-e2e/pkgs/build.json"
+
+      - name: Upload logs
+        if: failure() || inputs.artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-e2e-service-${{ matrix.os }}
+          path: ${{ runner.temp }}/tmx-e2e/out
+          if-no-files-found: warn
+
+  windows-shims:
+    name: Shims (${{ matrix.os }})
+    if: (github.event_name != 'workflow_dispatch' || inputs.suites == 'all' || inputs.suites == 'shims') && !startsWith(github.ref_name, 'e2e/canary-')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.18.0"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build CLI packages for this host
+        run: bun apps/cli/e2e/shared/build-packages.ts --out "$env:RUNNER_TEMP\tmx-e2e-shims\pkgs" --version $env:E2E_VERSION
+
+      - name: Run shim matrix
+        run: apps/cli/e2e/windows/run-shim-matrix.ps1 -BuildJson "$env:RUNNER_TEMP\tmx-e2e-shims\pkgs\build.json"
+
+      - name: Upload logs
+        if: failure() || inputs.artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-e2e-shims-${{ matrix.os }}
+          path: ${{ runner.temp }}\tmx-e2e-shims\out
+          if-no-files-found: warn
+
+  posix-shims:
+    name: Shims (${{ matrix.os }})
+    if: (github.event_name != 'workflow_dispatch' || inputs.suites == 'all' || inputs.suites == 'shims') && !startsWith(github.ref_name, 'e2e/canary-')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.18.0"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install --frozen-lockfile
+
+      # Pinned package managers, fetched before the suite blocks the public
+      # registries.
+      - name: Install pnpm and yarn
+        run: npm install -g --prefix "$RUNNER_TEMP/tools" pnpm@10.34.5 yarn@1.22.22 --no-audit --no-fund
+
+      - name: Build CLI packages for this host
+        run: bun apps/cli/e2e/shared/build-packages.ts --out "$RUNNER_TEMP/tmx-e2e-shims/pkgs" --version "$E2E_VERSION"
+
+      - name: Run shim matrix
+        run: bun apps/cli/e2e/posix/shim-matrix.ts --build "$RUNNER_TEMP/tmx-e2e-shims/pkgs/build.json" --tools "$RUNNER_TEMP/tools/bin"
+
+      - name: Upload logs
+        if: failure() || inputs.artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-e2e-shims-${{ matrix.os }}
+          path: ${{ runner.temp }}/tmx-e2e-shims/out
+          if-no-files-found: warn
+
+  upgrade:
+    name: Upgrade (${{ matrix.os }})
+    if: github.event_name != 'workflow_dispatch' || inputs.suites == 'all' || inputs.suites == 'upgrade'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm, macos-latest, ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.18.0"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Run upgrade e2e
+        run: bun apps/cli/e2e/upgrade/upgrade-e2e.ts
+
+      - name: Upload logs
+        if: failure() || inputs.artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-e2e-upgrade-${{ matrix.os }}
+          path: ${{ runner.temp }}/tmx-e2e-upgrade/out
+          if-no-files-found: warn

@@ -1,8 +1,9 @@
 # Windows e2e
 
 Real-Windows checks for the CLI's Task Scheduler service and its global-install
-shims, run by [`.github/workflows/windows-e2e.yml`](../../../../.github/workflows/windows-e2e.yml)
-on `windows-latest` (x64) and `windows-11-arm`. Unit tests cannot see what these
+shims: the Windows jobs of [`.github/workflows/cli-e2e.yml`](../../../../.github/workflows/cli-e2e.yml),
+on `windows-latest` (x64) and `windows-11-arm`. See [the e2e overview](../README.md) for
+the macOS/Linux jobs and the upgrade suite that also runs here. Unit tests cannot see what these
 catch: a console window that flashes up on every scheduled sync, `cmd.exe`
 misparsing a profile path, or a deferred repair that never runs.
 
@@ -18,9 +19,10 @@ this and fails the job if the session isn't interactive.
   (`apps/cli/src/ccusage/**`), packaging (`apps/cli/script/**`,
   `apps/cli/package.json`), the API contract (`packages/api-contract/**`), the
   sandbox API, or the harness and workflow themselves.
-- By hand: Actions → **Windows e2e** → **Run workflow**, or
-  `gh workflow run windows-e2e.yml --ref <branch>`. Tick **artifacts** to keep
-  logs and screenshots from a passing run as well.
+- By hand: Actions → **CLI e2e** → **Run workflow**, or
+  `gh workflow run cli-e2e.yml --ref <branch>` (`-f suites=service` for just the
+  service jobs). Tick **artifacts** to keep logs and screenshots from a passing
+  run as well.
 
 It is not a required check. It only runs on some paths, and a required check
 that is skipped would block merges. Each job takes about 10 minutes.
@@ -28,11 +30,11 @@ that is skipped would block merges. Each job takes about 10 minutes.
 ## Jobs
 
 **Service** (`run-service-e2e.ps1` → `service-e2e.ps1`) builds this checkout
-the way a release does (`build-packages.ts`). It serves the build from a local
-registry (`registry-server.ts`) and installs it with `npm install -g`. Then it
+the way a release does (`../shared/build-packages.ts`). It serves the build from a local
+registry (`../shared/registry-server.ts`) and installs it with `npm install -g`. Then it
 runs these scenarios against the real API over sqlite
 (`apps/api/script/sandbox-server.ts`), with a fake `bun` first on `PATH` so
-scheduled runs get fixed ccusage output (`fakes/`):
+scheduled runs get fixed ccusage output (`../shared/fakes/`):
 
 | Scenario       | Checks                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -65,7 +67,8 @@ XPASS, which fails the job, so the entry is removed together with the fix.
 ## Results
 
 Each job writes `results.jsonl` (one row per check: suite, scenario, check,
-status, detail) and renders it to the job summary. Failures come first, then
+status, detail) and `../shared/summarize.ts` renders it to the job summary, the
+same way as the TypeScript suites. Failures come first, then
 every check in a collapsed table. When a job fails, the whole output
 directory is uploaded as an artifact: results, logs, task XML, the generated
 `.vbs`/`.cmd`, per-run window-watch events and screenshots, and the sandbox
@@ -92,7 +95,7 @@ interactive session:
 
 ```powershell
 bun install
-bun apps/cli/e2e/windows/build-packages.ts --out $env:TEMP\tmx-e2e\pkgs --version 99.0.0-e2e.0
+bun apps/cli/e2e/shared/build-packages.ts --out $env:TEMP\tmx-e2e\pkgs --version 99.0.0-e2e.0
 apps/cli/e2e/windows/session-probe.ps1 -OutDir $env:TEMP\tmx-e2e\out
 apps/cli/e2e/windows/run-service-e2e.ps1 -BuildJson $env:TEMP\tmx-e2e\pkgs\build.json -Force
 ```

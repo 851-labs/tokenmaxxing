@@ -4,13 +4,13 @@
 #
 #   run-service-e2e.ps1 -BuildJson <build.json> [-Root <dir>] [-OutDir <dir>] [-LegacyVersion 0.7.0-alpha.0] [-Force]
 #
-# 1. fake bun (fakes/) first on PATH, so scheduled runs never start real ccusage
+# 1. fake bun (../shared/fakes/) first on PATH, so scheduled runs never start real ccusage
 # 2. the local API sandbox (apps/api/script/sandbox-server.ts) on 127.0.0.1:8799
 # 3. the local registry serving this build; `npm install -g` from it
 # 4. the pinned legacy release's runner package from registry.npmjs.org
 # 5. hosts-file block for the production API and registry.npmjs.org, so no
 #    scheduled run (or runner auto-update) can reach either
-# 6. service-e2e.ps1, then summarize.ps1
+# 6. service-e2e.ps1, then ../shared/summarize.ts
 param(
   [Parameter(Mandatory)] [string]$BuildJson,
   [string]$Root = (Join-Path $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }) "tmx-e2e"),
@@ -47,8 +47,8 @@ function Stop-E2E {
 try {
   Write-Host "::group::fake bun + sandbox API"
   New-Item -ItemType Directory -Force -Path $fakeBin | Out-Null
-  bun build --compile "$PSScriptRoot\fakes\fake-bun.ts" --outfile (Join-Path $fakeBin "bun.exe") | Out-Host
-  Copy-Item -LiteralPath "$PSScriptRoot\fakes\fake-ccusage.mjs" -Destination $fakeBin -Force
+  bun build --compile "$PSScriptRoot\..\shared\fakes\fake-bun.ts" --outfile (Join-Path $fakeBin "bun.exe") | Out-Host
+  Copy-Item -LiteralPath "$PSScriptRoot\..\shared\fakes\fake-ccusage.mjs" -Destination $fakeBin -Force
   $servers += Start-Background "sandbox" "bun" @("$repo\apps\api\script\sandbox-server.ts", "--port", "8799")
   Add-Check "setup" "sandbox API up" (Wait-Http "$api/__sandbox/health" 120) $api
   Write-Host "::endgroup::"
@@ -110,5 +110,5 @@ try {
 $completed = @(Get-Content -LiteralPath (Join-Path $OutDir "results.jsonl") | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object check -EQ "all scenarios ran")
 if ($completed.Count -eq 0) { Add-Check "setup" "service scenarios completed" $false "service-e2e.ps1 never reached its end; see the failures above and service.log" }
 
-& "$PSScriptRoot\summarize.ps1" -OutDir $OutDir -Title "Windows service e2e"
+bun "$PSScriptRoot\..\shared\summarize.ts" --out $OutDir --title "Windows service e2e" | Out-Host
 exit $(if ((Get-FailedChecks).Count -gt 0) { 1 } else { 0 })

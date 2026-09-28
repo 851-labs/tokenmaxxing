@@ -5,8 +5,8 @@
 #   { suite, scenario, check, status, detail }
 # status is PASS, FAIL or INFO. A check tied to a known issue records XFAIL
 # when it fails as expected, and XPASS when it passes: XPASS fails the run so
-# the known-issue entry gets removed once the fix lands. summarize.ps1 renders
-# the file into the GitHub step summary.
+# the known-issue entry gets removed once the fix lands. ../shared/summarize.ts
+# renders the file into the GitHub step summary.
 
 function Initialize-E2E {
   param([Parameter(Mandatory)] [string]$OutDir, [Parameter(Mandatory)] [string]$Suite)
@@ -83,7 +83,7 @@ function Stop-Background($Process) {
 }
 
 # Packs the given package directories with npm and serves them from the
-# local registry (registry-server.ts); returns { process, url }.
+# local registry (../shared/registry-server.ts); returns { process, url }.
 function Start-E2ERegistry([string]$Root, [string[]]$PackageDirs, [int]$Port = 4873) {
   $url = "http://127.0.0.1:$Port"
   $tarballDir = Join-Path $Root "registry"
@@ -93,7 +93,7 @@ function Start-E2ERegistry([string]$Root, [string[]]$PackageDirs, [int]$Port = 4
     if ($LASTEXITCODE -ne 0 -or -not $packed) { throw "npm pack $dir failed" }
     Join-Path $tarballDir $packed[0].filename
   }
-  $process = Start-Background "registry" "bun" (@("$PSScriptRoot\..\registry-server.ts", "--port", "$Port") + $tarballs)
+  $process = Start-Background "registry" "bun" (@("$PSScriptRoot\..\..\shared\registry-server.ts", "--port", "$Port") + $tarballs)
   if (-not (Wait-Http "$url/-/ping" 60)) {
     Get-Content -LiteralPath (Join-Path $script:E2EOutDir "registry.err.log") -ErrorAction SilentlyContinue | Write-Host
     throw "e2e registry did not start"

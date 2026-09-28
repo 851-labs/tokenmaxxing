@@ -106,5 +106,5 @@ try {
 if (-not (Select-String -LiteralPath (Join-Path $OutDir "results.jsonl") -SimpleMatch '"all installers ran"' -Quiet)) {
   Add-Check "shims" "matrix completed" $false "run-shim-matrix.ps1 never reached its end"
 }
-& "$PSScriptRoot\summarize.ps1" -OutDir $OutDir -Title "Windows global-install shims"
+bun "$PSScriptRoot\..\shared\summarize.ts" --out $OutDir --title "Windows global-install shims" | Out-Host
 exit $(if ((Get-FailedChecks).Count -gt 0) { 1 } else { 0 })

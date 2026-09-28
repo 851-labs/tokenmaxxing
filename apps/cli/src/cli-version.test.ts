@@ -5,6 +5,9 @@ import {
   distTagsFromRegistry,
   followedDistTags,
   isNewerVersion,
+  npmDistTagsUrl,
+  npmRegistryPackageUrl,
+  npmRegistryUrl,
   parseSemVer,
   releaseChannel,
   resolveUpdate,
@@ -255,5 +258,26 @@ describe("distTagsFromRegistry", () => {
     expect(distTagsFromRegistry(null)).toBeNull();
     expect(distTagsFromRegistry("0.6.0")).toBeNull();
     expect(distTagsFromRegistry(["0.6.0"])).toBeNull();
+  });
+});
+
+describe("npmRegistryUrl", () => {
+  it("defaults to registry.npmjs.org", () => {
+    expect(npmRegistryUrl({})).toBe("https://registry.npmjs.org");
+    expect(npmRegistryUrl({ TOKENMAXXING_NPM_REGISTRY: "  " })).toBe("https://registry.npmjs.org");
+    expect(npmDistTagsUrl({})).toBe(
+      "https://registry.npmjs.org/-/package/@851-labs%2Ftokenmaxxing/dist-tags",
+    );
+  });
+
+  it("honors TOKENMAXXING_NPM_REGISTRY for version checks and runner packages", () => {
+    const env = { TOKENMAXXING_NPM_REGISTRY: "http://127.0.0.1:4873/" };
+    expect(npmRegistryUrl(env)).toBe("http://127.0.0.1:4873");
+    expect(npmDistTagsUrl(env)).toBe(
+      "http://127.0.0.1:4873/-/package/@851-labs%2Ftokenmaxxing/dist-tags",
+    );
+    expect(npmRegistryPackageUrl("@851-labs/tokenmaxxing-linux-x64", env)).toBe(
+      "http://127.0.0.1:4873/@851-labs%2Ftokenmaxxing-linux-x64",
+    );
   });
 });
