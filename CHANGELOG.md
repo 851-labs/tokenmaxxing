@@ -5,6 +5,11 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Changed
+
+- `tokenmaxxing login` now waits out the server's new per-network login rate limit (HTTP 429,
+  honouring its retry delay) instead of failing mid-login, and explains a rate-limited start.
+
 ## 0.7.0-alpha.1 - 2026-09-26
 
 ### Added

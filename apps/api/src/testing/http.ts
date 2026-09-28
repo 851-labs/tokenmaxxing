@@ -10,6 +10,7 @@ import { makeApiHttpEffect } from "../http/layer";
 import { LeaderboardService } from "../leaderboard/service";
 import { OAuthProviders } from "../oauth/registry";
 import { ProfilesService } from "../profiles/service";
+import { RateLimiter, unlimitedRateLimiter } from "../ratelimit/service";
 import { StatsService } from "../stats/service";
 import { TokensService } from "../tokens/service";
 import { UsageService } from "../usage/service";
@@ -28,6 +29,8 @@ interface TestAppServices {
   cliLogin?: Partial<CliLoginService["Service"]>;
   leaderboard?: Partial<LeaderboardService["Service"]>;
   profiles?: Partial<ProfilesService["Service"]>;
+  /** Defaults to never limiting (see testing/rate-limiter for a counting fake). */
+  rateLimiter?: RateLimiter["Service"];
   stats?: Partial<StatsService["Service"]>;
   tokens?: Partial<TokensService["Service"]>;
   usage?: Partial<UsageService["Service"]>;
@@ -70,6 +73,7 @@ async function makeTestApp(services: TestAppServices = {}): Promise<TestApp> {
     Context.add(LeaderboardService, leaderboard),
     Context.add(OAuthProviders, stub<OAuthProviders["Service"]>("OAuthProviders")),
     Context.add(ProfilesService, profiles),
+    Context.add(RateLimiter, services.rateLimiter ?? unlimitedRateLimiter),
     Context.add(StatsService, stats),
     Context.add(TokensService, tokens),
     Context.add(UsageService, usage),

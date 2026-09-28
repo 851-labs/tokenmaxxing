@@ -22,6 +22,7 @@ import { AppConfig } from "../config";
 import { LeaderboardService } from "../leaderboard/service";
 import { OAuthProviders } from "../oauth/registry";
 import { ProfilesService } from "../profiles/service";
+import { RateLimiter } from "../ratelimit/service";
 import { StatsService } from "../stats/service";
 import {
   CCUSAGE_FIXTURE_SOURCES,
@@ -152,6 +153,9 @@ const usageRepository = {
   upsertSourceStats: vi.fn(() => Effect.void),
 };
 
+/** The one client IP the stub limiter refuses; every other IP is under its cap. */
+const LIMITED_IP = "203.0.113.9";
+
 let scope: Scope.Closeable;
 let handle: (request: Request) => Promise<Response>;
 let logs: TestLogger;
@@ -225,6 +229,7 @@ beforeAll(async () => {
     Context.add(LeaderboardService, unused<LeaderboardService["Service"]>()),
     Context.add(OAuthProviders, unused<OAuthProviders["Service"]>()),
     Context.add(ProfilesService, unused<ProfilesService["Service"]>()),
+    Context.add(RateLimiter, { limit: (_rule, key) => Effect.succeed(key !== LIMITED_IP) }),
     Context.add(StatsService, unused<StatsService["Service"]>()),
     Context.add(TokensService, tokens),
     Context.add(UsageService, usage),
@@ -454,6 +459,40 @@ describe("request-level errors", () => {
       expect(logs.entries).toEqual([
         expect.objectContaining({ level: "Error", message: "credential lookup failed" }),
       ]);
+    },
+  );
+
+  // Released CLIs predate the login rate limit; a 429 must fail their login
+  // generically (as a network error would), never as a tag they act on.
+  it.each(fixtures.filter(({ fixture }) => fixture.endpoint.startsWith("cliLogin.")))(
+    "$file from a rate-limited IP is 429 TooManyRequests with Retry-After",
+    async ({ fixture }) => {
+      const response = await handle(
+        new Request(`https://api.tokenmaxxing.sh${fixture.path}`, {
+          body: JSON.stringify(fixture.body),
+          headers: { "cf-connecting-ip": LIMITED_IP, "content-type": "application/json" },
+          method: fixture.method,
+        }),
+      );
+
+      expect(response.headers.get("retry-after")).toBe("60");
+      expect(response.headers.get("x-request-id")).not.toBeNull();
+      await expectUnbranchedError(response, 429, "TooManyRequests");
+    },
+  );
+
+  it.each(fixtures.filter(({ fixture }) => fixture.endpoint.startsWith("cliLogin.")))(
+    "$file from an IP under the cap is served",
+    async ({ fixture }) => {
+      const response = await handle(
+        new Request(`https://api.tokenmaxxing.sh${fixture.path}`, {
+          body: JSON.stringify(fixture.body),
+          headers: { "cf-connecting-ip": "198.51.100.7", "content-type": "application/json" },
+          method: fixture.method,
+        }),
+      );
+
+      decodeReleased(RELEASED_CLI_RESPONSES[fixture.endpoint], await response.json());
     },
   );
 

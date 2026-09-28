@@ -13,8 +13,8 @@ import { DeviceId, TokenId, UserId } from "./schemas";
  * InternalServerError (or ServiceUnavailable while resolving credentials).
  *
  * The request-level errors (BadRequest, PayloadTooLarge, UnsupportedMediaType,
- * RouteNotFound, MethodNotAllowed, InternalServerError, ServiceUnavailable)
- * are produced by
+ * RouteNotFound, MethodNotAllowed, TooManyRequests, InternalServerError,
+ * ServiceUnavailable) are produced by
  * the server's HTTP stack rather than by services, so every non-2xx response
  * shares the same `{ _tag, message }` envelope.
  *
@@ -139,6 +139,21 @@ class MethodNotAllowed extends Schema.TaggedError<MethodNotAllowed>()(
   { httpApiStatus: 405 },
 ) {}
 
+/**
+ * A per-client request rate limit tripped (the unauthenticated CLI login
+ * endpoints). Retry after `retryAfterSeconds`, which the response also sends
+ * as a `Retry-After` header. Released CLIs have no decoder for it and fail
+ * the request generically.
+ */
+class TooManyRequests extends Schema.TaggedError<TooManyRequests>()(
+  "TooManyRequests",
+  {
+    message: message("Too many requests; try again shortly."),
+    retryAfterSeconds: Schema.Int,
+  },
+  { httpApiStatus: 429 },
+) {}
+
 /** An unexpected server fault. Details are logged under the response's
  * x-request-id, never sent. */
 class InternalServerError extends Schema.TaggedError<InternalServerError>()(
@@ -174,6 +189,7 @@ const ApiErrors = [
   ServiceUnavailable,
   TokenDeviceUnbound,
   TokenNotFound,
+  TooManyRequests,
   Unauthorized,
   UnsupportedMediaType,
   UserNotFound,
@@ -199,6 +215,7 @@ export {
   ServiceUnavailable,
   TokenDeviceUnbound,
   TokenNotFound,
+  TooManyRequests,
   Unauthorized,
   UnsupportedMediaType,
   UserNotFound,

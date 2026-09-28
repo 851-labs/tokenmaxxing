@@ -16,9 +16,11 @@ import { LeaderboardService } from "../leaderboard/service";
 import { OAuthProviders } from "../oauth/registry";
 import { latestUsageDateKey } from "../date-keys";
 import { ProfilesService } from "../profiles/service";
+import { RATE_LIMIT_RULES, RateLimiter, unlimitedRateLimiter } from "../ratelimit/service";
 import { ServicesLive } from "../services";
 import { StatsService } from "../stats/service";
 import { makeTestApp, TEST_CORS_ORIGIN, type TestApp } from "../testing/http";
+import { makeFakeRateLimiter } from "../testing/rate-limiter";
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
 import { TokensService } from "../tokens/service";
 import { RawUsageObjectStore } from "../usage/raw-store";
@@ -552,6 +554,7 @@ describe("api wiring over real services", () => {
         Layer.provideMerge(
           Layer.mergeAll(
             Layer.succeed(AppConfig, config),
+            Layer.succeed(RateLimiter, makeFakeRateLimiter().service),
             database.drizzleLayer,
             RawUsageObjectStore.layer({ delete: () => Effect.void, put: () => Effect.void }),
           ),
@@ -637,6 +640,50 @@ describe("api wiring over real services", () => {
     });
   });
 
+  it("stops CLI login floods before they reach D1", async () => {
+    const login = (path: string, body: unknown) =>
+      serve(
+        fetch,
+        new Request(`https://api.tokenmaxxing.sh${path}`, {
+          body: JSON.stringify(body),
+          headers: {
+            "cf-connecting-ip": "203.0.113.9",
+            "content-type": "application/json",
+            host: "api.tokenmaxxing.sh",
+          },
+          method: "POST",
+        }),
+      );
+    const start = {
+      deviceId: "7d0f3a52-5f0a-4f39-9d7c-3b8f1c2a9e11",
+      deviceName: "fixture-host",
+      devicePlatform: "darwin",
+      flow: "device_code",
+    };
+    const { limit: startLimit } = RATE_LIMIT_RULES.cliLoginStart;
+    const { limit: pollLimit } = RATE_LIMIT_RULES.cliLoginPoll;
+
+    for (let index = 0; index < startLimit; index += 1) {
+      expect((await login("/cli/login/start", start)).status).toBe(200);
+    }
+    for (let index = 0; index < pollLimit; index += 1) {
+      expect((await login("/cli/login/poll", { deviceCode: "unknown" })).status).toBe(404);
+    }
+    const queries = database.executed.length;
+
+    for (let index = 0; index < 5; index += 1) {
+      const started = await login("/cli/login/start", start);
+      const polled = await login("/cli/login/poll", { deviceCode: "unknown" });
+      expect([started.status, polled.status]).toEqual([429, 429]);
+      expect(started.headers.get("retry-after")).toBe("60");
+    }
+
+    expect(database.executed.length).toBe(queries);
+    expect(
+      database.sqlite.prepare("select count(*) as count from cli_login_requests").get(),
+    ).toEqual({ count: startLimit });
+  });
+
   it("clears the session cookie on sign-out", async () => {
     const response = await serve(
       fetch,
@@ -684,6 +731,7 @@ function makeHarness() {
       Layer.succeed(LeaderboardService, LeaderboardService.of({ list: () => Effect.succeed([]) })),
       Layer.succeed(OAuthProviders, stub(OAuthProviders)),
       Layer.succeed(ProfilesService, profiles),
+      Layer.succeed(RateLimiter, unlimitedRateLimiter),
       Layer.succeed(StatsService, stub(StatsService)),
       Layer.succeed(TokensService, stub(TokensService)),
       Layer.succeed(UsageService, stub(UsageService)),

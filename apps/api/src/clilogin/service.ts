@@ -340,6 +340,7 @@ export {
   LEGACY_LOGIN_SUNSET,
   LOGIN_REQUEST_TTL_MS,
   makeCliLoginService,
+  POLL_INTERVAL_SECONDS,
 };
 
 export type { CliLoginRepositoryShape };
