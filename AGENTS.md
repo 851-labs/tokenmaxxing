@@ -23,3 +23,10 @@
 - CLI tokens (`tmx_` prefix) never expire; revocation (`revokedAt`) is the only kill switch.
 - D1 caps a statement at 100 bound parameters, and the sqlite test harness (`apps/api/src/testing/sqlite-d1.ts`) enforces it. Never bind an unbounded list: chunk it, or pass it as one JSON parameter through `json_each`.
 - Keep `bun run test` output clean. A test that exercises a logging path captures and asserts the log (`makeTestLogger` in `apps/api/src/testing/logger.ts`; `vi.spyOn(console, ...)` outside Effect) instead of letting it print. `makeTestApp` already captures into `app.logs`. Captured Effect logs are replayed when a test fails.
+
+## Reference Repos
+
+- `.repos/` holds upstream source as git submodules, for reading how a dependency actually behaves. It is read-only: never edit, import from, or build it (lint, format and tests already ignore it).
+- `.repos/effect-smol` and `.repos/alchemy-effect` are pinned to the release tags matching the catalog versions in the root `package.json` (`effect@X` and `vX` tags). When bumping `effect` or `alchemy` in the catalog, move the submodule to the matching tag in the same PR: `git -C .repos/effect-smol fetch --tags && git -C .repos/effect-smol checkout effect@X`, then stage `.repos/effect-smol`. Don't use `git submodule update --remote`.
+- `.repos/opencode` is not a dependency; it tracks upstream `dev` as a reference for OpenCode's data and CLI patterns.
+- Fetch them with `git submodule update --init .repos/<name>`. If a checkout is missing, stale or disagrees with the installed version, `node_modules` is the source of truth.
