@@ -5,6 +5,22 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Added
+
+- `TOKENMAXXING_NPM_REGISTRY` points the CLI's version checks and service-runner downloads at
+  another npm registry (a mirror, or the CLI e2e's local registry). A service install captures
+  it for scheduled syncs.
+
+### Fixed
+
+- `tokenmaxxing upgrade` now works for npm global installs on Windows. Their shim sits directly
+  in the npm prefix, so the install method was not detected and upgrade stopped with "could not
+  detect how tokenmaxxing was globally installed".
+- On Linux, automatic sync now runs when the config directory contains `%`, a quote or a
+  backslash (for example `/home/o'neil`). systemd refused to load the unit (`bad-setting`), so
+  the timer never synced even though `service install` reported success. Run
+  `tokenmaxxing service repair` to rewrite an affected unit.
+
 ## 0.7.0-alpha.1 - 2026-09-26
 
 ### Added
