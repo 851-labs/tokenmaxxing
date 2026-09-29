@@ -25,6 +25,14 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   backslash (for example `/home/o'neil`). systemd refused to load the unit (`bad-setting`), so
   the timer never synced even though `service install` reported success. Run
   `tokenmaxxing service repair` to rewrite an affected unit.
+- On macOS, updating the CLI (and later, restarts or other apps' login items changing) no
+  longer shows "“tokenmaxxing.sh” can run in the background" again. Every update rewrote the
+  launchd plist and the service script with the same content and reloaded the job, and macOS
+  treats any rewritten file as a new background item. Service refreshes and repairs now leave
+  unchanged files alone and only reload the scheduler (launchd or systemd) when its definition
+  changed or it is not running what is on disk. The script also keeps the same `PATH` from any
+  terminal: per-shell fnm directories resolve to fnm's default alias, and temporary, agent
+  session, project `node_modules/.bin` and app-bundle directories are left out.
 - On macOS and Linux, a Ctrl+C or `kill` that arrives while `tokenmaxxing` is still starting
   is now passed on to the native binary instead of killing only the npm launcher and leaving
   the binary running.

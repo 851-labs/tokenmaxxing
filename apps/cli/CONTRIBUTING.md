@@ -46,3 +46,41 @@ Pass `-f suites=upgrade` (or `service`, `shims`) to run one suite. See
 The CLI reads `TOKENMAXXING_NPM_REGISTRY` (default `https://registry.npmjs.org`)
 for its version checks and service-runner downloads, and a service install
 captures it. The e2e uses it to point the CLI at its local registry.
+
+## macOS background item notifications
+
+macOS Background Task Management (BTM) tracks the launchd plist
+(`~/Library/LaunchAgents/sh.tokenmaxxing.sync.plist`) and the program it runs
+(`tokenmaxxing.sh`). Measured on macOS 27.2 with a throwaway agent (2026-09-28):
+
+- BTM re-checks every agent whenever anything in `~/Library/LaunchAgents`
+  changes (any app's plist, not just ours). A `launchctl
+bootout` + `bootstrap` with no file change triggers nothing.
+- An unsigned item counts as modified when either file is replaced (atomic
+  rewrite, new inode) or its mtime changes, **even with identical bytes**. A
+  `chmod` (ctime only) does not count. Each modification gets a new record,
+  marked "not notified", and posts "“tokenmaxxing.sh” can run in the
+  background". After three posts BTM logs `Exceeded max notifications` and goes
+  quiet for that item.
+- A Developer ID-signed program is grouped under its developer. Changing the
+  plist or replacing the binary with a new build signed by the same team logs
+  `updated item with same LWCR` and posts nothing.
+
+So the service only writes a file whose bytes differ, keeps the captured `PATH`
+the same from any shell (`src/commands/service-path.ts`), and reloads the job
+only when its definition changed or the loaded job differs from it. Any change
+to the wrapper's bytes (a template bump, a changed source root) still shows the
+notification once.
+
+To watch BTM yourself (no sudo needed):
+
+```bash
+sfltool dumpbtm | grep -B4 -A10 'sh.tokenmaxxing'
+```
+
+```bash
+/usr/bin/log stream --predicate 'process == "backgroundtaskmanagementd" OR process == "BackgroundTaskManagementAgent"'
+```
+
+Test with your own label and plist. `service` and `upgrade` commands act on the
+real service unless `TOKENMAXXING_CONFIG_DIR` points elsewhere.

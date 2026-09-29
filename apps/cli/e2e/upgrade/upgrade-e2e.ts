@@ -17,7 +17,7 @@
  *   bun apps/cli/e2e/upgrade/upgrade-e2e.ts [--root <dir>] [--out <dir>] [--force]
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
 import {
@@ -74,7 +74,10 @@ const PACKAGE = "@851-labs/tokenmaxxing";
 // Nothing listens here: the registry is unreachable, not just failing.
 const DEAD_REGISTRY = "http://127.0.0.1:9";
 
-const root = flag("root") ?? join(process.env.RUNNER_TEMP ?? tmpdir(), "tmx-e2e-upgrade");
+// Not under the OS temp dir: a service install drops temporary directories from
+// the PATH it captures, and the fake bun lives under the root.
+const root =
+  flag("root") ?? join(process.env.RUNNER_TEMP ?? join(homedir(), ".cache"), "tmx-e2e-upgrade");
 const outDir = flag("out") ?? join(root, "out");
 assertDisposableMachine(process.argv.includes("--force"));
 initE2E(outDir, "upgrade");

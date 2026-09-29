@@ -36,12 +36,14 @@ import {
   findCommandOnPath,
   formatServiceLockStatus,
   formatServiceStatusAutoUpdate,
+  installNativeScheduler,
   installServiceRunner,
   installServiceRunnerForRepair,
   installServiceRunnerFromOptionalPackage,
   isEphemeralCommandPath,
   isTransientCommandShimPath,
   isWindowsNpmPrefixShim,
+  launchdJobMatches,
   legacyServiceWrapperPaths,
   readCurrentServiceRunnerInstall,
   readWindowsLauncherStatus,
@@ -76,11 +78,13 @@ import {
   ServiceRunnerUpdateError,
   type CommandInstall,
   type ServiceAutoUpdateReport,
+  type ServiceFilesChange,
   type ServiceMetadata,
   type ServicePaths,
   type ServiceState,
   servicePaths,
   serviceStateJson,
+  systemdUnitsAreCurrent,
   verifyNpmIntegrity,
   waitForServiceRunExit,
   encodeWindowsTaskXml,
@@ -256,6 +260,7 @@ function makeInstallRuntime(
     version: "0.4.17",
   };
   const installed: ServicePaths[] = [];
+  const schedulerChanges: ServiceFilesChange[] = [];
   const pointerWrites: Array<{ paths: ServicePaths; runnerPath: string }> = [];
   const written: Array<{
     metadata: ServiceMetadata;
@@ -273,9 +278,10 @@ function makeInstallRuntime(
       },
       findCommandInstall: () => Effect.succeed(commandInstall),
       home: "/Users/alex",
-      installScheduler: (paths: ServicePaths) =>
+      installScheduler: (paths: ServicePaths, change: ServiceFilesChange) =>
         Effect.sync(() => {
           installed.push(paths);
+          schedulerChanges.push(change);
         }),
       installServiceRunner: () => Effect.succeed(runner),
       now: new Date("2026-06-16T12:00:00.000Z"),
@@ -283,6 +289,7 @@ function makeInstallRuntime(
       writeFiles: (paths: ServicePaths, wrapper: string, metadata: ServiceMetadata) =>
         Effect.sync(() => {
           written.push({ metadata, paths, wrapper });
+          return { definition: false, wrapper: true };
         }),
       writeRunnerPointer: (paths: ServicePaths, runnerPath: string): Effect.Effect<void, never> =>
         Effect.sync(() => {
@@ -291,6 +298,7 @@ function makeInstallRuntime(
     },
     pointerWrites,
     runner,
+    schedulerChanges,
     written,
   };
 }
@@ -849,6 +857,255 @@ describe("native scheduler templates", () => {
     ).toContain(
       "<TimeTrigger>\r\n      <StartBoundary>2026-09-05T07:03:00</StartBoundary>\r\n      <Repetition>\r\n        <Interval>PT5M</Interval>",
     );
+  });
+});
+
+describe("unchanged service refresh", () => {
+  const metadata: ServiceMetadata = {
+    autoUpdateManager: "registry",
+    backend: "launchd",
+    commandPath: "/Users/alex/.config/tokenmaxxing/service-runners/0.7.0/tokenmaxxing",
+    installedAt: "2026-09-28T09:00:00.000Z",
+    schedule: "syncs every 5 minutes",
+    templateVersion: 6,
+    version: 1,
+  };
+  const wrapper = "#!/bin/sh\nexport PATH='/usr/bin:/bin'\n";
+
+  async function fileIdentity(path: string) {
+    const info = await stat(path);
+    return { ino: info.ino, mode: info.mode & 0o777, mtimeMs: info.mtimeMs };
+  }
+
+  it("leaves an identical plist and wrapper untouched and reports what changed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-refresh-launchd-"));
+
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: join(dir, "config") },
+        home: dir,
+        platform: "darwin",
+      })!;
+
+      expect(await Effect.runPromise(writeServiceFiles(paths, wrapper, metadata))).toEqual({
+        definition: true,
+        wrapper: true,
+      });
+      const plist = await fileIdentity(paths.definitionPath!);
+      const script = await fileIdentity(paths.wrapperPath);
+      expect(script.mode).toBe(0o755);
+
+      expect(await Effect.runPromise(writeServiceFiles(paths, wrapper, metadata))).toEqual({
+        definition: false,
+        wrapper: false,
+      });
+      expect(await fileIdentity(paths.definitionPath!)).toEqual(plist);
+      expect(await fileIdentity(paths.wrapperPath)).toEqual(script);
+
+      // A lost executable bit is restored in place, without replacing the file.
+      await chmod(paths.wrapperPath, 0o644);
+      expect(await Effect.runPromise(writeServiceFiles(paths, wrapper, metadata))).toEqual({
+        definition: false,
+        wrapper: false,
+      });
+      expect(await fileIdentity(paths.wrapperPath)).toEqual(script);
+
+      const changed = `${wrapper}# changed\n`;
+      expect(await Effect.runPromise(writeServiceFiles(paths, changed, metadata))).toEqual({
+        definition: false,
+        wrapper: true,
+      });
+      expect(await readFile(paths.wrapperPath, "utf8")).toBe(changed);
+      expect((await fileIdentity(paths.wrapperPath)).mode).toBe(0o755);
+      expect(await fileIdentity(paths.definitionPath!)).toEqual(plist);
+
+      await writeFile(paths.definitionPath!, "<plist/>\n");
+      expect(await Effect.runPromise(writeServiceFiles(paths, changed, metadata))).toEqual({
+        definition: true,
+        wrapper: false,
+      });
+      expect(await readFile(paths.definitionPath!, "utf8")).toBe(renderLaunchdPlist(paths));
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("reports a systemd change when either unit differs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-refresh-systemd-"));
+
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: join(dir, "config"), XDG_CONFIG_HOME: join(dir, "xdg") },
+        home: dir,
+        platform: "linux",
+      })!;
+      const timerPath = paths.definitionPath!.replace(/\.service$/, ".timer");
+
+      await Effect.runPromise(writeServiceFiles(paths, wrapper, metadata));
+      const unit = await fileIdentity(paths.definitionPath!);
+      expect(await Effect.runPromise(writeServiceFiles(paths, wrapper, metadata))).toEqual({
+        definition: false,
+        wrapper: false,
+      });
+      expect(await fileIdentity(paths.definitionPath!)).toEqual(unit);
+
+      await writeFile(timerPath, "[Timer]\n");
+      expect(await Effect.runPromise(writeServiceFiles(paths, wrapper, metadata))).toEqual({
+        definition: true,
+        wrapper: false,
+      });
+      expect(await readFile(timerPath, "utf8")).toBe(renderSystemdTimer());
+      expect(await fileIdentity(paths.definitionPath!)).toEqual(unit);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  const launchdPaths = servicePaths({
+    env: { TOKENMAXXING_CONFIG_DIR: "/Users/alex/.config/tokenmaxxing" },
+    home: "/Users/alex",
+    platform: "darwin",
+  })!;
+  // Trimmed `launchctl print gui/501/sh.tokenmaxxing.sync` output from macOS 27.
+  const launchctlPrint = (overrides: { interval?: number; program?: string } = {}) =>
+    [
+      "gui/501/sh.tokenmaxxing.sync = {",
+      "\tactive count = 0",
+      "\tpath = /Users/alex/Library/LaunchAgents/sh.tokenmaxxing.sync.plist",
+      "\ttype = LaunchAgent",
+      "\tstate = not running",
+      "",
+      `\tprogram = ${overrides.program ?? "/Users/alex/.config/tokenmaxxing/tokenmaxxing.sh"}`,
+      "\targuments = {",
+      "\t\t/Users/alex/.config/tokenmaxxing/tokenmaxxing.sh",
+      "\t}",
+      "",
+      "\tstdout path = /Users/alex/.config/tokenmaxxing/service.log",
+      "\tstderr path = /Users/alex/.config/tokenmaxxing/service.log",
+      "\tdefault environment = {",
+      "\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin",
+      "\t}",
+      "",
+      "\truns = 122",
+      "\tlast exit code = 0",
+      `\trun interval = ${overrides.interval ?? 300} seconds`,
+      "\tproperties = inferred program",
+      "}",
+      "",
+    ].join("\n");
+
+  function recordingScheduler(output: string | null) {
+    const commands: string[] = [];
+    const runtime = {
+      readOutput: (command: string, args: readonly string[]) =>
+        Effect.sync(() => {
+          commands.push(`read ${command} ${args[0] === "--user" ? args[1] : args[0]}`);
+          return output;
+        }),
+      run: (command: string, args: readonly string[]) =>
+        Effect.sync(() => {
+          commands.push(`${command} ${args.filter((arg) => !arg.startsWith("/")).join(" ")}`);
+        }),
+    };
+    return { commands, runtime };
+  }
+
+  it("matches the loaded launchd job against every setting the plist renders", () => {
+    expect(launchdJobMatches(launchctlPrint(), launchdPaths)).toBe(true);
+    expect(launchdJobMatches(launchctlPrint({ interval: 3600 }), launchdPaths)).toBe(false);
+    expect(
+      launchdJobMatches(
+        launchctlPrint({ program: "/Users/alex/.config/tokenmaxxing/service-sync.sh" }),
+        launchdPaths,
+      ),
+    ).toBe(false);
+    expect(launchdJobMatches("", launchdPaths)).toBe(false);
+  });
+
+  it("does not reload launchd when the plist is unchanged and the loaded job matches it", async () => {
+    const unchanged = { definition: false, wrapper: true };
+    const current = recordingScheduler(launchctlPrint());
+    await Effect.runPromise(installNativeScheduler(launchdPaths, unchanged, current.runtime));
+    expect(current.commands).toEqual(["read launchctl print"]);
+
+    // Not loaded (bootout by hand, a failed bootstrap): the scheduler is broken, so reload.
+    const unloaded = recordingScheduler(null);
+    await Effect.runPromise(installNativeScheduler(launchdPaths, unchanged, unloaded.runtime));
+    expect(unloaded.commands).toEqual(
+      [
+        "read launchctl print",
+        "launchctl bootout gui/501",
+        "launchctl bootstrap gui/501",
+        "launchctl enable gui/501/sh.tokenmaxxing.sync",
+      ].map((command) => command.replaceAll("501", String(process.getuid?.() ?? 501))),
+    );
+
+    // Loaded from older settings (a deferred repair rewrote the plist without reloading).
+    const stale = recordingScheduler(launchctlPrint({ interval: 3600 }));
+    await Effect.runPromise(installNativeScheduler(launchdPaths, unchanged, stale.runtime));
+    expect(stale.commands).toHaveLength(4);
+
+    const changed = recordingScheduler(launchctlPrint());
+    await Effect.runPromise(
+      installNativeScheduler(launchdPaths, { definition: true, wrapper: false }, changed.runtime),
+    );
+    expect(changed.commands).toHaveLength(3);
+    expect(changed.commands[0]).toMatch(/^launchctl bootout/);
+  });
+
+  const systemdPaths = servicePaths({
+    env: { TOKENMAXXING_CONFIG_DIR: "/home/alex/.config/tokenmaxxing" },
+    home: "/home/alex",
+    platform: "linux",
+  })!;
+  const systemctlShow = (timer: { active?: string; needReload?: string; state?: string } = {}) =>
+    [
+      "Id=tokenmaxxing-sync.service",
+      "NeedDaemonReload=no",
+      "ActiveState=inactive",
+      "UnitFileState=static",
+      "",
+      "Id=tokenmaxxing-sync.timer",
+      `NeedDaemonReload=${timer.needReload ?? "no"}`,
+      `ActiveState=${timer.active ?? "active"}`,
+      `UnitFileState=${timer.state ?? "enabled"}`,
+      "",
+    ].join("\n");
+
+  it("reads systemd's view of both units", () => {
+    expect(systemdUnitsAreCurrent(systemctlShow())).toBe(true);
+    expect(systemdUnitsAreCurrent(systemctlShow({ needReload: "yes" }))).toBe(false);
+    expect(systemdUnitsAreCurrent(systemctlShow({ active: "inactive" }))).toBe(false);
+    expect(systemdUnitsAreCurrent(systemctlShow({ state: "disabled" }))).toBe(false);
+    expect(
+      systemdUnitsAreCurrent(
+        systemctlShow().replace("NeedDaemonReload=no", "NeedDaemonReload=yes"),
+      ),
+    ).toBe(false);
+  });
+
+  it("skips daemon-reload and the timer when the units are unchanged and current", async () => {
+    const unchanged = { definition: false, wrapper: true };
+    const current = recordingScheduler(systemctlShow());
+    await Effect.runPromise(installNativeScheduler(systemdPaths, unchanged, current.runtime));
+    expect(current.commands).toEqual(["read systemctl show"]);
+
+    const inactive = recordingScheduler(systemctlShow({ active: "inactive" }));
+    await Effect.runPromise(installNativeScheduler(systemdPaths, unchanged, inactive.runtime));
+    expect(inactive.commands).toEqual([
+      "read systemctl show",
+      "systemctl --user daemon-reload",
+      "systemctl --user enable --now tokenmaxxing-sync.timer",
+    ]);
+
+    const changed = recordingScheduler(systemctlShow());
+    await Effect.runPromise(
+      installNativeScheduler(systemdPaths, { definition: true, wrapper: false }, changed.runtime),
+    );
+    expect(changed.commands).toEqual([
+      "systemctl --user daemon-reload",
+      "systemctl --user enable --now tokenmaxxing-sync.timer",
+    ]);
   });
 });
 
@@ -3088,7 +3345,8 @@ describe("serviceInstallProgram", () => {
         wwwUrl: "https://tokenmaxxing.example",
       },
     });
-    const { installed, pointerWrites, runtime, runner, written } = makeInstallRuntime();
+    const { installed, pointerWrites, runtime, runner, schedulerChanges, written } =
+      makeInstallRuntime();
 
     const exit = await Effect.runPromiseExit(
       serviceInstallProgram({ force: false, refresh: false }, runtime).pipe(Effect.provide(layer)),
@@ -3112,6 +3370,8 @@ describe("serviceInstallProgram", () => {
     ]);
     expect(written).toHaveLength(1);
     expect(installed).toEqual([written[0]?.paths]);
+    // The scheduler decides whether to reload from what the file write changed.
+    expect(schedulerChanges).toEqual([{ definition: false, wrapper: true }]);
     expect(pointerWrites).toEqual([{ paths: written[0]?.paths, runnerPath: runner.path }]);
     expect(written[0]?.metadata).toMatchObject({
       autoUpdateManager: "registry",
