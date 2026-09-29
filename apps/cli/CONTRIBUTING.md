@@ -62,6 +62,10 @@ bootout` + `bootstrap` with no file change triggers nothing.
   marked "not notified", and posts "“tokenmaxxing.sh” can run in the
   background". After three posts BTM logs `Exceeded max notifications` and goes
   quiet for that item.
+- A restart runs the same check at login: an agent whose program was touched
+  before the restart notified after it, while unchanged agents (notified,
+  "not notified", or past the cap) stayed silent. Restarts surface earlier
+  rewrites; they do not re-notify on their own.
 - A Developer ID-signed program is grouped under its developer. Changing the
   plist or replacing the binary with a new build signed by the same team logs
   `updated item with same LWCR` and posts nothing.

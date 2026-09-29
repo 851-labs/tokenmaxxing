@@ -930,14 +930,20 @@ async function legacyUpgrade() {
   );
   keep(outDir, writeTemp("legacy-wrapper-before.txt", oldWrapper), "legacy-wrapper-before.txt");
   keep(outDir, wrapperPath(profile), "legacy-wrapper-after.txt");
-  // Templates 5 and 6 render the same POSIX wrapper, so the rewrite shows in
-  // the mtime rather than the content.
+  // Templates 5 and 6 render the same POSIX wrapper; only the captured PATH
+  // can differ. Repair rewrites a wrapper whose bytes changed and leaves an
+  // identical one alone: macOS treats a rewritten program (even with the same
+  // bytes, or only a new mtime) as a new background item and notifies again.
+  const wrapperChanged = newWrapper !== oldWrapper;
+  const wrapperMtime = statSync(wrapperPath(profile)).mtimeMs;
   check(
     name,
-    "repair rewrote the wrapper",
-    statSync(wrapperPath(profile)).mtimeMs > oldWrapperMtime &&
-      newWrapper.includes("tokenmaxxing service sync"),
-    `${oldWrapper.length} -> ${newWrapper.length} bytes; ${newWrapper === oldWrapper ? "same content" : "content changed"}`,
+    wrapperChanged
+      ? "repair rewrote the changed wrapper"
+      : "repair left the identical wrapper untouched",
+    newWrapper.includes("tokenmaxxing service sync") &&
+      (wrapperChanged ? wrapperMtime > oldWrapperMtime : wrapperMtime === oldWrapperMtime),
+    `${oldWrapper.length} -> ${newWrapper.length} bytes; ${wrapperChanged ? "content changed" : "same content"}; mtime ${oldWrapperMtime} -> ${wrapperMtime}`,
   );
   if (backend === "systemd") {
     // The deferred repair runs in its own transient unit and re-registers.
