@@ -10,7 +10,7 @@ import { Cause, Effect, Exit, Layer } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { Unauthorized, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
+import { Unauthorized, UserId, type AuthUser, type UsageSource } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
 import packageJson from "../../package.json";
@@ -76,13 +76,20 @@ import {
   serviceReloadRequired,
   serviceRepairNeedsSchedulerInstall,
   serviceRepairReason,
+  serviceRepairReasons,
   serviceRepairState,
+  serviceNewerThanCli,
+  ServiceNewerThanCliError,
+  doctorLockDetail,
+  doctorTemplateCheck,
+  serviceStatusRunnerLines,
   serviceRunnerPackageName,
   serviceRunnerTarget,
   serviceCompletedUsageReplacementBackfill,
   serviceDefinitionOwner,
   serviceDefinitionUsesConfigDir,
   windowsTaskMatches,
+  withInstalledWindowsSpelling,
   decodeWindowsCommandOutput,
   readRegisteredWindowsTaskXml,
   serviceNeedsUsageReplacementBackfill,
@@ -120,7 +127,12 @@ import {
   writeServiceFiles,
 } from "./service";
 import { ApiTimeoutError } from "../api-failure";
-import { SyncAuthValidationError, SyncPushError, type SyncResult } from "./sync";
+import {
+  SyncAuthValidationError,
+  SyncPushError,
+  type SyncResult,
+  type SyncSourceResult,
+} from "./sync";
 import { NotLoggedInError } from "./whoami";
 
 interface TestLayerOptions {
@@ -1150,6 +1162,48 @@ describe("unchanged service refresh", () => {
     expect(windowsTaskMatches(registered.replace("PT5M", "PT10M"), paths, env)).toBe(false);
     expect(windowsTaskMatches(registered.replace("C:\\tm", "D:\\other"), paths, env)).toBe(false);
     expect(windowsTaskMatches("", paths, env)).toBe(false);
+    // Windows paths ignore case: a config dir spelled differently is the same task.
+    expect(windowsTaskMatches(registered.replaceAll("C:\\tm", "c:\\TM"), paths, env)).toBe(true);
+  });
+
+  it("keeps the installed Windows spelling of the config dir and env", () => {
+    const shell = (configDir: string) =>
+      servicePaths({
+        env: { SystemRoot: "C:\\Windows", TOKENMAXXING_CONFIG_DIR: configDir },
+        home: "C:\\Users\\zoe",
+        platform: "win32",
+      })!;
+    const installedDir = "C:\\Users\\Zoe\u0308\\tm";
+    const installed = shell(installedDir);
+    const captured = {
+      CODEX_HOME: "D:\\new-codex",
+      PATH: "c:\\windows\\system32;C:\\Program Files\\nodejs",
+      TOKENMAXXING_CONFIG_DIR: "c:\\users\\ZOË\\TM",
+    };
+    const spelling = {
+      configDir: installedDir,
+      env: {
+        CODEX_HOME: "D:\\old-codex",
+        PATH: "C:\\Windows\\System32;C:\\Program Files\\nodejs",
+        TOKENMAXXING_CONFIG_DIR: installedDir,
+      },
+    };
+
+    const kept = withInstalledWindowsSpelling(shell("c:\\users\\ZOË\\TM"), captured, spelling);
+    expect(kept.paths).toEqual(installed);
+    expect(kept.env).toEqual({
+      // A real change still reaches the wrapper.
+      CODEX_HOME: "D:\\new-codex",
+      PATH: spelling.env.PATH,
+      TOKENMAXXING_CONFIG_DIR: installedDir,
+    });
+    // Another dir, or nothing installed: the shell's own spelling.
+    const other = shell("D:\\tm");
+    expect(withInstalledWindowsSpelling(other, captured, spelling).paths).toBe(other);
+    expect(withInstalledWindowsSpelling(other, captured, null)).toEqual({
+      env: captured,
+      paths: other,
+    });
   });
 
   it("decodes task XML in UTF-16 or UTF-8, and nothing it cannot be sure of", () => {
@@ -1712,6 +1766,8 @@ describe("Windows hidden launcher", () => {
     expect(serviceReloadRequired(metadata)).toBe(true);
     expect(serviceReloadRequired({ ...metadata, templateVersion: 6 })).toBe(true);
     expect(serviceReloadRequired({ ...metadata, templateVersion: 7 })).toBe(false);
+    // A newer runner wrote a newer template: not this CLI's to reload.
+    expect(serviceReloadRequired({ ...metadata, templateVersion: 8 })).toBe(false);
     expect(
       serviceRepairNeedsSchedulerInstall({
         reason: serviceRepairReason({ reloadRequired: true, schedulerActive: true })!,
@@ -3281,6 +3337,132 @@ describe("service run state", () => {
     ]);
   });
 
+  it("records sources a ccusage timeout left for the next run as the run's error", () => {
+    const timedOut: SyncSourceResult = {
+      issue: { code: "command_timed_out", message: "ccusage command timed out", report: "daily" },
+      source: "claude",
+      status: "failed",
+      summary: null,
+    };
+    const deferred = (source: UsageSource, reason: "run_deadline" | "runner_timed_out") => ({
+      reason,
+      source,
+      status: "skipped" as const,
+      summary: null,
+    });
+    const input = {
+      arch: "arm64",
+      attemptAt: "2026-06-16T10:00:00.000Z",
+      autoUpdate: autoUpdateReport(),
+      durationMs: 181_000,
+      successAt: "2026-06-16T10:03:01.000Z",
+      version: "0.7.0",
+    };
+
+    const failed = serviceRunSuccessState(
+      { version: 1 },
+      {
+        ...input,
+        result: {
+          dryRun: false,
+          rows: 0,
+          sourceResults: [
+            timedOut,
+            deferred("codex", "runner_timed_out"),
+            deferred("gemini", "runner_timed_out"),
+          ],
+          sources: {},
+          status: "error",
+        },
+      },
+    );
+    expect(failed.lastError).toBe(
+      "ccusage timed out for claude; skipped 2 sources until the next run",
+    );
+    expect(failed.lastSources?.[1]).toEqual({
+      reason: "runner_timed_out",
+      source: "codex",
+      status: "skipped",
+    });
+    const failedLine = serviceRunLogLine(failed, "failure");
+    expect(failedLine).toMatchObject({ error: failed.lastError, syncStatus: "error" });
+
+    // Sources that synced before the timeout still count as a success, but
+    // doctor and the log line say what was left out.
+    const partial = serviceRunSuccessState(
+      { version: 1 },
+      {
+        ...input,
+        result: {
+          dryRun: false,
+          rows: 2,
+          sourceResults: [
+            {
+              source: "codex",
+              status: "synced",
+              summary: { days: 2, models: 1, rows: 2, sessions: 1, spendUsd: 1 },
+            },
+            { ...timedOut, source: "gemini" },
+            deferred("pi", "runner_timed_out"),
+          ],
+          sources: {},
+          status: "partial",
+          upserted: 2,
+        },
+      },
+    );
+    expect(partial).toMatchObject({
+      lastError: "ccusage timed out for gemini; skipped 1 source until the next run",
+      lastSuccessAt: input.successAt,
+    });
+    expect(serviceRunLogLine(partial, "success")).toMatchObject({
+      error: partial.lastError,
+      status: "success",
+    });
+
+    const deadline = serviceRunSuccessState(
+      { version: 1 },
+      {
+        ...input,
+        result: {
+          dryRun: false,
+          rows: 0,
+          sourceResults: [deferred("claude", "run_deadline")],
+          sources: {},
+          status: "ok",
+        },
+      },
+    );
+    expect(deadline.lastError).toBe(
+      "the run reached its 10-minute limit; skipped 1 source until the next run",
+    );
+  });
+
+  it("names the sources a timeout left for the next run when every source failed", () => {
+    const error = new ServiceSourcesFailedError({
+      deferred: 17,
+      failures: [
+        {
+          issue: {
+            code: "command_timed_out",
+            message: "ccusage command timed out",
+            report: "daily",
+          },
+          source: "claude",
+        },
+      ],
+    });
+
+    expect(error.message).toBe(
+      [
+        "error: no usage synced; ccusage failed for claude",
+        "claude: ccusage command timed out",
+        "skipped 17 more sources until the next run",
+        "hint: check that ccusage runs for this agent, then run tokenmaxxing sync again",
+      ].join("\n"),
+    );
+  });
+
   it("captures failure diagnostics without clobbering previous success", () => {
     const state = serviceRunFailureState(
       {
@@ -4522,5 +4704,146 @@ describe("command lookup", () => {
         resolvedCommandPath: "/opt/custom/bin/tokenmaxxing",
       }),
     ).toBeNull();
+  });
+});
+
+describe("a service newer than this CLI", () => {
+  const metadata: ServiceMetadata = {
+    autoUpdateManager: "registry",
+    backend: "launchd",
+    commandPath: "/tmp/tokenmaxxing/service-runners/0.7.1/darwin-arm64/tokenmaxxing",
+    installedAt: "2026-06-16T09:00:00.000Z",
+    runnerTarget: "darwin-arm64",
+    runnerVersion: "0.7.0",
+    schedule: "syncs every 5 minutes",
+    templateVersion: 7,
+    version: 1,
+  };
+
+  it("names what a newer release wrote", () => {
+    expect(serviceNewerThanCli(metadata, "0.7.0")).toBeNull();
+    expect(serviceNewerThanCli(null, "0.7.0")).toBeNull();
+    expect(serviceNewerThanCli({ ...metadata, runnerVersion: "0.7.1" }, "0.7.0")).toEqual({
+      runner: { cli: "0.7.0", installed: "0.7.1" },
+      template: undefined,
+    });
+    const newer = serviceNewerThanCli(
+      { ...metadata, runnerVersion: "0.8.0", templateVersion: 8 },
+      "0.7.0",
+    );
+    expect(newer).toEqual({
+      runner: { cli: "0.7.0", installed: "0.8.0" },
+      template: { cli: 7, installed: 8 },
+    });
+    expect(new ServiceNewerThanCliError({ command: "repair", newer: newer! }).message).toBe(
+      "error: the service is newer than this CLI (template 8 vs 7, runner 0.8.0 vs 0.7.0)\nhint: upgrade the CLI with tokenmaxxing upgrade, then run tokenmaxxing service repair again if it is still needed",
+    );
+  });
+
+  it("doctor says to upgrade the CLI, not to reload", () => {
+    expect(doctorTemplateCheck({ ...metadata, templateVersion: 8 }, false)).toEqual({
+      detail:
+        "the service is newer than this CLI (template 8 vs 7); upgrade the CLI with tokenmaxxing upgrade",
+      label: "template",
+      status: "warn",
+    });
+    expect(doctorTemplateCheck({ ...metadata, templateVersion: 6 }, true)).toEqual({
+      detail: "reload required; repair with tokenmaxxing service repair",
+      label: "template",
+      status: "warn",
+    });
+    expect(doctorTemplateCheck(metadata, false).status).toBe("ok");
+    expect(doctorTemplateCheck({ ...metadata, runnerVersion: "99.0.0" }, false).status).toBe("ok");
+  });
+
+  it("status says so instead of 'Reload required: yes', and flags a broken runner", () => {
+    const base = { runnerIssue: null, runnerTarget: "darwin-arm64", runnerVersion: "0.8.0" };
+    expect(
+      serviceStatusRunnerLines({
+        ...base,
+        newerThanCli: { template: { cli: 7, installed: 8 } },
+      }),
+    ).toEqual([
+      "The service is newer than this CLI (template 8 vs 7); upgrade the CLI with tokenmaxxing upgrade",
+      "Runner: 0.8.0 (darwin-arm64)",
+    ]);
+    expect(
+      serviceStatusRunnerLines({
+        ...base,
+        newerThanCli: null,
+        runnerIssue: "runner is empty (0 bytes): /tmp/tm/service-runners/0.8.0/tokenmaxxing",
+      }),
+    ).toEqual([
+      "Runner: runner is empty (0 bytes): /tmp/tm/service-runners/0.8.0/tokenmaxxing; repair with tokenmaxxing service repair",
+    ]);
+  });
+
+  it("install --refresh refuses to move a newer template back", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        token: "tmx_stored",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+    });
+    const { installed, pointerWrites, runtime, written } = makeInstallRuntime({
+      metadata: { ...metadata, templateVersion: 99 },
+    });
+
+    const exit = await Effect.runPromiseExit(
+      serviceInstallProgram({ force: false, refresh: true }, runtime).pipe(Effect.provide(layer)),
+    );
+
+    expect(failureTag(exit)).toBe("ServiceNewerThanCliError");
+    expect(written).toEqual([]);
+    expect(pointerWrites).toEqual([]);
+    expect(installed).toEqual([]);
+  });
+});
+
+describe("repair reasons", () => {
+  it("reports a manual repair with nothing wrong as manual, not as the last repair", () => {
+    expect(
+      serviceRepairReasons({ deferred: false, detected: undefined, last: "service-failure" }),
+    ).toEqual({ reason: "reload-required", reported: "manual" });
+    expect(
+      serviceRepairReasons({ deferred: false, detected: "scheduler-inactive", last: undefined }),
+    ).toEqual({ reason: "scheduler-inactive", reported: "scheduler-inactive" });
+    // A deferred repair carries on the reason it was scheduled with.
+    expect(
+      serviceRepairReasons({ deferred: true, detected: undefined, last: "auto-updated" }),
+    ).toEqual({ reason: "auto-updated", reported: "auto-updated" });
+  });
+});
+
+describe("doctorLockDetail", () => {
+  const paths = servicePaths({
+    env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
+    home: "/Users/alex",
+    platform: "darwin",
+  })!;
+  // Far above any real pid, so it is gone on this machine.
+  const deadPid = 2 ** 22 + 12_345;
+  const held = (hostname: string | undefined) =>
+    ({
+      acquiredAt: "2026-06-16T10:00:00.000Z",
+      hostname,
+      locked: true,
+      pid: deadPid,
+      stale: false,
+    }) as const;
+
+  it("only promises a takeover for a dead pid on this machine", async () => {
+    await expect(Effect.runPromise(doctorLockDetail(paths, held("mac"), "MAC"))).resolves.toBe(
+      `held (since 2026-06-16T10:00:00.000Z, pid ${deadPid}); pid ${deadPid} is gone, so the next run takes it over`,
+    );
+    await expect(
+      Effect.runPromise(doctorLockDetail(paths, held(undefined), "mac")),
+    ).resolves.toContain("the next run takes it over");
+    await expect(
+      Effect.runPromise(doctorLockDetail(paths, held("linux-box"), "mac")),
+    ).resolves.toBe(
+      `held (since 2026-06-16T10:00:00.000Z, pid ${deadPid}); held by linux-box; if no sync is running there, remove ${paths.lockPath}`,
+    );
   });
 });

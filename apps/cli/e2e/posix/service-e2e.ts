@@ -9,6 +9,9 @@
  *                   the StartInterval, at the end) -> triggered runs ->
  *                   status/doctor -> error paths -> service-failure and
  *                   reload-required deferred repairs -> uninstall
+ *   hanging ccusage a full run whose ccusage hangs (npx on a black-holed network)
+ *                   stops after the first timeout, records why, and the next
+ *                   run syncs the rest
  *   path cases      install -> run -> reload-required repair -> run -> uninstall
  *                   under config dirs with spaces, (), &, ', % and non-ASCII
  *   legacy upgrade  a release from before this template (0.7.0-alpha.0,
@@ -25,6 +28,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -71,6 +75,8 @@ import {
   triggerScheduledRun,
   waitForLaunchdRun,
   waitForSystemdRun,
+  fileSize,
+  readFrom,
   type SchedulerRun,
 } from "../shared/scheduler";
 import {
@@ -84,6 +90,7 @@ import {
   setTemplateVersion,
   tmx,
   type Profile,
+  type RunObservation,
   type ServiceContext,
 } from "../shared/service";
 import { summarize } from "../shared/summarize";
@@ -816,6 +823,100 @@ async function core() {
   assertUninstall(name, profile);
 }
 
+// A full run (no service-sources.json: the first after every CLI update)
+// whose ccusage hangs. It used to wait out every source's 180 s timeout in
+// turn: 54 minutes for 18 sources, which systemd killed at 30 with nothing
+// recorded. Now the run stops after the first timeout and says so.
+async function hangingCcusage() {
+  const name = "hanging ccusage";
+  const profile = await profileFor(join(root, "cfg-hang"));
+  if (!install(name, profile)) {
+    return;
+  }
+  if (backend === "systemd") {
+    await waitForSystemdRun(60_000);
+  }
+  const hangFile = join(fakeBin, "hang");
+  const callsLog = join(fakeBin, "calls.log");
+  rmSync(configFile(profile, "service-sources.json"), { force: true });
+  const callsBefore = fileSize(callsLog);
+  writeFileSync(hangFile, "");
+  let hung: RunObservation;
+  try {
+    hung = await observeRun(context, profile, "hang-full-run", () => triggerScheduledRun(330_000));
+  } finally {
+    rmSync(hangFile, { force: true });
+  }
+
+  check(
+    name,
+    "the run ends after one ccusage timeout, not one per source",
+    hung.scheduler.finished && hung.scheduler.exitCode !== "0" && hung.scheduler.seconds < 300,
+    `${hung.scheduler.detail}; ${hung.scheduler.seconds}s`,
+  );
+  const calls = readFrom(callsLog, callsBefore)
+    .split("\n")
+    .filter((line) => line.includes(" bun pid="));
+  check(
+    name,
+    "ccusage ran once (claude daily)",
+    calls.length === 1,
+    oneLine(calls.join(" | "), 400),
+  );
+  const sources = (hung.line?.sources ?? []) as Array<{
+    issue?: { code?: string };
+    reason?: string;
+    source?: string;
+    status?: string;
+  }>;
+  const [first, ...rest] = sources;
+  const error = typeof hung.line?.error === "string" ? hung.line.error : "";
+  check(
+    name,
+    "service.log records the timeout and the sources left for the next run",
+    hung.line?.status === "failure" &&
+      first?.source === "claude" &&
+      first.issue?.code === "command_timed_out" &&
+      rest.length > 0 &&
+      rest.every((source) => source.status === "skipped" && source.reason === "runner_timed_out") &&
+      error === `ccusage timed out for claude; skipped ${rest.length} sources until the next run`,
+    oneLine(JSON.stringify(hung.line), 900),
+  );
+  check(
+    name,
+    "state records the error",
+    serviceState(profile)?.lastError === error,
+    String(serviceState(profile)?.lastError),
+  );
+  const leftovers = run("pgrep hung child", "pgrep", ["-f", "sleep 86399"], { quiet: true });
+  check(
+    name,
+    "the hung process group is gone and the lock released",
+    leftovers.code !== 0 && !existsSync(configFile(profile, "service.lock")),
+    `pgrep exit ${leftovers.code}: ${oneLine(leftovers.stdout, 200)}; lock exists=${existsSync(configFile(profile, "service.lock"))}`,
+  );
+  const doctor = tmx(profile, ["service", "doctor"]);
+  check(
+    name,
+    "doctor warns with the run's error",
+    /^\s*WARN\s+last error\s+ccusage timed out for claude/m.test(doctor.out),
+    oneLine(doctor.out.split(/\r?\n/).find((line) => line.includes("last error")) ?? "", 300),
+  );
+
+  // The timed-out source cools down; the ones it left behind run now.
+  const next = await scheduledRun(profile, "hang-recovered");
+  assertSuccessfulRun(name, next, { allowCooldown: true });
+  const nextSources = (next.line?.sources ?? []) as Array<{ source?: string; status?: string }>;
+  check(
+    name,
+    "the next run syncs the sources the hung run skipped",
+    nextSources.find((source) => source.source === "codex")?.status === "synced" &&
+      next.line?.error === undefined,
+    oneLine(JSON.stringify(next.line), 900),
+  );
+  assertUninstall(name, profile);
+}
+
 async function pathCase(name: string, configDir: string) {
   const keepAs = label(name);
   const profile = await profileFor(configDir);
@@ -1098,6 +1199,7 @@ try {
   if (await setup()) {
     uninstallAll();
     await scenario("core", core);
+    await scenario("hanging ccusage", hangingCcusage);
     const pathCases: Record<string, string> =
       backend === "launchd"
         ? {

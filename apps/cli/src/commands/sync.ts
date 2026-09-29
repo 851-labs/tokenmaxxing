@@ -100,6 +100,8 @@ class InvalidSinceError extends Data.TaggedError("InvalidSinceError")<{
  * collected was pushed, and the payload/table name the degraded sources.
  */
 class SyncSourcesFailedError extends Data.TaggedError("SyncSourcesFailedError")<{
+  /** Sources the run's limits left for the next run (`SyncSourceLimits`). */
+  readonly deferred?: number | undefined;
   readonly failures: readonly SyncSourceFailure[];
 }> {
   override get message() {
@@ -122,9 +124,13 @@ class SyncSourcesFailedError extends Data.TaggedError("SyncSourcesFailedError")<
           : `${issue.message}: ${issue.detail.split("\n").at(-1)}`;
       reasons.set(reason, [...(reasons.get(reason) ?? []), source]);
     }
+    const deferred = this.deferred ?? 0;
     return [
       `error: no usage synced; ccusage failed for ${sources.join(", ")}`,
       ...[...reasons].map(([reason, failed]) => `${failed.join(", ")}: ${reason}`),
+      ...(deferred > 0
+        ? [`skipped ${deferred} more source${deferred === 1 ? "" : "s"} until the next run`]
+        : []),
       `hint: check that ccusage runs for ${sources.length > 1 ? "these agents" : "this agent"}, then run tokenmaxxing sync again`,
     ].join("\n");
   }
@@ -193,10 +199,25 @@ interface SyncProgramOptions extends SyncOptions {
    * uploads its session count only when `since` is unset.
    */
   sourcePlans?: SyncSourcePlans | undefined;
+  sourceLimits?: SyncSourceLimits | undefined;
   uploadPolicy?: UploadRetryPolicy | undefined;
 }
 
+/**
+ * Bounds on how long a (scheduled) sync spends in ccusage. A hanging ccusage
+ * (npx stuck on the network, say) hangs for every source, so waiting out each
+ * source's own timeout kept a full run of 18 sources going for 54 minutes.
+ * Sources these bounds skip are left to the next run.
+ */
+interface SyncSourceLimits {
+  /** Epoch ms after which no further source starts (`run_deadline`). */
+  deadlineAt?: number | undefined;
+  /** After a ccusage command times out, start no further source (`runner_timed_out`). */
+  stopAfterTimeout?: boolean | undefined;
+}
+
 interface SyncProgramRuntime {
+  now?: (() => number) | undefined;
   runDailyReport?: typeof runCcusageDailyReport | undefined;
   runSessionReport?: typeof runCcusageSessionReport | undefined;
 }
@@ -231,8 +252,11 @@ interface SyncSourceFailure {
   source: UsageSource;
 }
 
-/** `unchanged` and `cooldown` only come from scheduled cadence plans. */
-type SyncSkipReason = "cooldown" | "no_data" | "unchanged";
+/**
+ * `unchanged` and `cooldown` only come from scheduled cadence plans;
+ * `runner_timed_out` and `run_deadline` from `SyncSourceLimits`.
+ */
+type SyncSkipReason = "cooldown" | "no_data" | "run_deadline" | "runner_timed_out" | "unchanged";
 
 type SyncSourceResult =
   | { source: UsageSource; status: "failed"; summary: null; issue: SyncSourceIssue }
@@ -355,6 +379,7 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
   return Effect.gen(function* () {
     const runDailyReport = runtime.runDailyReport ?? runCcusageDailyReport;
     const runSessionReport = runtime.runSessionReport ?? runCcusageSessionReport;
+    const now = runtime.now ?? Date.now;
     if (options.since !== undefined && !isDateKey(options.since)) {
       return yield* Effect.fail(new InvalidSinceError({ value: options.since }));
     }
@@ -376,6 +401,8 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
     const sourceStats: SourceUsageStatsInput[] = [];
     const timings: Partial<Record<UsageSource, SyncSourceTimings>> = {};
     const renderInlineResults = shouldRenderInlineSync(options);
+    const limits = options.sourceLimits;
+    let timedOut = false;
     for (const source of sources) {
       const plan: SyncSourcePlan = options.sourcePlans?.[source.source] ?? {
         knownSessions: null,
@@ -386,6 +413,24 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
       if (plan.mode === "skip") {
         const result = {
           reason: plan.reason,
+          source: source.source,
+          status: "skipped" as const,
+          summary: null,
+        };
+        sourceSummaries[source.source] = null;
+        sourceResults.push(result);
+        continue;
+      }
+
+      const limitReason: SyncSkipReason | undefined =
+        limits?.stopAfterTimeout === true && timedOut
+          ? "runner_timed_out"
+          : limits?.deadlineAt !== undefined && now() >= limits.deadlineAt
+            ? "run_deadline"
+            : undefined;
+      if (limitReason !== undefined) {
+        const result = {
+          reason: limitReason,
           source: source.source,
           status: "skipped" as const,
           summary: null,
@@ -408,6 +453,7 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
       sourceTimings.dailyMs = Date.now() - dailyStartedAt;
 
       if (dailyResult._tag === "failure") {
+        timedOut ||= dailyResult.error.code === "command_timed_out";
         const result = {
           issue: syncSourceIssue(dailyResult.error),
           source: source.source,
@@ -453,6 +499,8 @@ function syncProgram(options: SyncProgramOptions, runtime: SyncProgramRuntime = 
               plan.sessions === "full" ? undefined : plan.since,
               sourceTimings,
             );
+      timedOut ||=
+        sessionResult._tag === "failure" && sessionResult.error.code === "command_timed_out";
       const sessionCount =
         sessionResult._tag === "reused"
           ? sessionResult.count
@@ -778,11 +826,18 @@ function renderSyncSourceResult(result: SyncSourceResult): string {
 }
 
 function syncSkipReasonLabel(reason: SyncSkipReason): string {
-  return reason === "no_data"
-    ? "no data"
-    : reason === "unchanged"
-      ? "logs unchanged"
-      : "cooling down";
+  switch (reason) {
+    case "cooldown":
+      return "cooling down";
+    case "no_data":
+      return "no data";
+    case "run_deadline":
+      return "run time limit reached";
+    case "runner_timed_out":
+      return "stopped after a ccusage timeout";
+    case "unchanged":
+      return "logs unchanged";
+  }
 }
 
 function renderSyncTable(
@@ -998,6 +1053,7 @@ export type {
   SyncResult,
   SyncProgramRuntime,
   SyncSourceIssue,
+  SyncSourceLimits,
   SyncSourceResult,
   SyncSourceSummary,
   SyncSourceTimings,

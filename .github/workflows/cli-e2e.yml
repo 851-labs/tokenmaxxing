@@ -120,7 +120,8 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # The hanging-ccusage scenario waits out one real 180 s ccusage timeout.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 

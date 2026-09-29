@@ -8,7 +8,9 @@ import { ConsoleService } from "./services";
 /**
  * Failure rendering for the whole CLI: tagged errors whose message starts
  * with "error:" reach the user verbatim (with a hint line); everything else
- * collapses to a generic failure unless --verbose is set.
+ * collapses to a generic failure unless --verbose is set. Under --json, an
+ * error's `jsonFields` (what its message lines carry, e.g. the command a
+ * failed upgrade ran) are added to the error object.
  */
 
 const userFacingErrorTags = new Set([
@@ -32,6 +34,7 @@ const userFacingErrorTags = new Set([
   "ServiceEnvTokenError",
   "ServiceEphemeralCommandError",
   "ServiceInstallError",
+  "ServiceNewerThanCliError",
   "ServiceNotInstalledError",
   "ServiceOwnedElsewhereError",
   "ServiceRepairError",
@@ -158,6 +161,7 @@ function failureForHumanOutput(failure: CliFailure): string | HumanFailureConten
 
 interface CliFailure {
   code: string;
+  fields?: Record<string, unknown> | undefined;
   message: string;
   primaryMessageRendered: boolean;
 }
@@ -177,6 +181,7 @@ function failureForCause<E>(cause: Cause.Cause<E>): CliFailure | undefined {
     if (isUserFacingCliError(error.value)) {
       return {
         code: codeForTaggedError(error.value),
+        fields: jsonFieldsForError(error.value),
         message: error.value.message,
         primaryMessageRendered: isPrimaryMessageRendered(error.value),
       };
@@ -220,6 +225,13 @@ function codeForTaggedError(error: Error): string {
     .toLowerCase();
 }
 
+function jsonFieldsForError(error: Error): Record<string, unknown> | undefined {
+  const fields = (error as { jsonFields?: unknown }).jsonFields;
+  return typeof fields === "object" && fields !== null && !Array.isArray(fields)
+    ? (fields as Record<string, unknown>)
+    : undefined;
+}
+
 function isPrimaryMessageRendered(error: Error): boolean {
   return (error as { primaryMessageRendered?: unknown }).primaryMessageRendered === true;
 }
@@ -229,6 +241,7 @@ function jsonFailureForCliFailure(failure: CliFailure) {
 
   return {
     error: {
+      ...failure.fields,
       code: failure.code,
       ...(parsed.hint === undefined ? {} : { hint: parsed.hint }),
       message: parsed.message,

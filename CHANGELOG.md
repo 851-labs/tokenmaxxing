@@ -5,6 +5,55 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Upgrading from 0.7.0-alpha.2 or earlier
+
+- On Windows, reinstall an `npm install -g --prefix <dir>` install once by hand:
+  `npm install -g --prefix <dir> @851-labs/tokenmaxxing@latest`. `tokenmaxxing upgrade` from
+  alpha.2 or earlier installs into npm's default prefix instead, so the copy on `PATH` stays old.
+- Upgrade the global CLI before running `tokenmaxxing service repair`. A repair from an alpha.2 or
+  older global CLI can briefly move the service back to that version; the service updates itself
+  again on its next run.
+
+### Changed
+
+- `tokenmaxxing service repair` and `service install --refresh` now refuse to run when the
+  installed service's template is newer than the CLI's (an auto-update already moved the service
+  forward), instead of moving it back. `service status` and `service doctor` say "the service is
+  newer than this CLI (template 8 vs 7); upgrade the CLI" instead of "Reload required: yes". This
+  helps from 0.7.0 on; older CLIs can't know about it.
+- `tokenmaxxing upgrade --json` errors now include the command that ran and the package manager's
+  output (`command`, `output`), or for an upgrade that didn't take effect, `command`,
+  `commandPath`, `expectedVersion` and `installedVersion`. The JSON used to drop everything but
+  the first line and the hint.
+
+### Fixed
+
+- A service run no longer blocks automatic sync for 30 minutes when ccusage hangs (for example
+  `npx ccusage` on a network that drops packets). Each source waited out its own 180 s timeout, so
+  a full run (the first after every CLI update) of 18 sources took 54 minutes; systemd killed it
+  after 30 with nothing recorded. After a ccusage timeout a run now skips the remaining sources
+  (`runner_timed_out`), and no source starts more than 10 minutes into a run (`run_deadline`); the
+  next run picks the skipped sources up. The service log and state record what was skipped, so
+  `service doctor` shows it.
+- On Windows, `service repair` and `service install --refresh` from a shell whose
+  `TOKENMAXXING_CONFIG_DIR` differs from the installed one only in case no longer re-register the
+  task and rewrite the service files in the new spelling. They keep the installed spelling and
+  change nothing.
+- `tokenmaxxing login` no longer waits forever for an API that accepts the connection but never
+  answers: starting a login gives up after 15 s, and a login check that takes longer is retried
+  within the login's usual time limit.
+- `tokenmaxxing login` now says how long to wait when starting a login is rate limited by
+  something in front of the API (an HTML 429 with `Retry-After`), instead of "check your network".
+- A server error (HTTP 5xx) from the API now says it's a server error and to try again later,
+  instead of "check your network" (for example "failed to validate stored login").
+- `service doctor` no longer says a lock from another machine (a config dir on a synced drive)
+  will be taken over on the next run because its pid isn't running here. It names the machine
+  instead.
+- `service status` now flags a missing, empty or broken service runner instead of printing the
+  version `service.json` records.
+- `tokenmaxxing service repair --json` run by hand now reports its own reason (`manual` when
+  nothing needed repair), not the reason of the last automatic repair.
+
 ## 0.7.0-alpha.3 - 2026-09-29
 
 ### Changed

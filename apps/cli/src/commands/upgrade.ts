@@ -97,20 +97,27 @@ class UpgradeFailedError extends Data.TaggedError("UpgradeFailedError")<{
   readonly command: string;
 }> {
   override get message() {
-    // What the package manager printed (e.g. npm's ETARGET), so the failure
-    // is actionable without rerunning the command by hand.
-    const output =
-      this.cause instanceof PackageManagerUpdateError
-        ? this.cause.timedOut
-          ? `${this.cause.command.split(" ")[0]} did not finish in time`
-          : this.cause.output
-        : "";
+    const output = this.output;
     return [
       "error: failed to upgrade tokenmaxxing",
       `command: ${this.command}`,
       ...(output.length > 0 ? output.split("\n") : []),
       "hint: a release can take a few minutes to reach every registry mirror; retry shortly, or run the command above yourself",
     ].join("\n");
+  }
+
+  get jsonFields() {
+    return { command: this.command, output: this.output };
+  }
+
+  // What the package manager printed (e.g. npm's ETARGET), so the failure
+  // is actionable without rerunning the command by hand.
+  private get output(): string {
+    return this.cause instanceof PackageManagerUpdateError
+      ? this.cause.timedOut
+        ? `${this.cause.command.split(" ")[0]} did not finish in time`
+        : this.cause.output
+      : "";
   }
 }
 
@@ -130,6 +137,15 @@ class UpgradeVerificationError extends Data.TaggedError("UpgradeVerificationErro
         ? `error: could not confirm the upgrade to ${this.expectedVersion}; ${this.commandPath} --version failed`
         : `error: upgrade did not take effect; tokenmaxxing is ${this.installedVersion}, expected ${this.expectedVersion}`;
     return `${summary}\ncommand: ${this.command}\npath: ${this.commandPath}\nhint: run tokenmaxxing --version; if it is still old, run the command above yourself or check which -a tokenmaxxing`;
+  }
+
+  get jsonFields() {
+    return {
+      command: this.command,
+      commandPath: this.commandPath,
+      expectedVersion: this.expectedVersion,
+      installedVersion: this.installedVersion,
+    };
   }
 }
 
