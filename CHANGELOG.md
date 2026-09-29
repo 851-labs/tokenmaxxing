@@ -25,6 +25,19 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ### Fixed
 
+- A scheduled sync no longer fails on one dropped login check (`/me`). It retries network errors,
+  timeouts, server errors (5xx) and rate limits (429, waiting out a `Retry-After` of up to 10 s)
+  3 times, 1 s then 4 s apart, so a run that starts while a Mac is still waking from sleep gets
+  through. `sync` and `whoami` retry once, after half a second (not after a timeout). A revoked
+  token (`Unauthorized`) is never retried and is handled as before.
+- A failed login check now says what happened instead of only "failed to validate stored login":
+  a timeout, a network error with its code (`network unavailable (ENOTFOUND)`,
+  `network error (ECONNRESET)`), the HTTP status plus the error's `_tag`, or a response the CLI
+  couldn't read, and how many attempts it made. The service log line gets a `loginCheck` field
+  (`attempts`, `kind`, `code`, `status`, `tag`, `timeoutMs`), `sync --json` errors get the same
+  `loginCheck` object, and the service's last error ends in "will retry next run" when the next
+  run can succeed (no repair is scheduled for those). Other API errors (upload, whoami, login)
+  also name the network error code or HTTP status when they have no more specific wording.
 - When ccusage fails for every agent (for example `node` missing from the service's `PATH`), the
   error names only the agents with logs on this machine and counts the rest ("ccusage failed for
   claude, codex and 16 agents without logs") instead of listing all 18.

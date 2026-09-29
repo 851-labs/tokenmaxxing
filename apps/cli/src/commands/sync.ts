@@ -28,7 +28,6 @@ import { DEFAULT_SOURCE_NAMES, resolveSources } from "../ccusage/sources";
 import {
   ApiClientService,
   BrowserService,
-  ClockService,
   type CliConfig,
   ConfigService,
   ConsoleService,
@@ -44,9 +43,13 @@ import {
   writeJson,
 } from "../output";
 import {
+  type ApiFailureDetail,
   apiFailureMessage,
-  rateLimitRetryAfterSeconds,
+  type ApiRetryPolicy,
+  describeApiFailure,
+  ME_RETRY_POLICY,
   USAGE_UPLOAD_TIMEOUT_MS,
+  withApiRetry,
   withApiTimeout,
 } from "../api-failure";
 import { validateCurrentLogin } from "../auth-validation";
@@ -65,16 +68,35 @@ class SyncPushError extends Data.TaggedError("SyncPushError")<{
   }
 }
 
+/**
+ * `/me` failed for a reason other than a bad token (a bad token is
+ * `Unauthorized`, handled before this): the message, `--json` and the
+ * service log say what the last of `attempts` tries ran into.
+ */
 class SyncAuthValidationError extends Data.TaggedError("SyncAuthValidationError")<{
+  readonly attempts?: number | undefined;
   readonly cause: unknown;
 }> {
   override get message() {
-    // Not a login problem: a bad token is `Unauthorized`, handled before this.
     return apiFailureMessage(
-      "failed to validate stored login",
+      this.summary,
       this.cause,
       "check your network and run tokenmaxxing sync again",
     );
+  }
+
+  /** "failed to validate stored login", plus "after N attempts" when it retried. */
+  get summary() {
+    const attempts = this.attempts ?? 1;
+    return `failed to validate stored login${attempts > 1 ? ` after ${attempts} attempts` : ""}`;
+  }
+
+  get loginCheck(): LoginCheckFailure {
+    return { attempts: this.attempts ?? 1, ...describeApiFailure(this.cause) };
+  }
+
+  get jsonFields() {
+    return { loginCheck: this.loginCheck };
   }
 }
 
@@ -152,9 +174,6 @@ class SyncSourcesFailedError extends Data.TaggedError("SyncSourcesFailedError")<
     ].join("\n");
   }
 }
-
-/** The longest Retry-After a scheduled upload waits out before its next attempt. */
-const UPLOAD_RETRY_AFTER_MAX_MS = 60_000;
 
 const usd0 = new Intl.NumberFormat("en-US", {
   currency: "USD",
@@ -241,9 +260,14 @@ interface SyncProgramRuntime {
 
 interface ResolveSyncAuthOptions {
   json: boolean;
+  /** How to retry a failed `/me` (default: `ME_RETRY_POLICY`, one quick retry). */
+  loginCheckRetry?: ApiRetryPolicy | undefined;
   showStoredLoginSpinner?: boolean | undefined;
   storedLoginSuccessMessage?: ((user: AuthUser) => string) | string | undefined;
 }
+
+/** What a failed login check ran into, for `--json` and the service log. */
+type LoginCheckFailure = ApiFailureDetail & { attempts: number };
 
 type AuthenticatedCliConfig = CliConfig & { token: string };
 
@@ -327,13 +351,8 @@ interface UploadUsageReportsOptions {
   uploadPolicy?: UploadRetryPolicy | undefined;
 }
 
-interface UploadRetryPolicy {
-  attempts: number;
-  backoffMs: readonly number[];
-  jitterRatio: number;
-  random?: (() => number) | undefined;
-  timeoutMs: number;
-}
+/** Every failed upload attempt is retried; see `withApiRetry`. */
+type UploadRetryPolicy = Omit<ApiRetryPolicy, "retryable">;
 
 function syncEffect(options: SyncOptions) {
   return humanFrame(
@@ -671,62 +690,7 @@ function uploadUsageReportsOnce(
     return withApiTimeout(upload(), USAGE_UPLOAD_TIMEOUT_MS);
   }
 
-  return uploadWithRetry(upload, uploadPolicy);
-}
-
-function uploadWithRetry<A, E, R>(
-  upload: () => Effect.Effect<A, E, R>,
-  policy: UploadRetryPolicy,
-): Effect.Effect<A, unknown, R | ClockService> {
-  return Effect.gen(function* () {
-    const clock = yield* Effect.service(ClockService);
-    const attempts = Math.max(1, Math.floor(policy.attempts));
-    let lastError: unknown;
-
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const result = yield* withApiTimeout(upload(), policy.timeoutMs).pipe(
-        Effect.match({
-          onFailure: (cause) => ({ cause, _tag: "failure" as const }),
-          onSuccess: (value) => ({ value, _tag: "success" as const }),
-        }),
-      );
-
-      if (result._tag === "success") {
-        return result.value;
-      }
-
-      lastError = result.cause;
-      // A 429 says when to come back: wait that long when it is short, and
-      // stop hammering when it is not (the next scheduled run retries).
-      const retryAfterSeconds = rateLimitRetryAfterSeconds(result.cause);
-      if (
-        typeof retryAfterSeconds === "number" &&
-        retryAfterSeconds * 1000 > UPLOAD_RETRY_AFTER_MAX_MS
-      ) {
-        break;
-      }
-      if (attempt < attempts) {
-        const backoffMs =
-          typeof retryAfterSeconds === "number"
-            ? Math.max(retryAfterSeconds * 1000, retryBackoffMs(policy, attempt))
-            : retryBackoffMs(policy, attempt);
-        if (backoffMs > 0) {
-          yield* clock.sleep(backoffMs).pipe(Effect.catch(() => Effect.void));
-        }
-      }
-    }
-
-    return yield* Effect.fail(lastError);
-  });
-}
-
-function retryBackoffMs(policy: UploadRetryPolicy, attempt: number): number {
-  const base = policy.backoffMs[Math.max(0, attempt - 1)] ?? policy.backoffMs.at(-1) ?? 0;
-  const jitterRatio = Math.max(0, policy.jitterRatio);
-  const random = policy.random ?? Math.random;
-  const jitter = jitterRatio === 0 ? 1 : 1 - jitterRatio + random() * jitterRatio * 2;
-
-  return Math.max(0, Math.round(base * jitter));
+  return withApiRetry(upload, uploadPolicy).pipe(Effect.mapError((failure) => failure.cause));
 }
 
 function failedSyncSources(results: readonly SyncSourceResult[]): SyncSourceFailure[] {
@@ -1011,6 +975,7 @@ function resolveSyncAuth(options: ResolveSyncAuthOptions) {
     });
     const validated = yield* validateCurrentLogin(client, {
       ...options,
+      retry: options.loginCheckRetry ?? ME_RETRY_POLICY,
       showSpinner: options.showStoredLoginSpinner === true,
       successMessage: options.storedLoginSuccessMessage,
     });
@@ -1025,7 +990,9 @@ function resolveSyncAuth(options: ResolveSyncAuthOptions) {
     }
 
     if (validated._tag === "failed") {
-      return yield* Effect.fail(new SyncAuthValidationError({ cause: validated.cause }));
+      return yield* Effect.fail(
+        new SyncAuthValidationError({ attempts: validated.attempts, cause: validated.cause }),
+      );
     }
 
     if (options.json || envTokenActive) {
@@ -1090,6 +1057,7 @@ export {
 };
 
 export type {
+  LoginCheckFailure,
   ResolveSyncAuthOptions,
   SyncSkipReason,
   SyncAuth,

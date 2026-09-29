@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Cause, Effect, Fiber, Layer, Option } from "effect";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { TestClock } from "effect/testing";
 import { Unauthorized, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
+import { SCHEDULED_ME_RETRY_POLICY } from "../api-failure";
 import { CcusageRunError } from "../ccusage/runner";
 import {
   ApiClientService,
@@ -22,6 +25,7 @@ import {
 import { formatUrl } from "../output";
 import { makeStubApiClient, type StubResponse } from "../testing/stub-api-client";
 import { browserLoginEffect, NonInteractiveLoginError } from "./login";
+import { NotLoggedInError } from "./whoami";
 import {
   formatSyncUsd,
   InvalidSinceError,
@@ -1607,8 +1611,9 @@ describe("resolveSyncAuth token clearing", () => {
       503,
     ],
   ])("says a /me server error is not the network (%s)", async (_label, response, status) => {
+    const requests: string[] = [];
     const { layer } = makeTestLayer({
-      client: makeStubApiClient({ "GET /me": response }),
+      client: makeStubApiClient({ "GET /me": response }, requests),
       initialConfig: storedConfig,
     });
 
@@ -1616,9 +1621,11 @@ describe("resolveSyncAuth token clearing", () => {
       resolveSyncAuth({ json: false }).pipe(Effect.provide(layer)),
     );
 
+    // Interactive: one quick retry.
+    expect(requests).toEqual(["GET /me", "GET /me"]);
     const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
     expect(Option.getOrUndefined(error)?.message).toBe(
-      `error: failed to validate stored login; the tokenmaxxing API had a server error (HTTP ${status})\nhint: the problem is on the tokenmaxxing side; try again later`,
+      `error: failed to validate stored login after 2 attempts; the tokenmaxxing API had a server error (HTTP ${status})\nhint: the problem is on the tokenmaxxing side; try again later`,
     );
   });
 
@@ -1662,6 +1669,78 @@ describe("resolveSyncAuth token clearing", () => {
     expect((Option.getOrUndefined(error) as SyncAuthValidationError).message).toBe(
       "error: failed to validate stored login; the tokenmaxxing API did not answer within 15 s\nhint: check your network, then try again",
     );
+  });
+
+  it("retries a scheduled /me on transient failures until it answers", async () => {
+    const requests: string[] = [];
+    const { layer } = makeTestLayer({
+      client: makeStubApiClient(
+        {
+          "GET /me": [
+            { status: 502 },
+            { body: { _tag: "ServiceUnavailable", message: "later" }, status: 503 },
+            { body: { user }, status: 200 },
+          ],
+        },
+        requests,
+      ),
+      initialConfig: storedConfig,
+    });
+
+    const auth = await Effect.runPromise(
+      resolveSyncAuth({ json: true, loginCheckRetry: SCHEDULED_ME_RETRY_POLICY }).pipe(
+        Effect.provide(layer),
+      ),
+    );
+
+    expect(auth.user.login).toBe("alex");
+    expect(requests).toEqual(["GET /me", "GET /me", "GET /me"]);
+  });
+
+  it("never retries a decoded Unauthorized, even on a scheduled run", async () => {
+    const requests: string[] = [];
+    const { layer, state } = makeTestLayer({
+      client: makeStubApiClient({ "GET /me": { body: unauthorizedBody, status: 401 } }, requests),
+      initialConfig: storedConfig,
+    });
+
+    const exit = await Effect.runPromiseExit(
+      resolveSyncAuth({ json: true, loginCheckRetry: SCHEDULED_ME_RETRY_POLICY }).pipe(
+        Effect.provide(layer),
+      ),
+    );
+
+    expect(requests).toEqual(["GET /me"]);
+    expect(state.clearedTokens).toBe(0);
+    const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
+    expect(Option.getOrUndefined(error)).toBeInstanceOf(NotLoggedInError);
+  });
+
+  it("says what a failed login check ran into, in the message and in --json", async () => {
+    const request = HttpClientRequest.get("https://api.tokenmaxxing.example/me");
+    const offline = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.TransportError({
+        cause: Object.assign(new TypeError("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" }),
+        request,
+      }),
+    });
+    const { layer } = makeTestLayer({ initialConfig: storedConfig, meError: offline });
+
+    const exit = await Effect.runPromiseExit(
+      resolveSyncAuth({ json: true, loginCheckRetry: SCHEDULED_ME_RETRY_POLICY }).pipe(
+        Effect.provide(layer),
+      ),
+    );
+
+    const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
+    const failure = Option.getOrUndefined(error) as SyncAuthValidationError;
+    expect(failure).toBeInstanceOf(SyncAuthValidationError);
+    expect(failure.message).toBe(
+      "error: failed to validate stored login after 3 attempts; network unavailable (ENOTFOUND)\nhint: check your network and run tokenmaxxing sync again",
+    );
+    expect(failure.jsonFields).toEqual({
+      loginCheck: { attempts: 3, code: "ENOTFOUND", kind: "network" },
+    });
   });
 
   it("keeps the stored token for an error that only looks like Unauthorized", async () => {

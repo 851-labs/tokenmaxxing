@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { type ApiError, ApiErrors, type AuthUser, Unauthorized } from "@tokenmaxxing/api-contract";
 
-import { ME_TIMEOUT_MS, withApiTimeout } from "./api-failure";
+import { type ApiRetryPolicy, ME_TIMEOUT_MS, withApiRetry } from "./api-failure";
 import {
   formatHighlight,
   humanSpinner,
@@ -14,15 +14,24 @@ type ValidateCurrentLoginSuccessDisposition = "error" | "success";
 type ValidateCurrentLoginSuccessMessage = ((user: AuthUser) => string) | string | undefined;
 
 interface ValidateCurrentLoginOptions extends HumanOutputOptions {
+  /** How to retry a failed `/me`; one attempt when unset. */
+  retry?: ApiRetryPolicy | undefined;
   showSpinner?: boolean | undefined;
   successDisposition?: ValidateCurrentLoginSuccessDisposition | undefined;
   successMessage?: ValidateCurrentLoginSuccessMessage;
 }
 
 type CurrentLoginValidation =
-  | { _tag: "failed"; cause: unknown }
+  | { _tag: "failed"; attempts: number; cause: unknown }
   | { _tag: "unauthorized" }
   | { _tag: "valid"; user: AuthUser };
+
+const SINGLE_ATTEMPT: ApiRetryPolicy = {
+  attempts: 1,
+  backoffMs: [],
+  jitterRatio: 0,
+  timeoutMs: ME_TIMEOUT_MS,
+};
 
 function validateCurrentLogin(
   client: TokenmaxxingApiClient,
@@ -33,13 +42,22 @@ function validateCurrentLogin(
       options.showSpinner === true
         ? yield* humanSpinner("Checking current login", options)
         : undefined;
-    const result = yield* withApiTimeout(client.me.me(), ME_TIMEOUT_MS).pipe(
+    const result = yield* withApiRetry(() => client.me.me(), {
+      ...(options.retry ?? SINGLE_ATTEMPT),
+      // A bad token is final, whatever the policy says.
+      retryable: (cause) =>
+        !isUnauthorizedError(cause) && (options.retry?.retryable?.(cause) ?? true),
+    }).pipe(
       Effect.map((me): CurrentLoginValidation => ({ _tag: "valid", user: me.user })),
-      Effect.catch((cause) =>
+      Effect.catch((failure) =>
         Effect.succeed(
-          isUnauthorizedError(cause)
+          isUnauthorizedError(failure.cause)
             ? ({ _tag: "unauthorized" } satisfies CurrentLoginValidation)
-            : ({ _tag: "failed", cause } satisfies CurrentLoginValidation),
+            : ({
+                _tag: "failed",
+                attempts: failure.attempts,
+                cause: failure.cause,
+              } satisfies CurrentLoginValidation),
         ),
       ),
     );
