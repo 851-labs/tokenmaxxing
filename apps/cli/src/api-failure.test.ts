@@ -3,7 +3,11 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { TestClock } from "effect/testing";
-import { TooManyRequests } from "@tokenmaxxing/api-contract";
+import {
+  InternalServerError,
+  ServiceUnavailable,
+  TooManyRequests,
+} from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -89,6 +93,17 @@ describe("apiFailureMessage", () => {
   it("names a timeout", () => {
     expect(apiFailureMessage("failed", new ApiTimeoutError({ timeoutMs: 60_000 }), "x")).toBe(
       "error: failed; the tokenmaxxing API did not answer within 60 s\nhint: check your network, then try again",
+    );
+  });
+
+  it("says a server error (5xx) is not the network", () => {
+    expect(apiFailureMessage("failed", statusError(502), "check your network")).toBe(
+      "error: failed; the tokenmaxxing API had a server error (HTTP 502)\nhint: the problem is on the tokenmaxxing side; try again later",
+    );
+    expect(apiFailureMessage("failed", new InternalServerError({}), "x")).toContain("(HTTP 500)");
+    expect(apiFailureMessage("failed", new ServiceUnavailable({}), "x")).toContain("(HTTP 503)");
+    expect(apiFailureMessage("failed", statusError(404), "check your network")).toBe(
+      "error: failed\nhint: check your network",
     );
   });
 

@@ -73,7 +73,7 @@ const invalidSessionIssue: SyncSourceIssue = {
 };
 
 function ccusageFailure(
-  code: "command_failed" | "invalid_report",
+  code: "command_failed" | "command_timed_out" | "invalid_report",
   report: "daily" | "session",
   source: string,
 ) {
@@ -489,6 +489,156 @@ describe("sync source outcomes", () => {
       { source: "claude", status: "synced" },
       { source: "codex", status: "failed" },
     ]);
+  });
+
+  describe("source limits", () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+      interactive: false,
+    });
+    const day = { daily: [{ date: "2026-07-22", totalTokens: 10 }] };
+
+    it("skips the remaining sources after a ccusage timeout", async () => {
+      const ran: string[] = [];
+      const result = await Effect.runPromise(
+        syncProgram(
+          {
+            dryRun: true,
+            json: true,
+            sourceLimits: { stopAfterTimeout: true },
+            sourcePlans: { gemini: { mode: "skip", reason: "unchanged" } },
+            sources: "claude,codex,opencode,gemini,pi",
+          },
+          {
+            runDailyReport: (source) =>
+              Effect.suspend(() => {
+                ran.push(source.source);
+                return source.source === "codex"
+                  ? Effect.fail(ccusageFailure("command_timed_out", "daily", source.source))
+                  : Effect.succeed(day);
+              }),
+            runSessionReport: () => Effect.succeed({ sessions: [] }),
+          },
+        ).pipe(Effect.provide(layer)),
+      );
+
+      expect(ran).toEqual(["claude", "codex"]);
+      expect(result.status).toBe("partial");
+      expect(
+        result.sourceResults.map((r) => [r.source, r.status, "reason" in r ? r.reason : null]),
+      ).toEqual([
+        ["claude", "synced", null],
+        ["codex", "failed", null],
+        ["opencode", "skipped", "runner_timed_out"],
+        // A plan's own skip keeps its reason.
+        ["gemini", "skipped", "unchanged"],
+        ["pi", "skipped", "runner_timed_out"],
+      ]);
+      expect(result.timings?.opencode).toBeUndefined();
+    });
+
+    it("also stops after a session report times out", async () => {
+      const ran: string[] = [];
+      const result = await Effect.runPromise(
+        syncProgram(
+          {
+            dryRun: true,
+            json: true,
+            sourceLimits: { stopAfterTimeout: true },
+            sources: "claude,codex",
+          },
+          {
+            runDailyReport: (source) =>
+              Effect.sync(() => {
+                ran.push(source.source);
+                return day;
+              }),
+            runSessionReport: (source) =>
+              Effect.fail(ccusageFailure("command_timed_out", "session", source.source)),
+          },
+        ).pipe(Effect.provide(layer)),
+      );
+
+      expect(ran).toEqual(["claude"]);
+      expect(result.sourceResults.map(({ source, status }) => [source, status])).toEqual([
+        ["claude", "partial"],
+        ["codex", "skipped"],
+      ]);
+    });
+
+    it("keeps going after a timeout without the limit (foreground sync)", async () => {
+      const result = await Effect.runPromise(
+        syncProgram(
+          { dryRun: true, json: true, sources: "claude,codex" },
+          {
+            runDailyReport: (source) =>
+              source.source === "claude"
+                ? Effect.fail(ccusageFailure("command_timed_out", "daily", source.source))
+                : Effect.succeed(day),
+            runSessionReport: () => Effect.succeed({ sessions: [] }),
+          },
+        ).pipe(Effect.provide(layer)),
+      );
+
+      expect(result.sourceResults.map(({ source, status }) => [source, status])).toEqual([
+        ["claude", "failed"],
+        ["codex", "synced"],
+      ]);
+    });
+
+    it("starts no source after the run's deadline", async () => {
+      let now = 1_000;
+      const ran: string[] = [];
+      const result = await Effect.runPromise(
+        syncProgram(
+          {
+            dryRun: true,
+            json: true,
+            sourceLimits: { deadlineAt: 5_000 },
+            sources: "claude,codex,opencode",
+          },
+          {
+            now: () => now,
+            runDailyReport: (source) =>
+              Effect.sync(() => {
+                ran.push(source.source);
+                now += 4_000;
+                return day;
+              }),
+            runSessionReport: () => Effect.succeed({ sessions: [] }),
+          },
+        ).pipe(Effect.provide(layer)),
+      );
+
+      expect(ran).toEqual(["claude"]);
+      expect(result.status).toBe("ok");
+      expect(result.sourceResults.slice(1)).toEqual([
+        { reason: "run_deadline", source: "codex", status: "skipped", summary: null },
+        { reason: "run_deadline", source: "opencode", status: "skipped", summary: null },
+      ]);
+    });
+
+    it("renders the limits' skip reasons", () => {
+      expect(
+        renderSyncSourceResult({
+          reason: "runner_timed_out",
+          source: "codex",
+          status: "skipped",
+          summary: null,
+        }),
+      ).toBe("codex skipped (stopped after a ccusage timeout)");
+      expect(
+        renderSyncSourceResult({
+          reason: "run_deadline",
+          source: "codex",
+          status: "skipped",
+          summary: null,
+        }),
+      ).toBe("codex skipped (run time limit reached)");
+    });
   });
 
   it("uploads daily reports plus aggregate session counts without session payloads", async () => {
@@ -1399,6 +1549,30 @@ describe("resolveSyncAuth token clearing", () => {
     expect(state.browserUrls).toEqual([]);
     const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
     expect(Option.getOrUndefined(error)).toBeInstanceOf(SyncAuthValidationError);
+  });
+
+  it.each<[string, StubResponse, number]>([
+    ["an empty 500", { status: 500 }, 500],
+    ["an HTML 502", { body: "<html>Bad gateway</html>", status: 502 }, 502],
+    [
+      "a typed 503",
+      { body: { _tag: "ServiceUnavailable", message: "Temporarily unavailable" }, status: 503 },
+      503,
+    ],
+  ])("says a /me server error is not the network (%s)", async (_label, response, status) => {
+    const { layer } = makeTestLayer({
+      client: makeStubApiClient({ "GET /me": response }),
+      initialConfig: storedConfig,
+    });
+
+    const exit = await Effect.runPromiseExit(
+      resolveSyncAuth({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
+    expect(Option.getOrUndefined(error)?.message).toBe(
+      `error: failed to validate stored login; the tokenmaxxing API had a server error (HTTP ${status})\nhint: the problem is on the tokenmaxxing side; try again later`,
+    );
   });
 
   it("says when to retry, not to log in again, when /me is rate limited", async () => {

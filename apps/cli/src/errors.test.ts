@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { ConsoleService } from "./services";
 import { clackFailureForCliFailure, renderCliFailure } from "./errors";
 import { AlreadyLoggedInError } from "./commands/login";
+import { PackageManagerUpdateError } from "./commands/service";
+import { UpgradeFailedError, UpgradeVerificationError } from "./commands/upgrade";
 import { NotLoggedInError } from "./commands/whoami";
 
 const promptCalls = vi.hoisted((): string[] => []);
@@ -104,6 +106,62 @@ describe("renderCliFailure", () => {
         message: "not logged in",
       },
       status: "error",
+    });
+  });
+
+  it("adds an error's JSON fields: the command and output a failed upgrade had", async () => {
+    const render = async (error: Error) => {
+      const { errors, layer } = testConsole();
+      await Effect.runPromiseExit(
+        Effect.fail(error).pipe(
+          Effect.tapCause((cause) => renderCliFailure(cause, { json: true, verbose: false })),
+          Effect.provide(layer),
+        ),
+      );
+      return JSON.parse(errors[0]!) as { error: Record<string, unknown> };
+    };
+    const command = "npm install -g @851-labs/tokenmaxxing@0.7.0 --prefer-online";
+
+    expect(
+      await render(
+        new UpgradeFailedError({
+          cause: new PackageManagerUpdateError({
+            cause: new Error("exit 1"),
+            command,
+            output: "npm error code ETARGET\nnpm error notarget No matching version found",
+            timedOut: false,
+          }),
+          command,
+        }),
+      ),
+    ).toEqual({
+      error: {
+        code: "upgrade_failed",
+        command,
+        hint: "a release can take a few minutes to reach every registry mirror; retry shortly, or run the command above yourself",
+        message: "failed to upgrade tokenmaxxing",
+        output: "npm error code ETARGET\nnpm error notarget No matching version found",
+      },
+      status: "error",
+    });
+    expect(
+      (
+        await render(
+          new UpgradeVerificationError({
+            command,
+            commandPath: "/usr/local/bin/tokenmaxxing",
+            expectedVersion: "0.7.0",
+            installedVersion: "0.7.0-alpha.3",
+          }),
+        )
+      ).error,
+    ).toMatchObject({
+      code: "upgrade_verification",
+      command,
+      commandPath: "/usr/local/bin/tokenmaxxing",
+      expectedVersion: "0.7.0",
+      installedVersion: "0.7.0-alpha.3",
+      message: "upgrade did not take effect; tokenmaxxing is 0.7.0-alpha.3, expected 0.7.0",
     });
   });
 

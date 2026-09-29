@@ -90,10 +90,17 @@ const SERVICE_LABEL = "sh.tokenmaxxing.sync";
 // is gone after a reboot). The bump makes each runner's deferred reload
 // repair rewrite them once.
 const SERVICE_TEMPLATE_VERSION = 7;
-// A scheduled run's worst case is a few ccusage timeouts plus three upload
-// attempts; systemd stops one that is still going after this, so a wedged
-// run cannot keep the oneshot unit "activating" and the timer from firing.
+// A scheduled run's worst case is the jitter, an auto-update, sources up to
+// SERVICE_SOURCE_DEADLINE_MS plus the one still running (its daily and session
+// timeouts), and three upload attempts: about 20 minutes. systemd stops one
+// that is still going after this, so a wedged run cannot keep the oneshot
+// unit "activating" and the timer from firing.
 const SYSTEMD_RUN_TIMEOUT = "30min";
+// No source starts this long after a service run began, and none after a
+// ccusage timeout: a ccusage that hangs hangs for every source, and waiting
+// out each one's 180 s timeout kept a full run going for 54 minutes (systemd
+// killed it at 30, before it could record anything).
+const SERVICE_SOURCE_DEADLINE_MS = 10 * 60 * 1000;
 const SYSTEMD_NAME = "tokenmaxxing-sync";
 const WINDOWS_TASK_NAME = "tokenmaxxing-sync";
 const POSIX_WRAPPER_NAME = "tokenmaxxing.sh";
@@ -590,6 +597,20 @@ class ServiceNotInstalledError extends Data.TaggedError("ServiceNotInstalledErro
   }
 }
 
+/**
+ * A newer runner (an auto-update) already moved the service to a newer
+ * template; this CLI would move it back, and the runner would then repair it
+ * forward again on its next run.
+ */
+class ServiceNewerThanCliError extends Data.TaggedError("ServiceNewerThanCliError")<{
+  readonly command: "install --refresh" | "repair";
+  readonly newer: ServiceNewerThanCli;
+}> {
+  override get message() {
+    return `error: ${formatServiceNewerThanCli(this.newer)}\nhint: upgrade the CLI with tokenmaxxing upgrade, then run tokenmaxxing service ${this.command} again if it is still needed`;
+  }
+}
+
 /** Repairing would re-point another config dir's scheduler definition at this one. */
 class ServiceOwnedElsewhereError extends Data.TaggedError("ServiceOwnedElsewhereError")<{
   readonly configDir: string;
@@ -605,10 +626,11 @@ class ServiceOwnedElsewhereError extends Data.TaggedError("ServiceOwnedElsewhere
  * launchd and Task Scheduler record a failure instead of a successful run.
  */
 class ServiceSourcesFailedError extends Data.TaggedError("ServiceSourcesFailedError")<{
+  readonly deferred?: number | undefined;
   readonly failures: readonly { issue: SyncSourceIssue; source: UsageSource }[];
 }> {
   override get message() {
-    return new SyncSourcesFailedError({ failures: this.failures }).message;
+    return new SyncSourcesFailedError({ deferred: this.deferred, failures: this.failures }).message;
   }
 }
 
@@ -711,6 +733,7 @@ function serviceInstallProgram(
     isElevated?: () => Effect.Effect<boolean, never>;
     now?: Date;
     platform?: NodeJS.Platform;
+    readInstalledSpelling?: (paths: ServicePaths) => Effect.Effect<InstalledWindowsSpelling, never>;
     readMetadata?: (path: string) => Effect.Effect<ServiceMetadata | null, never>;
     writeFiles?: (
       paths: ServicePaths,
@@ -739,7 +762,14 @@ function serviceInstallProgram(
 
     const env = runtime.env ?? process.env;
     const platform = runtime.platform ?? process.platform;
-    const paths = yield* servicePathsEffect(env, runtime.home, platform);
+    const shellPaths = yield* servicePathsEffect(env, runtime.home, platform);
+    const { env: serviceEnv, paths } = withInstalledWindowsSpelling(
+      shellPaths,
+      capturedServiceEnv(env, platform),
+      platform === "win32"
+        ? yield* (runtime.readInstalledSpelling ?? readInstalledWindowsSpelling)(shellPaths)
+        : null,
+    );
     const installSpinner = yield* humanSpinner("Detecting tokenmaxxing install", options);
     yield* (
       runtime.findCommandInstall ?? (() => findTokenmaxxingCommandInstall(env, platform))
@@ -752,6 +782,16 @@ function serviceInstallProgram(
       ),
     );
     yield* Effect.sync(() => installSpinner.stop("Found tokenmaxxing install"));
+    if (options.refresh) {
+      const newer = serviceNewerThanCli(
+        yield* (runtime.readMetadata ?? readServiceMetadata)(paths.metadataPath),
+      );
+      if (newer?.template !== undefined) {
+        return yield* Effect.fail(
+          new ServiceNewerThanCliError({ command: "install --refresh", newer }),
+        );
+      }
+    }
 
     const updateLock = yield* acquireServiceUpdateLock(
       paths.updateLockPath,
@@ -792,7 +832,6 @@ function serviceInstallProgram(
         ),
         Effect.mapError((cause) => new ServiceInstallError({ cause })),
       );
-      const serviceEnv = capturedServiceEnv(env, platform);
       const wrapper = renderServiceWrapper({
         env: serviceEnv,
         logPath: paths.logPath,
@@ -920,19 +959,27 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
     if (platform === "win32" && options.deferred !== true && (yield* isElevatedWindowsProcess())) {
       return yield* Effect.fail(new ServiceElevatedError({ command: "repair" }));
     }
-    const paths = yield* servicePathsEffect(env, undefined, platform);
+    const shellPaths = yield* servicePathsEffect(env, undefined, platform);
+    const { env: serviceEnv, paths } = withInstalledWindowsSpelling(
+      shellPaths,
+      capturedServiceEnv(env, platform),
+      platform === "win32" ? yield* readInstalledWindowsSpelling(shellPaths) : null,
+    );
     const currentState = (yield* readServiceState(paths.statePath)) ?? { version: 1 as const };
     const existingMetadata = yield* readServiceMetadata(paths.metadataPath);
     const initialNativeStatus = yield* readNativeSchedulerStatus(paths);
     const reloadRequired = serviceReloadRequired(existingMetadata, currentState);
-    const repairReason =
+    const detectedReason =
       parseServiceRepairReason(options.reason) ??
       serviceRepairReason({
         reloadRequired,
         schedulerActive: initialNativeStatus.active,
-      }) ??
-      currentState.lastRepairReason ??
-      "reload-required";
+      });
+    const { reason: repairReason, reported: reportedReason } = serviceRepairReasons({
+      deferred: options.deferred === true,
+      detected: detectedReason,
+      last: currentState.lastRepairReason,
+    });
     const attemptedAt = new Date().toISOString();
 
     if (options.deferred === true) {
@@ -969,6 +1016,10 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
       ) {
         return yield* Effect.fail(new ServiceNotInstalledError({ configDir: paths.configDir }));
       }
+      const newer = serviceNewerThanCli(existingMetadata);
+      if (newer?.template !== undefined) {
+        return yield* Effect.fail(new ServiceNewerThanCliError({ command: "repair", newer }));
+      }
 
       const updateLock = yield* acquireServiceUpdateLock(paths.updateLockPath, new Date()).pipe(
         Effect.mapError((cause) => new ServiceRepairError({ cause })),
@@ -998,7 +1049,7 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
         );
 
         const wrapper = renderServiceWrapper({
-          env: capturedServiceEnv(env, platform),
+          env: serviceEnv,
           logPath: paths.logPath,
           platform,
           runnerPointerPath: paths.runnerPointerPath,
@@ -1113,7 +1164,7 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
         active: repairResult.nativeStatus.active,
         backend: paths.backend,
         detail: repairResult.nativeStatus.detail,
-        repair: successReport,
+        repair: { ...successReport, reason: reportedReason },
         status: "ok",
       });
       return;
@@ -1138,6 +1189,8 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
       const lockStatus = yield* readServiceLockStatus(paths.lockPath, now);
       const nativeStatus = yield* readNativeSchedulerStatus(paths);
       const reloadRequired = serviceReloadRequired(metadata, state);
+      const newerThanCli = serviceNewerThanCli(metadata);
+      const runner = metadata === null ? null : yield* inspectServiceRunner(paths);
       const launcherPath = windowsLauncherPath(paths);
       const launcherStatus =
         launcherPath === null ? null : yield* readWindowsLauncherStatus(launcherPath);
@@ -1169,7 +1222,9 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
         launcherStatus,
         lock: formatServiceLockStatus(lockStatus),
         logPath: paths.logPath,
+        newerThanCli,
         reloadRequired,
+        runnerIssue: runner?._tag === "broken" ? runner.detail : null,
         runnerPath: metadata?.runnerPath ?? null,
         runnerTarget: metadata?.runnerTarget ?? null,
         runnerVersion: metadata?.runnerVersion ?? null,
@@ -1194,10 +1249,8 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
         console.log(`Scheduler detail: ${status.scheduler.detail}`);
         console.log(`Service template: ${status.templateVersion ?? "unknown"}`);
         console.log(`Reload required: ${status.reloadRequired ? "yes" : "no"}`);
-        if (status.runnerTarget !== null || status.runnerVersion !== null) {
-          console.log(
-            `Runner: ${status.runnerVersion ?? "unknown"}${status.runnerTarget === null ? "" : ` (${status.runnerTarget})`}`,
-          );
+        for (const line of serviceStatusRunnerLines(status)) {
+          console.log(line);
         }
         console.log(`Last success: ${status.lastSuccessAt ?? "never"}`);
         console.log(`Last success date: ${status.lastSuccessDate ?? "never"}`);
@@ -1290,6 +1343,11 @@ function serviceRunEffect(options: ServiceRunOptions) {
     if (result.status === "error") {
       return yield* Effect.fail(
         new ServiceSourcesFailedError({
+          deferred: result.sources.filter(
+            (source) =>
+              source.status === "skipped" &&
+              (source.reason === "runner_timed_out" || source.reason === "run_deadline"),
+          ).length,
           failures: result.sources.flatMap((source) =>
             source.status === "failed" ? [{ issue: source.issue, source: source.source }] : [],
           ),
@@ -1365,13 +1423,7 @@ function serviceDoctorEffect(options: { json?: boolean | undefined } = {}) {
           "active",
           `${nativeStatus.detail}; repair with ${serviceRepairCommand()}`,
         ),
-        doctorCheck(
-          reloadRequired ? "warn" : "ok",
-          "template",
-          reloadRequired
-            ? `reload required; repair with ${serviceRepairCommand()}`
-            : `current (${metadata?.templateVersion ?? "unknown"})`,
-        ),
+        doctorTemplateCheck(metadata, reloadRequired),
         doctorCheck(
           definitionExists ? "ok" : "warn",
           "definition",
@@ -1586,6 +1638,10 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       ...(scheduledSince === undefined ? {} : { since: scheduledSince }),
       ...(usageReplacementBackfill ? { sources: "codex" } : {}),
       sourcePlans: cadence.plans,
+      sourceLimits: {
+        deadlineAt: startedAtMs + SERVICE_SOURCE_DEADLINE_MS,
+        stopAfterTimeout: true,
+      },
       ...(options.scheduled ? { uploadPolicy: SERVICE_UPLOAD_RETRY_POLICY } : {}),
     }).pipe(
       Effect.match({
@@ -1795,11 +1851,47 @@ function writeServiceLockedCheckIn(paths: ServicePaths, lockStatus: ServiceLockS
 function serviceReloadRequired(metadata: ServiceMetadata | null, _state?: ServiceState | null) {
   return (
     metadata !== null &&
-    (metadata.templateVersion !== SERVICE_TEMPLATE_VERSION ||
+    // A newer template is not this CLI's to reload (serviceNewerThanCli).
+    (metadata.templateVersion === undefined ||
+      metadata.templateVersion < SERVICE_TEMPLATE_VERSION ||
       metadata.autoUpdateManager !== "registry" ||
       metadata.runnerTarget === undefined ||
       metadata.runnerVersion === undefined)
   );
+}
+
+/** The parts of the installed service a newer release wrote, or null. */
+interface ServiceNewerThanCli {
+  runner?: { cli: string; installed: string } | undefined;
+  template?: { cli: number; installed: number } | undefined;
+}
+
+function serviceNewerThanCli(
+  metadata: ServiceMetadata | null,
+  cliVersion: string = packageJson.version,
+): ServiceNewerThanCli | null {
+  const template =
+    metadata?.templateVersion !== undefined && metadata.templateVersion > SERVICE_TEMPLATE_VERSION
+      ? { cli: SERVICE_TEMPLATE_VERSION, installed: metadata.templateVersion }
+      : undefined;
+  const runner =
+    metadata?.runnerVersion !== undefined && isNewerVersion(cliVersion, metadata.runnerVersion)
+      ? { cli: cliVersion, installed: metadata.runnerVersion }
+      : undefined;
+
+  return template === undefined && runner === undefined ? null : { runner, template };
+}
+
+function formatServiceNewerThanCli(newer: ServiceNewerThanCli): string {
+  const parts = [
+    ...(newer.template === undefined
+      ? []
+      : [`template ${newer.template.installed} vs ${newer.template.cli}`]),
+    ...(newer.runner === undefined
+      ? []
+      : [`runner ${newer.runner.installed} vs ${newer.runner.cli}`]),
+  ];
+  return `the service is newer than this CLI (${parts.join(", ")})`;
 }
 
 function serviceRepairReason(input: {
@@ -1878,6 +1970,28 @@ function serviceRepairCanInstallScheduler(input: {
   deferred?: boolean | undefined;
 }): boolean {
   return !(input.backend === "launchd" && input.deferred === true);
+}
+
+/**
+ * The reason a repair acts on, and the one it reports. A deferred repair
+ * without a detected reason carries on the one it was scheduled with; a
+ * manual one with nothing wrong is a full repair that reports itself as
+ * `manual`, not with whatever reason the last deferred repair had.
+ */
+function serviceRepairReasons(input: {
+  deferred: boolean;
+  detected: ServiceRepairReason | undefined;
+  last: ServiceRepairReason | undefined;
+}): { reason: ServiceRepairReason; reported: ServiceRepairReason | "manual" } {
+  if (input.detected !== undefined) {
+    return { reason: input.detected, reported: input.detected };
+  }
+  if (input.deferred) {
+    const reason = input.last ?? "reload-required";
+    return { reason, reported: reason };
+  }
+
+  return { reason: "reload-required", reported: "manual" };
 }
 
 function parseServiceRepairReason(value: string | undefined): ServiceRepairReason | undefined {
@@ -2231,7 +2345,7 @@ function serviceRunSuccessState(
     lastAutoUpdated: input.autoUpdate.status === "success",
     lastCliVersion: input.version,
     lastDurationMs: input.durationMs,
-    lastError: input.result.status === "error" ? "ccusage source collection failed" : undefined,
+    lastError: serviceSyncError(input.result),
     lastRows: input.result.rows,
     lastSchedulerActive: input.schedulerActive,
     lastSince: input.since,
@@ -2249,6 +2363,35 @@ function serviceRunSuccessState(
       : { usageReplacementBackfillVersion: input.usageReplacementBackfillVersion }),
     version: 1,
   };
+}
+
+/**
+ * What went wrong in a sync that ran: sources left for the next run by the
+ * run's limits (even when others synced, so doctor shows it), or every
+ * source failing.
+ */
+function serviceSyncError(result: Pick<SyncResult, "sourceResults" | "status">) {
+  const deferred = (reason: SyncSkipReason) =>
+    result.sourceResults.filter(
+      (sourceResult) => sourceResult.status === "skipped" && sourceResult.reason === reason,
+    ).length;
+  const count = (value: number) => `${value} source${value === 1 ? "" : "s"}`;
+  const afterTimeout = deferred("runner_timed_out");
+  if (afterTimeout > 0) {
+    const timedOut = result.sourceResults.flatMap((sourceResult) =>
+      (sourceResult.status === "failed" || sourceResult.status === "partial") &&
+      sourceResult.issue.code === "command_timed_out"
+        ? [sourceResult.source]
+        : [],
+    );
+    return `ccusage timed out for ${timedOut.join(", ")}; skipped ${count(afterTimeout)} until the next run`;
+  }
+  const afterDeadline = deferred("run_deadline");
+  if (afterDeadline > 0) {
+    return `the run reached its ${SERVICE_SOURCE_DEADLINE_MS / 60_000}-minute limit; skipped ${count(afterDeadline)} until the next run`;
+  }
+
+  return result.status === "error" ? "ccusage source collection failed" : undefined;
 }
 
 function serviceRunFailureState(
@@ -2333,7 +2476,8 @@ function serviceRunLogLine(
     autoUpdate: state.lastAutoUpdate,
     autoUpdated: state.lastAutoUpdated,
     durationMs: state.lastDurationMs,
-    error: status === "failure" ? state.lastError : undefined,
+    // Set on a success too when the run left sources for the next one.
+    error: state.lastError,
     event: "service_run",
     reloadRequired: state.reloadRequired,
     ...serviceRepairLogFields(state),
@@ -3736,6 +3880,52 @@ function inspectServiceRunner(paths: ServicePaths): Effect.Effect<ServiceRunnerI
   });
 }
 
+/** `service status` lines for a service newer than this CLI and for the runner. */
+function serviceStatusRunnerLines(status: {
+  newerThanCli: ServiceNewerThanCli | null;
+  runnerIssue: string | null;
+  runnerTarget: string | null;
+  runnerVersion: string | null;
+}): string[] {
+  const lines: string[] = [];
+  if (status.newerThanCli !== null) {
+    const newer = formatServiceNewerThanCli(status.newerThanCli);
+    lines.push(
+      `${newer.charAt(0).toUpperCase()}${newer.slice(1)}; upgrade the CLI with tokenmaxxing upgrade`,
+    );
+  }
+  // A missing, empty or broken runner never syncs, whatever service.json says.
+  if (status.runnerIssue !== null) {
+    lines.push(`Runner: ${status.runnerIssue}; repair with ${serviceRepairCommand()}`);
+  } else if (status.runnerTarget !== null || status.runnerVersion !== null) {
+    lines.push(
+      `Runner: ${status.runnerVersion ?? "unknown"}${status.runnerTarget === null ? "" : ` (${status.runnerTarget})`}`,
+    );
+  }
+
+  return lines;
+}
+
+function doctorTemplateCheck(
+  metadata: ServiceMetadata | null,
+  reloadRequired: boolean,
+): DoctorCheck {
+  // Only the template: a runner newer than the global CLI is what every
+  // auto-update leaves behind.
+  const template = serviceNewerThanCli(metadata)?.template;
+  if (template !== undefined) {
+    return doctorCheck(
+      "warn",
+      "template",
+      `${formatServiceNewerThanCli({ template })}; upgrade the CLI with tokenmaxxing upgrade`,
+    );
+  }
+
+  return reloadRequired
+    ? doctorCheck("warn", "template", `reload required; repair with ${serviceRepairCommand()}`)
+    : doctorCheck("ok", "template", `current (${metadata?.templateVersion ?? "unknown"})`);
+}
+
 function doctorRunnerCheck(
   runner: ServiceRunnerInspection,
   metadata: ServiceMetadata | null,
@@ -3756,12 +3946,23 @@ function doctorRunnerCheck(
 function doctorLockDetail(
   paths: ServicePaths,
   status: ServiceLockStatus,
+  currentHostname: string = hostname(),
 ): Effect.Effect<string, never> {
   const held = formatServiceLockStatus(status);
   if (!status.locked || status.stale || status.pid === undefined || status.pid <= 0) {
     return Effect.succeed(held);
   }
   const pid = status.pid;
+  // A pid only means something on the machine that wrote it (a config dir on
+  // a synced or network drive); the run never takes such a lock over early.
+  if (
+    status.hostname !== undefined &&
+    status.hostname.toLowerCase() !== currentHostname.toLowerCase()
+  ) {
+    return Effect.succeed(
+      `${held}; held by ${status.hostname}; if no sync is running there, remove ${paths.lockPath}`,
+    );
+  }
 
   return Effect.promise(() => processIsAlive(pid)).pipe(
     Effect.map((alive) =>
@@ -4886,10 +5087,13 @@ function windowsTaskMatches(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
   const expected = renderWindowsTaskXml(paths, env);
+  // Paths compare the way Windows does: one Unicode form, ignoring case.
+  const pathTags = new Set(["Arguments", "Command", "WorkingDirectory"]);
   const field = (xml: string, tag: string) =>
-    [...xml.matchAll(new RegExp(`<${tag}>([^<]*)</${tag}>`, "g"))].map((match) =>
-      unescapeXml(match[1]!).trim(),
-    );
+    [...xml.matchAll(new RegExp(`<${tag}>([^<]*)</${tag}>`, "g"))].map((match) => {
+      const value = unescapeXml(match[1]!).trim();
+      return pathTags.has(tag) ? windowsPathKey(value) : value;
+    });
   const same = (tag: string) =>
     JSON.stringify(field(registeredXml, tag)) === JSON.stringify(field(expected, tag));
 
@@ -5261,7 +5465,8 @@ function parseServiceWrapperEnv(wrapper: string): Record<string, string> {
 
     const windows = /^set "([A-Za-z_][A-Za-z0-9_]*)=(.*)"$/.exec(line);
     if (windows?.[1] !== undefined && windows[2] !== undefined) {
-      env[windows[1]] = windows[2].replaceAll('\\"', '"');
+      // Undoes escapeCmdSetValue.
+      env[windows[1]] = windows[2].replaceAll("%%", "%").replaceAll('\\"', '"');
     }
   }
 
@@ -5596,12 +5801,104 @@ function serviceDefinitionOwner(
   );
 }
 
+/**
+ * How Windows compares a path: one Unicode form (a path typed on macOS may
+ * arrive NFD), ignoring case.
+ */
+function windowsPathKey(value: string): string {
+  return value.normalize("NFC").toLowerCase();
+}
+
+/** How the installed Windows service spells its config dir and wrapper env. */
+interface InstalledWindowsSpelling {
+  configDir?: string | undefined;
+  env: Record<string, string>;
+}
+
+/**
+ * Reads the installed task's working directory and the installed wrapper's
+ * env; see `withInstalledWindowsSpelling`.
+ */
+function readInstalledWindowsSpelling(
+  paths: ServicePaths,
+): Effect.Effect<InstalledWindowsSpelling, never> {
+  return Effect.gen(function* () {
+    const registered = yield* readRegisteredWindowsTaskXml();
+    const workingDirectory =
+      registered._tag === "xml"
+        ? /<WorkingDirectory>([^<]*)<\/WorkingDirectory>/i.exec(registered.xml)?.[1]
+        : undefined;
+    const wrapper = yield* Effect.promise(() =>
+      readFile(paths.wrapperPath, "utf8").catch(() => null),
+    );
+
+    return {
+      configDir: workingDirectory === undefined ? undefined : unescapeXml(workingDirectory).trim(),
+      env: wrapper === null ? {} : parseServiceWrapperEnv(wrapper),
+    };
+  });
+}
+
+/**
+ * Windows paths compare case-insensitively, so a shell whose config dir (or
+ * HOME, APPDATA, PATH...) differs from the installed service's only in case
+ * owns that service. Keep the installed spelling: re-spelling it rewrote the
+ * wrapper, runner pointer and service.json and re-registered the task (moving
+ * its start boundary), and a repair from the original spelling flipped it
+ * all back.
+ */
+function withInstalledWindowsSpelling(
+  paths: ServicePaths,
+  capturedEnv: Record<string, string>,
+  installed: InstalledWindowsSpelling | null,
+): { env: Record<string, string>; paths: ServicePaths } {
+  if (installed === null) {
+    return { env: capturedEnv, paths };
+  }
+
+  const env = Object.fromEntries(
+    Object.entries(capturedEnv).map(([key, value]) => {
+      const installedValue = installed.env[key];
+      return [
+        key,
+        installedValue !== undefined && windowsPathKey(installedValue) === windowsPathKey(value)
+          ? installedValue
+          : value,
+      ];
+    }),
+  );
+  const configDir = installed.configDir;
+  if (
+    configDir === undefined ||
+    configDir === paths.configDir ||
+    windowsPathKey(configDir) !== windowsPathKey(paths.configDir)
+  ) {
+    return { env, paths };
+  }
+
+  const respell = (path: string) =>
+    path.startsWith(paths.configDir) ? `${configDir}${path.slice(paths.configDir.length)}` : path;
+  return {
+    env,
+    paths: {
+      ...paths,
+      configDir,
+      definitionPath: paths.definitionPath === null ? null : respell(paths.definitionPath),
+      lockPath: respell(paths.lockPath),
+      logPath: respell(paths.logPath),
+      metadataPath: respell(paths.metadataPath),
+      runnerPointerPath: respell(paths.runnerPointerPath),
+      runnersDir: respell(paths.runnersDir),
+      statePath: respell(paths.statePath),
+      updateLockPath: respell(paths.updateLockPath),
+      wrapperPath: respell(paths.wrapperPath),
+    },
+  };
+}
+
 function definitionMentionsConfigDir(text: string, paths: ServicePaths): boolean {
   const windows = paths.backend === "windows-task-scheduler";
-  // One Unicode form on both sides (a path typed on macOS may arrive NFD),
-  // and Windows paths compare case-insensitively.
-  const normalize = (value: string) =>
-    windows ? value.normalize("NFC").toLowerCase() : value.normalize("NFC");
+  const normalize = (value: string) => (windows ? windowsPathKey(value) : value.normalize("NFC"));
   const separator = windows ? "\\" : "/";
   const configDir = normalize(paths.configDir);
   const dir = configDir.endsWith(separator) ? configDir : `${configDir}${separator}`;
@@ -5777,6 +6074,7 @@ export {
   isWindowsNpmPrefixShim,
   launchdJobMatches,
   windowsTaskMatches,
+  withInstalledWindowsSpelling,
   decodeWindowsCommandOutput,
   readRegisteredWindowsTaskXml,
   isServiceInstalled,
@@ -5816,7 +6114,12 @@ export {
   WindowsTaskAccessDeniedError,
   serviceReloadRequired,
   serviceRepairReason,
+  serviceRepairReasons,
   serviceRepairState,
+  serviceNewerThanCli,
+  doctorLockDetail,
+  doctorTemplateCheck,
+  serviceStatusRunnerLines,
   serviceRunnerPackageName,
   serviceRunnerTarget,
   serviceRunnerTargetCandidates,
@@ -5856,6 +6159,7 @@ export {
   ServiceEphemeralCommandError,
   ServiceInstallError,
   ServiceElevatedError,
+  ServiceNewerThanCliError,
   ServiceNotInstalledError,
   ServiceOwnedElsewhereError,
   ServiceRepairError,
@@ -5868,6 +6172,7 @@ export {
 };
 
 export type {
+  InstalledWindowsSpelling,
   AutoUpdateManager,
   PackageManagerUpdateOptions,
   CommandInstall,

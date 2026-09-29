@@ -263,6 +263,31 @@ describe("nextSourceCadenceState", () => {
     });
   });
 
+  it("leaves sources a run's limits skipped exactly as they were", () => {
+    const full = { ...reuse, sessions: "full" } as const;
+    const next = commit(
+      { claude: full, codex: full, gemini: full },
+      syncResult(
+        [
+          {
+            issue: { code: "command_timed_out", message: "timed out", report: "daily" },
+            source: "claude",
+            status: "failed",
+            summary: null,
+          },
+          { reason: "runner_timed_out", source: "codex", status: "skipped", summary: null },
+          { reason: "run_deadline", source: "gemini", status: "skipped", summary: null },
+        ],
+        { claude: { dailyMs: 180_000 } },
+      ),
+    );
+
+    // Neither uploaded (fingerprint) nor run (no cooldown): the next tick runs them.
+    expect(next.sources.codex).toEqual(previous.sources.codex);
+    expect(next.sources.gemini).toEqual(previous.sources.gemini);
+    expect(next.sources.claude).toMatchObject({ fingerprint: "claude-old", lastRunMs: 180_000 });
+  });
+
   it("records unchanged sources as current and empty ones as uploaded", () => {
     const next = commit(
       {

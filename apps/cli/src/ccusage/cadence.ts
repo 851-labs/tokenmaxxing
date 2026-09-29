@@ -203,6 +203,14 @@ function nextSourceCadenceState(
       }
       continue;
     }
+    // Left for the next run by the sync's own limits: nothing ran, so
+    // neither the fingerprint nor the cooldown moves.
+    if (
+      result.status === "skipped" &&
+      (result.reason === "runner_timed_out" || result.reason === "run_deadline")
+    ) {
+      continue;
+    }
 
     const entry: { -readonly [Key in keyof SourceCadenceEntry]: SourceCadenceEntry[Key] } = {
       ...sources[result.source],

@@ -1,4 +1,5 @@
-import { Cause, Effect, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Option } from "effect";
+import { TestClock } from "effect/testing";
 import { Unauthorized, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -344,7 +345,7 @@ describe("browserLoginEffect poll failures", () => {
     [
       "a server failure",
       { status: 500 },
-      "error: failed to poll CLI login\nhint: run tokenmaxxing login again",
+      "error: failed to poll CLI login; the tokenmaxxing API had a server error (HTTP 500)\nhint: the problem is on the tokenmaxxing side; try again later",
     ],
   ])("surfaces %s", async (_label, pollResponse, message) => {
     const { layer } = makeTestLayer({
@@ -459,7 +460,99 @@ describe("browserLoginEffect rate limits", () => {
     const error = firstFailure(exit);
     expect(error).toBeInstanceOf(StartCliLoginError);
     expect(error.message).toBe(
-      "error: Too many login attempts from this network; try again in 60 seconds.",
+      "error: failed to start CLI login; the tokenmaxxing API is rate limiting requests\nhint: try again in 60 s",
     );
+  });
+
+  it("explains a start rate-limited by something other than the API (an HTML 429)", async () => {
+    const { layer } = makeTestLayer({
+      client: makeStubApiClient({
+        "POST /cli/login/start": {
+          body: "<html>Too Many Requests</html>",
+          headers: { "retry-after": "37" },
+          status: 429,
+        },
+      }),
+      initialConfig: config,
+      interactive: true,
+    });
+
+    const exit = await Effect.runPromiseExit(
+      browserLoginEffect({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    expect(firstFailure(exit).message).toBe(
+      "error: failed to start CLI login; the tokenmaxxing API is rate limiting requests\nhint: try again in 37 s",
+    );
+  });
+});
+
+describe("browserLoginEffect timeouts", () => {
+  const config = {
+    apiUrl: "https://api.tokenmaxxing.example",
+    wwwUrl: "https://tokenmaxxing.example",
+  };
+  const start = {
+    code: "ABCD-1234",
+    deviceCode: "device-code-secret",
+    expiresAt: "2026-06-21T18:10:00.000Z",
+    intervalSeconds: 2,
+    userCode: "ABCD-1234",
+    verificationUri: "https://tokenmaxxing.example/login/cli?code=ABCD-1234",
+  };
+  const client = (cliLogin: Record<string, () => Effect.Effect<unknown>>) =>
+    Effect.succeed({ cliLogin } as unknown as TokenmaxxingApiClient);
+  const runWithClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(Effect.exit(effect));
+        for (let step = 0; step < 4; step += 1) {
+          yield* TestClock.adjust("15 seconds");
+        }
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(TestClock.layer())) as Effect.Effect<Exit.Exit<A, E>>,
+    );
+
+  it("gives up on a login start that never answers after 15 s", async () => {
+    const { layer } = makeTestLayer({
+      client: client({ start: () => Effect.never }),
+      initialConfig: config,
+      interactive: true,
+    });
+
+    const exit = await runWithClock(
+      browserLoginEffect({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    const error = firstFailure(exit);
+    expect(error).toBeInstanceOf(StartCliLoginError);
+    expect(error.message).toBe(
+      "error: failed to start CLI login; the tokenmaxxing API did not answer within 15 s\nhint: check your network, then try again",
+    );
+  });
+
+  it("polls again after a poll that never answers, spending its time from the budget", async () => {
+    let polls = 0;
+    const { layer, state } = makeTestLayer({
+      client: client({
+        poll: () => {
+          polls += 1;
+          return polls === 1
+            ? Effect.never
+            : Effect.succeed({ status: "complete", token: "tmx_new", user });
+        },
+        start: () => Effect.succeed(start),
+      }),
+      initialConfig: config,
+      interactive: true,
+    });
+
+    const exit = await runWithClock(
+      browserLoginEffect({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    expect(Exit.isSuccess(exit)).toBe(true);
+    expect(polls).toBe(2);
+    expect(state.sleeps).toEqual([2_000]);
   });
 });

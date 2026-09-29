@@ -9,6 +9,14 @@
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 printf '%s bun pid=%s ppid=%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" "$PPID" "$*" >>"$dir/calls.log"
 
+# <fakebin>/hang makes every call hang the way npx does when the network
+# black-holes: this shell stays the parent of a child that never exits (no
+# exec), so only killing the whole process group stops it.
+if [ -f "$dir/hang" ]; then
+  sleep 86399
+  exit 1
+fi
+
 if [ "$1" != x ]; then
   echo "fake bun: unsupported invocation: $*" >&2
   exit 1
