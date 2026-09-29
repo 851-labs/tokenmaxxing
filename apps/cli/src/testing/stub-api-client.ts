@@ -9,6 +9,7 @@ import type { TokenmaxxingApiClient } from "../services";
 interface StubResponse {
   /** Objects are sent as JSON, strings as text/plain, undefined as no body. */
   body?: unknown;
+  headers?: Record<string, string> | undefined;
   status: number;
 }
 
@@ -50,15 +51,15 @@ function makeStubApiClient(
 // String bodies, not Response.json: under Node, a Response.json body whose
 // decode fails is read twice and dies on a detached buffer, which real fetch
 // responses never do.
-function toWebResponse({ body, status }: StubResponse) {
+function toWebResponse({ body, headers = {}, status }: StubResponse) {
   if (body === undefined) {
-    return new Response(null, { status });
+    return new Response(null, { headers, status });
   }
 
   return typeof body === "string"
-    ? new Response(body, { headers: { "content-type": "text/plain" }, status })
+    ? new Response(body, { headers: { "content-type": "text/plain", ...headers }, status })
     : new Response(JSON.stringify(body), {
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...headers },
         status,
       });
 }

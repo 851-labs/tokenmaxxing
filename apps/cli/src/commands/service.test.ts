@@ -25,6 +25,7 @@ import {
   autoUpdateCommandDescription,
   backendForPlatform,
   capturedServiceEnv,
+  commandShimInvocation,
   deferredServiceRepairInvocation,
   doctorServiceEnvCheck,
   parseServiceWrapperEnv,
@@ -45,6 +46,8 @@ import {
   isWindowsNpmPrefixShim,
   launchdJobMatches,
   legacyServiceWrapperPaths,
+  PackageManagerUpdateError,
+  packageManagerFailureOutput,
   readCurrentServiceRunnerInstall,
   readWindowsLauncherStatus,
   removeServiceFiles,
@@ -65,6 +68,7 @@ import {
   serviceRunnerPackageName,
   serviceRunnerTarget,
   serviceCompletedUsageReplacementBackfill,
+  serviceDefinitionUsesConfigDir,
   serviceNeedsUsageReplacementBackfill,
   serviceReconcileDue,
   serviceReconcileSince,
@@ -717,19 +721,84 @@ printf 'HERMES_HOME=%s\\n' "\${HERMES_HOME-unset}"
     ).toBeLessThan(wrapper.indexOf("} >> '/home/alex/.config/tokenmaxxing/service.log' 2>&1"));
   });
 
-  it("renders the matching auto-update command for each package manager", () => {
-    expect(autoUpdateCommandDescription("bun")).toBe(
-      "bun update -g @851-labs/tokenmaxxing --latest --silent",
+  it("renders an exact-version, cache-bypassing install for each package manager", () => {
+    expect(autoUpdateCommandDescription("bun", "0.7.0")).toBe(
+      "bun add -g @851-labs/tokenmaxxing@0.7.0 --no-cache --silent",
     );
-    expect(autoUpdateCommandDescription("npm")).toBe(
-      "npm install -g @851-labs/tokenmaxxing@latest --silent",
+    expect(autoUpdateCommandDescription("npm", "0.7.0")).toBe(
+      "npm install -g @851-labs/tokenmaxxing@0.7.0 --prefer-online --loglevel=error",
     );
-    expect(autoUpdateCommandDescription("pnpm")).toBe(
-      "pnpm add -g @851-labs/tokenmaxxing@latest --silent",
+    expect(autoUpdateCommandDescription("pnpm", "0.7.0")).toBe(
+      "pnpm add -g @851-labs/tokenmaxxing@0.7.0 --loglevel=error",
     );
-    expect(autoUpdateCommandDescription("yarn")).toBe(
-      "yarn global add @851-labs/tokenmaxxing@latest --silent",
+    expect(autoUpdateCommandDescription("yarn", "0.7.0")).toBe(
+      "yarn global add @851-labs/tokenmaxxing@0.7.0 --silent",
     );
+  });
+
+  it("runs npm's Windows .cmd shim through cmd.exe, and anything else directly", () => {
+    expect(
+      commandShimInvocation(
+        "C:\\Users\\alex\\AppData\\Roaming\\npm\\tokenmaxxing.CMD",
+        ["--version"],
+        "win32",
+        { ComSpec: "C:\\Windows\\system32\\cmd.exe" },
+      ),
+    ).toEqual({
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        '""C:\\Users\\alex\\AppData\\Roaming\\npm\\tokenmaxxing.CMD" --version"',
+      ],
+      command: "C:\\Windows\\system32\\cmd.exe",
+      windowsVerbatimArguments: true,
+    });
+    expect(
+      commandShimInvocation("C:\\bun\\bin\\tokenmaxxing.exe", ["--version"], "win32", {}),
+    ).toEqual({
+      args: ["--version"],
+      command: "C:\\bun\\bin\\tokenmaxxing.exe",
+      windowsVerbatimArguments: false,
+    });
+    expect(commandShimInvocation("/usr/local/bin/tokenmaxxing", ["--version"], "linux")).toEqual({
+      args: ["--version"],
+      command: "/usr/local/bin/tokenmaxxing",
+      windowsVerbatimArguments: false,
+    });
+  });
+
+  it("keeps the package manager's error output, trimmed and without colors", () => {
+    const output = packageManagerFailureOutput({
+      stderr: `${Array.from({ length: 30 }, (_, index) => `npm error line ${index}`).join("\n")}\n\u001b[31mnpm error code ETARGET\u001b[0m\n`,
+      stdout: "added 1 package",
+    });
+
+    expect(output.split("\n")).toHaveLength(20);
+    expect(output.endsWith("npm error code ETARGET")).toBe(true);
+    expect(packageManagerFailureOutput({ stderr: "", stdout: "yarn error x\n" })).toBe(
+      "yarn error x",
+    );
+    expect(packageManagerFailureOutput(new Error("spawn npm ENOENT"))).toBe("");
+  });
+
+  it("names the failed command and its output in PackageManagerUpdateError", () => {
+    expect(
+      new PackageManagerUpdateError({
+        cause: undefined,
+        command: "npm install -g x@1",
+        output: "npm error code ETARGET",
+        timedOut: false,
+      }).message,
+    ).toBe("npm install -g x@1 failed:\nnpm error code ETARGET");
+    expect(
+      new PackageManagerUpdateError({
+        cause: undefined,
+        command: "npm install -g x@1",
+        output: "",
+        timedOut: true,
+      }).message,
+    ).toBe("npm install -g x@1 did not finish within 4 minutes");
   });
 
   it("renders Windows wrappers without package-manager updates", () => {
@@ -925,6 +994,43 @@ describe("unchanged service refresh", () => {
         wrapper: false,
       });
       expect(await readFile(paths.definitionPath!, "utf8")).toBe(renderLaunchdPlist(paths));
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("tells a definition that runs this config dir's wrapper from another config dir's", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-owner-"));
+
+    try {
+      for (const platform of ["darwin", "linux"] as const) {
+        const env = { XDG_CONFIG_HOME: join(dir, "xdg") };
+        // A config dir that needs escaping in both the plist and the unit.
+        const real = servicePaths({
+          env: { ...env, TOKENMAXXING_CONFIG_DIR: join(dir, `Zoë O'Neil & Co 100%`) },
+          home: join(dir, platform),
+          platform,
+        })!;
+        const scratch = servicePaths({
+          env: { ...env, TOKENMAXXING_CONFIG_DIR: join(dir, "scratch") },
+          home: join(dir, platform),
+          platform,
+        })!;
+
+        expect(await Effect.runPromise(serviceDefinitionUsesConfigDir(real))).toBe(false);
+        await Effect.runPromise(writeServiceFiles(real, wrapper, metadata));
+        expect(await Effect.runPromise(serviceDefinitionUsesConfigDir(real))).toBe(true);
+        // Same HOME, so the same definition file, but it runs the other wrapper.
+        expect(scratch.definitionPath).toBe(real.definitionPath);
+        expect(await Effect.runPromise(serviceDefinitionUsesConfigDir(scratch))).toBe(false);
+      }
+
+      const windows = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: join(dir, "win") },
+        home: dir,
+        platform: "win32",
+      })!;
+      expect(await Effect.runPromise(serviceDefinitionUsesConfigDir(windows))).toBe(true);
     } finally {
       await rm(dir, { force: true, recursive: true });
     }
@@ -1934,12 +2040,7 @@ describe("service auto-update reports", () => {
           commandExists: () => Effect.succeed(true),
           fetchDistTags: () => Effect.succeed(distTags),
           now,
-          readInstalledVersion: () =>
-            Effect.succeed(
-              updates.at(-1)?.specifier === "latest"
-                ? distTags.latest!
-                : (updates.at(-1)?.specifier ?? currentVersion),
-            ),
+          readInstalledVersion: () => Effect.succeed(updates.at(-1)?.specifier ?? currentVersion),
           runPackageManagerUpdate: (manager, specifier) =>
             Effect.sync(() => {
               updates.push({ manager, specifier });
@@ -1993,7 +2094,7 @@ describe("service auto-update reports", () => {
         latest: "0.7.0",
       });
 
-      expect(updates).toEqual([{ manager: "npm", specifier: "latest" }]);
+      expect(updates).toEqual([{ manager: "npm", specifier: "0.7.0" }]);
       expect(report).toMatchObject({ installedVersion: "0.7.0", status: "success" });
     });
 
@@ -2013,7 +2114,7 @@ describe("service auto-update reports", () => {
         latest: "0.6.1",
       });
 
-      expect(updates).toEqual([{ manager: "npm", specifier: "latest" }]);
+      expect(updates).toEqual([{ manager: "npm", specifier: "0.6.1" }]);
       expect(report).toMatchObject({ installedVersion: "0.6.1", status: "success" });
     });
 

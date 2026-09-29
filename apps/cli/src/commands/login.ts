@@ -15,6 +15,7 @@ import {
 } from "../services";
 import { booleanFlag } from "../flags";
 import { formatUrl, humanFrame, humanLog, humanSpinner, writeJson } from "../output";
+import { apiFailureMessage } from "../api-failure";
 import {
   alreadyLoggedInAsMessage,
   apiErrorMessage,
@@ -101,8 +102,13 @@ class LoginTokenInvalidError extends Data.TaggedError("LoginTokenInvalidError")<
 class LoginValidationError extends Data.TaggedError("LoginValidationError")<{
   readonly cause: unknown;
 }> {
-  override message =
-    "error: failed to validate stored login\nhint: check your network and try again";
+  override get message() {
+    return apiFailureMessage(
+      "failed to validate stored login",
+      this.cause,
+      "check your network and try again",
+    );
+  }
 }
 
 class NonInteractiveLoginError extends Data.TaggedError("NonInteractiveLoginError")<{}> {

@@ -5,6 +5,41 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Changed
+
+- `tokenmaxxing upgrade` now installs the exact version the registry reports (for example
+  `npm install -g @851-labs/tokenmaxxing@0.7.0 --prefer-online`, `bun add -g …@0.7.0 --no-cache`),
+  never a dist-tag. When the registry can't be reached it now stops for stable installs too,
+  as it already did for prereleases. Before, it ran `@latest` without knowing which version
+  that would install.
+
+### Fixed
+
+- `tokenmaxxing upgrade` could install an older release and still report success. npm resolved
+  `@latest` from a packument it had cached before the release, and `bun update -g --latest` could
+  do nothing. Upgrade now checks `tokenmaxxing --version` after installing. If the new version
+  isn't what runs, it fails with `upgrade_verification` instead of reporting `updated: true`.
+  Right after a release it also no longer fails with npm's `ETARGET` for up to 5 minutes.
+- When the package manager fails, `tokenmaxxing upgrade` now shows the command it ran and the
+  package manager's own error output (for example npm's `ETARGET`), instead of only "failed to
+  upgrade tokenmaxxing".
+- `tokenmaxxing upgrade` no longer refreshes a service that another config dir installed. The
+  launchd plist and systemd units live under `HOME`, so an upgrade run with a different
+  `TOKENMAXXING_CONFIG_DIR` rewrote them to point at that config dir.
+- `tokenmaxxing sync` no longer hangs on "Uploading usage" when the API accepts the connection
+  but never answers. An upload now times out after 60 s, the same limit each scheduled attempt
+  already had. Checking the stored login times out after 15 s.
+- When the API rate-limits a request (HTTP 429), `sync`, `login` and `whoami` now say how long
+  to wait ("try again in 60 s"). Before, they told you to check your network or log in again.
+- A `config.json` that is valid JSON but not a config (`null`, or `{"apiUrl": 123}`) now fails
+  with "CLI config is not valid" and the file's path, instead of "unexpected CLI failure".
+- `tokenmaxxing sync` now says when neither bun nor npx is installed, and how to fix it, instead
+  of only "ccusage failed for …". When ccusage fails for another reason, the error names the
+  reason for each agent.
+- `tokenmaxxing` now exits with 128 + the signal number when a signal stops it, for example 143
+  for `SIGTERM` (it used to exit 130 for every signal). It also handles `SIGHUP`, which used to
+  kill it without stopping the running ccusage process.
+
 ## 0.7.0-alpha.2 - 2026-09-28
 
 ### Added

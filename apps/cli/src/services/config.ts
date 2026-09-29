@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Context, Data, Effect, Layer } from "effect";
+import { Context, Data, Effect, Layer, Schema } from "effect";
 
 /**
  * Local CLI state at ~/.config/tokenmaxxing/config.json (override with
@@ -37,7 +37,10 @@ class ConfigReadError extends Data.TaggedError("ConfigReadError")<{
   readonly path: string;
 }> {
   override get message() {
-    return `error: failed to read CLI config: ${this.path}\nhint: check TOKENMAXXING_CONFIG_DIR`;
+    // Unparseable JSON, or JSON that is not a config object (null, wrong types).
+    return this.cause instanceof SyntaxError || Schema.isSchemaError(this.cause)
+      ? `error: CLI config is not valid: ${this.path}\nhint: fix the file, or move it aside and run tokenmaxxing login`
+      : `error: failed to read CLI config: ${this.path}\nhint: check TOKENMAXXING_CONFIG_DIR`;
   }
 }
 
@@ -120,6 +123,25 @@ function applyEnvOverrides(config: CliConfig, env: Record<string, string | undef
   };
 }
 
+/**
+ * The known fields of config.json, checked before use: a file that parses
+ * but is `null` or carries a non-string `apiUrl` must fail as a typed
+ * `ConfigReadError`, not crash later. Unknown fields (from a newer CLI) are
+ * kept, so rewriting the file never drops them.
+ */
+const StoredCliConfig = Schema.Struct({
+  apiUrl: Schema.optionalKey(Schema.String),
+  deviceId: Schema.optionalKey(Schema.String),
+  token: Schema.optionalKey(Schema.String),
+  wwwUrl: Schema.optionalKey(Schema.String),
+});
+
+function decodeStoredConfig(value: unknown) {
+  return Schema.decodeUnknownEffect(StoredCliConfig)(value).pipe(
+    Effect.map((config): Partial<CliConfig> => ({ ...(value as object), ...config })),
+  );
+}
+
 function normalizeConfig(config: Partial<CliConfig>, fallback: CliConfig): CliConfig {
   return {
     ...config,
@@ -137,9 +159,10 @@ function readConfigFileProgram(
   fallback: CliConfig,
 ): Effect.Effect<StoredCliConfig, ConfigReadError> {
   return Effect.tryPromise({
-    try: async () => JSON.parse(await readFile(path, "utf8")) as Partial<CliConfig>,
+    try: async () => JSON.parse(await readFile(path, "utf8")) as unknown,
     catch: (cause) => cause,
   }).pipe(
+    Effect.flatMap(decodeStoredConfig),
     Effect.map((config) => ({
       config: normalizeConfig(config, fallback),
       exists: true,

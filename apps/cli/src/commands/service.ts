@@ -33,15 +33,14 @@ import type {
 
 import {
   type DistTags,
-  type DistTagVersion,
   fetchDistTags,
   followedDistTags,
-  LATEST_DIST_TAG,
   NPM_REGISTRY_ENV,
   npmRegistryPackageUrl,
   parseSemVer,
   resolveUpdate,
 } from "../cli-version";
+import { USAGE_UPLOAD_TIMEOUT_MS } from "../api-failure";
 import { booleanFlag } from "../flags";
 import { ClockService, ConfigService, ConsoleService } from "../services";
 import { getConfigPath } from "../services/config";
@@ -87,6 +86,9 @@ const WINDOWS_LAUNCHER_NAME = "service-sync.vbs";
 const WINDOWS_TASK_XML_NAME = "service-task.xml";
 const WINDOWS_REPAIR_COMMAND_ENV = "TOKENMAXXING_SERVICE_REPAIR_COMMAND";
 const PACKAGE_NAME = "@851-labs/tokenmaxxing";
+const PACKAGE_MANAGER_OUTPUT_MAX_LINES = 20;
+const PACKAGE_MANAGER_OUTPUT_MAX_CHARS = 2_000;
+const ANSI_ESCAPE_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
 const SERVICE_RUNNER_DIR_NAME = "service-runners";
 const SERVICE_RUNNER_POINTER_NAME = "service-runner-current";
 const SERVICE_LOCK_STALE_MS = 2 * 60 * 60 * 1000;
@@ -119,7 +121,7 @@ const SERVICE_UPLOAD_RETRY_POLICY: UploadRetryPolicy = {
   attempts: 3,
   backoffMs: [1_000, 4_000, 16_000],
   jitterRatio: 0.2,
-  timeoutMs: 60_000,
+  timeoutMs: USAGE_UPLOAD_TIMEOUT_MS,
 };
 const LEGACY_SCHEDULE_TIMES: readonly ScheduleTime[] = [
   { hour: 9, minute: 0 },
@@ -253,7 +255,7 @@ interface ServiceAutoUpdateRuntime {
   readInstalledVersion?: ((commandPath: string) => Effect.Effect<string | null, never>) | undefined;
   runnerTargetCandidates?: (() => readonly ServiceRunnerTarget[]) | undefined;
   runPackageManagerUpdate?:
-    | ((manager: AutoUpdateManager, specifier: string) => Effect.Effect<void, unknown>)
+    | ((manager: AutoUpdateManager, version: string) => Effect.Effect<void, unknown>)
     | undefined;
 }
 
@@ -437,6 +439,21 @@ class ServiceRunnerUpdateError extends Data.TaggedError("ServiceRunnerUpdateErro
     "download-failed" | "integrity-mismatch" | "install-failed" | "platform-package-missing"
   >;
 }> {}
+
+/** A package-manager install of the CLI failed; `output` is what it printed. */
+class PackageManagerUpdateError extends Data.TaggedError("PackageManagerUpdateError")<{
+  readonly cause: unknown;
+  readonly command: string;
+  readonly output: string;
+  readonly timedOut: boolean;
+}> {
+  override get message() {
+    const summary = this.timedOut
+      ? `${this.command} did not finish within ${SERVICE_PACKAGE_UPDATE_TIMEOUT_MS / 60_000} minutes`
+      : `${this.command} failed`;
+    return this.output.length > 0 ? `${summary}:\n${this.output}` : summary;
+  }
+}
 
 class ServiceUpdateLockedError extends Data.TaggedError("ServiceUpdateLockedError")<{
   readonly status: ServiceLockStatus;
@@ -2614,7 +2631,9 @@ function runLegacyPackageManagerAutoUpdate(
       });
     }
 
-    const updateResult = yield* runUpdate(manager, packageManagerSpecifier(target)).pipe(
+    // The exact version, never a dist-tag the package manager might resolve
+    // from a stale cache; the --version check below confirms it landed.
+    const updateResult = yield* runUpdate(manager, target.version).pipe(
       Effect.match({
         onFailure: (cause) => ({ _tag: "failure" as const, cause }),
         onSuccess: () => ({ _tag: "success" as const }),
@@ -2643,7 +2662,7 @@ function runLegacyPackageManagerAutoUpdate(
     const installedVersion = yield* readInstalledVersion(metadata.commandPath);
     if (
       installedVersion === null ||
-      normalizeVersion(installedVersion) !== normalizeVersion(latestVersion)
+      normalizeVersion(installedVersion) !== normalizeVersion(target.version)
     ) {
       return serviceAutoUpdateReport({
         attemptedAt,
@@ -3219,12 +3238,17 @@ function cleanupServiceRunnerVersions(
   }).pipe(Effect.catch(() => Effect.void));
 }
 
-function readInstalledCliVersion(commandPath: string): Effect.Effect<string | null, never> {
+function readInstalledCliVersion(
+  commandPath: string,
+  platform: NodeJS.Platform = process.platform,
+): Effect.Effect<string | null, never> {
+  const invocation = commandShimInvocation(commandPath, ["--version"], platform);
   return Effect.tryPromise({
     try: async () => {
-      const { stderr, stdout } = await execFilePromise(commandPath, ["--version"], {
+      const { stderr, stdout } = await execFilePromise(invocation.command, invocation.args, {
         timeout: SERVICE_VERSION_TIMEOUT_MS,
         windowsHide: true,
+        windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       });
 
       return parseCliVersion(`${stdout}\n${stderr}`);
@@ -3250,19 +3274,83 @@ function formatAutoUpdateError(cause: unknown): string {
   return String(cause);
 }
 
+/** Installs exactly `version` with `manager`; see `autoUpdateCommand`. */
 function runPackageManagerUpdate(
   manager: AutoUpdateManager,
-  specifier: string = LATEST_DIST_TAG,
-): Effect.Effect<void, unknown> {
-  const command = autoUpdateCommand(manager, specifier);
+  version: string,
+): Effect.Effect<void, PackageManagerUpdateError> {
+  const { args, command } = autoUpdateCommand(manager, version);
+  const description = autoUpdateCommandDescription(manager, version);
 
-  return runExecutable(command.command, command.args, {
-    timeoutMs: SERVICE_PACKAGE_UPDATE_TIMEOUT_MS,
+  return Effect.tryPromise({
+    try: async () => {
+      await execFilePromise(command, args, {
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: SERVICE_PACKAGE_UPDATE_TIMEOUT_MS,
+        windowsHide: true,
+      });
+    },
+    catch: (cause) =>
+      new PackageManagerUpdateError({
+        cause,
+        command: description,
+        output: packageManagerFailureOutput(cause),
+        timedOut: (cause as { killed?: unknown })?.killed === true,
+      }),
   });
 }
 
+// What the package manager printed about the failure: its stderr (or stdout
+// when stderr is empty), without colors, capped to the last lines.
+function packageManagerFailureOutput(cause: unknown): string {
+  const { stderr, stdout } = (cause ?? {}) as { stderr?: unknown; stdout?: unknown };
+  const pick = (value: unknown) =>
+    typeof value === "string" ? value.replaceAll(ANSI_ESCAPE_SEQUENCE, "").trim() : "";
+  const output = pick(stderr) || pick(stdout);
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0)
+    .slice(-PACKAGE_MANAGER_OUTPUT_MAX_LINES)
+    .join("\n");
+
+  return lines.length > PACKAGE_MANAGER_OUTPUT_MAX_CHARS
+    ? `…${lines.slice(-PACKAGE_MANAGER_OUTPUT_MAX_CHARS)}`
+    : lines;
+}
+
 function refreshServiceAfterUpdate(options: { commandPath: string }): Effect.Effect<void, unknown> {
-  return runExecutable(options.commandPath, ["service", "install", "--refresh"]);
+  const invocation = commandShimInvocation(options.commandPath, [
+    "service",
+    "install",
+    "--refresh",
+  ]);
+  return runExecutable(invocation.command, invocation.args, {
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+  });
+}
+
+/**
+ * How to run the `tokenmaxxing` found on PATH with `args`. On Windows that is
+ * usually npm's `tokenmaxxing.cmd` shim, which execFile cannot start without
+ * a shell (EINVAL), so it goes through `cmd.exe /d /s /c "<shim> <args>"`.
+ * `args` are fixed words, never user input.
+ */
+function commandShimInvocation(
+  commandPath: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env,
+): { args: string[]; command: string; windowsVerbatimArguments: boolean } {
+  if (platform !== "win32" || !/\.(?:cmd|bat)$/i.test(commandPath)) {
+    return { args: [...args], command: commandPath, windowsVerbatimArguments: false };
+  }
+
+  return {
+    args: ["/d", "/s", "/c", `""${commandPath}" ${args.join(" ")}"`],
+    command: env["ComSpec"] ?? "cmd.exe",
+    windowsVerbatimArguments: true,
+  };
 }
 
 function readLogTail(path: string, maxLines: number): Effect.Effect<string[], never> {
@@ -3316,7 +3404,7 @@ function formatInstallAutoUpdate(manager: ServiceMetadataAutoUpdateManager | nul
 
   return manager === null
     ? "enabled, but package manager was not detected"
-    : `enabled via ${manager} (${autoUpdateCommandDescription(manager)})`;
+    : `enabled via ${manager} (${autoUpdateCommandDescription(manager, "<version>")})`;
 }
 
 function doctorAuthDetail(envToken: boolean, authConfig: DoctorAuthConfig): string {
@@ -3373,7 +3461,7 @@ function doctorAutoUpdateDetail(
   }
 
   return managerExists
-    ? `enabled via ${autoUpdateManager} (${autoUpdateCommandDescription(autoUpdateManager)})`
+    ? `enabled via ${autoUpdateManager} (${autoUpdateCommandDescription(autoUpdateManager, "<version>")})`
     : `enabled via ${autoUpdateManager}, but ${autoUpdateManager} is not on PATH`;
 }
 
@@ -4388,13 +4476,14 @@ function uninstallNativeScheduler(paths: ServicePaths): Effect.Effect<void, unkn
 function runExecutable(
   command: string,
   args: readonly string[],
-  options: { timeoutMs?: number | undefined } = {},
+  options: { timeoutMs?: number | undefined; windowsVerbatimArguments?: boolean | undefined } = {},
 ): Effect.Effect<void, unknown> {
   return Effect.tryPromise({
     try: async () => {
       await execFilePromise(command, [...args], {
         timeout: options.timeoutMs ?? SERVICE_COMMAND_TIMEOUT_MS,
         windowsHide: true,
+        windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
       });
     },
     catch: (cause) => cause,
@@ -4751,72 +4840,45 @@ function isSameOrChildPath(path: string, parent: string): boolean {
 }
 
 /**
- * `specifier` is `latest` (the default) or an exact version; see
- * `packageManagerSpecifier`. Only `latest` keeps `bun update --latest`,
- * since bun cannot update to a specific version.
+ * The package-manager command that installs exactly `version` of the CLI.
+ *
+ * Always an exact version, never a dist-tag: a package manager resolves a tag
+ * from its own cached packument, which npm keeps for the registry's max-age
+ * (5 minutes), so `@latest` right after a release can install the previous
+ * one and still exit 0. The same stale cache makes a just-published exact
+ * version fail with ETARGET, so npm (`--prefer-online`) and bun
+ * (`--no-cache`) are told to revalidate their metadata; pnpm already
+ * refetches metadata that is missing the requested version, and yarn 1 keeps
+ * no metadata cache. npm and pnpm log at `error` level rather than
+ * `--silent`, which would hide the error itself.
  */
 function autoUpdateCommand(
   manager: AutoUpdateManager,
-  specifier: string = LATEST_DIST_TAG,
+  version: string,
 ): {
   args: string[];
   command: AutoUpdateManager;
 } {
-  if (specifier !== LATEST_DIST_TAG) {
-    const packageSpec = `${PACKAGE_NAME}@${specifier}`;
-    switch (manager) {
-      case "bun":
-        return { args: ["add", "-g", packageSpec, "--silent"], command: "bun" };
-      case "npm":
-        return { args: ["install", "-g", packageSpec, "--silent"], command: "npm" };
-      case "pnpm":
-        return { args: ["add", "-g", packageSpec, "--silent"], command: "pnpm" };
-      case "yarn":
-        return { args: ["global", "add", packageSpec, "--silent"], command: "yarn" };
-    }
-  }
-
+  const packageSpec = `${PACKAGE_NAME}@${version}`;
   switch (manager) {
     case "bun":
-      return {
-        args: ["update", "-g", PACKAGE_NAME, "--latest", "--silent"],
-        command: "bun",
-      };
+      return { args: ["add", "-g", packageSpec, "--no-cache", "--silent"], command: "bun" };
     case "npm":
       return {
-        args: ["install", "-g", `${PACKAGE_NAME}@latest`, "--silent"],
+        args: ["install", "-g", packageSpec, "--prefer-online", "--loglevel=error"],
         command: "npm",
       };
     case "pnpm":
-      return {
-        args: ["add", "-g", `${PACKAGE_NAME}@latest`, "--silent"],
-        command: "pnpm",
-      };
+      return { args: ["add", "-g", packageSpec, "--loglevel=error"], command: "pnpm" };
     case "yarn":
-      return {
-        args: ["global", "add", `${PACKAGE_NAME}@latest`, "--silent"],
-        command: "yarn",
-      };
+      return { args: ["global", "add", packageSpec, "--silent"], command: "yarn" };
   }
 }
 
-function autoUpdateCommandDescription(
-  manager: AutoUpdateManager,
-  specifier: string = LATEST_DIST_TAG,
-): string {
-  const { command, args } = autoUpdateCommand(manager, specifier);
+function autoUpdateCommandDescription(manager: AutoUpdateManager, version: string): string {
+  const { command, args } = autoUpdateCommand(manager, version);
 
   return [command, ...args].join(" ");
-}
-
-/**
- * What the package manager installs for an update target: `latest` when the
- * target is the `latest` dist-tag (keeps the familiar commands), otherwise
- * the exact verified version, so a dist-tag that moves between the check and
- * the install can never swap in a different (possibly older) release.
- */
-function packageManagerSpecifier(target: DistTagVersion): string {
-  return target.distTag === LATEST_DIST_TAG ? LATEST_DIST_TAG : target.version;
 }
 
 function readServiceMetadata(path: string): Effect.Effect<ServiceMetadata | null, never> {
@@ -4832,6 +4894,33 @@ function isServiceInstalled(paths: ServicePaths): Effect.Effect<boolean, never> 
   }
 
   return paths.definitionPath === null ? Effect.succeed(false) : fileExists(paths.definitionPath);
+}
+
+/**
+ * Whether the installed scheduler definition runs this config dir's wrapper.
+ * The launchd plist and systemd units live under HOME, one per user, while
+ * the wrapper lives in the config dir; so with TOKENMAXXING_CONFIG_DIR
+ * pointing elsewhere (a second profile, a test), the definition found belongs
+ * to another config dir and must not be rewritten for this one. Windows has
+ * no definition file: its metadata already lives in the config dir.
+ */
+function serviceDefinitionUsesConfigDir(paths: ServicePaths): Effect.Effect<boolean, never> {
+  if (paths.definitionPath === null) {
+    return Effect.succeed(true);
+  }
+  const definitionPath = paths.definitionPath;
+
+  return Effect.tryPromise({
+    try: () => readFile(definitionPath, "utf8"),
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.map((definition) =>
+      [paths.wrapperPath, escapeXml(paths.wrapperPath), systemdExecStart(paths.wrapperPath)].some(
+        (form) => definition.includes(form),
+      ),
+    ),
+    Effect.catch(() => Effect.succeed(false)),
+  );
 }
 
 // Leaves a current launcher untouched so a running wscript.exe never sees it replaced.
@@ -4965,6 +5054,7 @@ export {
   autoUpdateCommandDescription,
   backendForPlatform,
   capturedServiceEnv,
+  commandShimInvocation,
   doctorServiceEnvCheck,
   parseServiceWrapperEnv,
   serviceEnvDrift,
@@ -4980,8 +5070,11 @@ export {
   isWindowsNpmPrefixShim,
   launchdJobMatches,
   isServiceInstalled,
+  PackageManagerUpdateError,
+  packageManagerFailureOutput,
   legacyServiceWrapperPaths,
   deterministicServiceJitterMs,
+  readInstalledCliVersion,
   readServiceMetadata,
   readCurrentServiceRunnerInstall,
   readWindowsLauncherStatus,
@@ -5023,13 +5116,13 @@ export {
   serviceStateJson,
   systemdUnitsAreCurrent,
   extractServiceRunnerFromTarball,
+  serviceDefinitionUsesConfigDir,
   servicePathsEffect,
   servicePaths,
   serviceRunFailureState,
   serviceRunLogLine,
   writeServiceCheckIn,
   serviceRunSuccessState,
-  packageManagerSpecifier,
   runPackageManagerUpdate,
   verifyNpmIntegrity,
   waitForServiceRunExit,

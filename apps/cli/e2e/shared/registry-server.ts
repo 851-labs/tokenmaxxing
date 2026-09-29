@@ -15,10 +15,19 @@
  * every package that has that version.
  *
  * Control routes (the e2e changes what the registry advertises mid-run):
- *   POST /-/e2e/state     { distTags?: { tag: version | null }, mode?: "ok" | "metadata-down" | "down" }
+ *   POST /-/e2e/state     { distTags?: { tag: version | null }, mode?: "ok" | "metadata-down" | "down",
+ *                           packument?: { name, distTags: { tag: version }, hiddenVersions: [version] } | null,
+ *                           packumentMaxAge?: seconds | null }
  *                         "metadata-down" answers 503 on the endpoints the CLI uses for version
  *                         checks (dist-tags, /<name>/<tag>) while packuments and tarballs still
  *                         work; "down" answers 503 on everything.
+ *                         `packument` makes one package's packument (what package managers
+ *                         resolve from) lag the dist-tags endpoint (what the CLI checks): it
+ *                         advertises these
+ *                         dist-tags and leave out `hiddenVersions`, as a stale CDN or cache
+ *                         entry does right after a publish. `packumentMaxAge` sends packuments
+ *                         with `cache-control: max-age` (registry.npmjs.org sends 300) instead
+ *                         of no-store, so package managers cache them like the real one.
  *   GET  /-/e2e/requests  every registry request so far: { at, method, path, status }
  */
 import { createHash } from "node:crypto";
@@ -28,6 +37,11 @@ import { gunzipSync } from "node:zlib";
 
 type Manifest = Record<string, unknown> & { name: string; version: string };
 type Mode = "ok" | "metadata-down" | "down";
+type PackumentOverride = {
+  distTags: Record<string, string>;
+  hiddenVersions: string[];
+  name: string;
+};
 
 interface Package {
   distTags: Record<string, string>;
@@ -43,6 +57,8 @@ const packages = new Map<string, Package>();
 const tarballs = new Map<string, string>();
 const requestLog: { at: string; method: string; path: string; status: number }[] = [];
 let mode: Mode = "ok";
+let packumentOverride: PackumentOverride | null = null;
+let packumentMaxAge: number | null = null;
 
 for (const tarball of argv.map((file) => resolve(file))) {
   const bytes = readFileSync(tarball);
@@ -98,9 +114,17 @@ async function route(request: Request, path: string): Promise<Response> {
     const body = (await request.json()) as {
       distTags?: Record<string, string | null>;
       mode?: Mode;
+      packument?: PackumentOverride | null;
+      packumentMaxAge?: number | null;
     };
     if (body.mode !== undefined) {
       mode = body.mode;
+    }
+    if (body.packument !== undefined) {
+      packumentOverride = body.packument;
+    }
+    if (body.packumentMaxAge !== undefined) {
+      packumentMaxAge = body.packumentMaxAge;
     }
     if (body.distTags !== undefined) {
       setDistTags(body.distTags);
@@ -145,14 +169,20 @@ async function route(request: Request, path: string): Promise<Response> {
     return manifest === undefined ? notFound() : noStore(Response.json(manifest));
   }
 
-  return noStore(
-    Response.json({
-      _id: name,
-      name,
-      "dist-tags": entry.distTags,
-      versions: Object.fromEntries(entry.versions),
-    }),
-  );
+  const lagging = packumentOverride?.name === name ? packumentOverride : null;
+  const response = Response.json({
+    _id: name,
+    name,
+    "dist-tags": lagging?.distTags ?? entry.distTags,
+    versions: Object.fromEntries(
+      [...entry.versions].filter(([version]) => !lagging?.hiddenVersions.includes(version)),
+    ),
+  });
+  if (packumentMaxAge === null) {
+    return noStore(response);
+  }
+  response.headers.set("cache-control", `public, max-age=${packumentMaxAge}`);
+  return response;
 }
 
 function setDistTags(distTags: Record<string, string | null>) {
@@ -170,6 +200,8 @@ function setDistTags(distTags: Record<string, string | null>) {
 function state() {
   return {
     mode,
+    packument: packumentOverride,
+    packumentMaxAge,
     packages: Object.fromEntries(
       [...packages].map(([name, entry]) => [
         name,

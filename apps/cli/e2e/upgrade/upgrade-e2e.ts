@@ -7,8 +7,10 @@
  *
  *   stable 0.6.8 follows `latest` (0.6.9); a prerelease follows its channel
  *   (`alpha`) and `latest`, never drops to a lower `latest`, and moves to
- *   stable once `latest` is higher; with the registry unreachable, a
- *   prerelease refuses to upgrade while a stable install still runs @latest.
+ *   stable once `latest` is higher; every install is an exact version, so
+ *   with the registry unreachable nothing is installed, and a package
+ *   manager holding a stale packument (right after a publish) neither
+ *   installs the old `latest` nor reports an upgrade that did not happen.
  *
  * The same decisions are checked for the service runner, during runs the OS
  * scheduler starts (launchd / systemd --user / Task Scheduler) against the
@@ -96,6 +98,7 @@ interface UpgradeJson {
   currentVersion?: string;
   distTag?: string | null;
   error?: { code?: string; message?: string };
+  installedVersion?: string | null;
   latestVersion?: string | null;
   skipped?: boolean;
   status?: string;
@@ -199,12 +202,21 @@ async function distTags(
   await registry!.setState({ distTags: tags, mode });
 }
 
-/** `npm install -g` of one version into its own prefix, with the CLI and npm pointed at `registryUrl`. */
-function npmInstall(label: string, version: string, registryUrl = registry!.url): Install {
+/**
+ * `npm install -g` of one version into its own prefix, with the CLI and npm
+ * pointed at `registryUrl`, and npm at its own cache dir when `cache` is set.
+ */
+function npmInstall(
+  label: string,
+  version: string,
+  registryUrl = registry!.url,
+  cache?: string,
+): Install {
   const prefix = join(root, "npm", label);
   const bin = isWindows ? prefix : join(prefix, "bin");
   const env = {
     ...context.baseEnv,
+    ...(cache === undefined ? {} : { npm_config_cache: cache }),
     npm_config_prefix: prefix,
     npm_config_registry: `${registryUrl}/`,
     PATH: [bin, context.baseEnv.PATH].join(delimiter),
@@ -260,8 +272,8 @@ function upgrade(install: Install): { code: number; json: UpgradeJson | null; ou
   return { code: result.code, json: parseCliJson<UpgradeJson>(result.out), out: result.out };
 }
 
-function npmCommandFor(specifier: string) {
-  return `npm install -g ${PACKAGE}@${specifier} --silent`;
+function npmCommandFor(version: string) {
+  return `npm install -g ${PACKAGE}@${version} --prefer-online --loglevel=error`;
 }
 
 /** Compares the fields of `upgrade --json` that matter; returns the mismatches. */
@@ -344,9 +356,10 @@ async function stableFollowsLatest() {
     {
       channel: "latest",
       channelVersion: STABLE_LATEST,
-      command: npmCommandFor("latest"),
+      command: npmCommandFor(STABLE_LATEST),
       currentVersion: STABLE_OLD,
       distTag: "latest",
+      installedVersion: STABLE_LATEST,
       latestVersion: STABLE_LATEST,
       service: { status: "not-installed" },
       skipped: false,
@@ -380,6 +393,7 @@ async function prereleaseFollowsChannel() {
       command: npmCommandFor(ALPHA_LATEST),
       currentVersion: ALPHA_PR,
       distTag: "alpha",
+      installedVersion: ALPHA_LATEST,
       latestVersion: STABLE_LATEST,
       service: { status: "not-installed" },
       skipped: false,
@@ -419,9 +433,10 @@ async function prereleaseFollowsChannel() {
     {
       channel: "alpha",
       channelVersion: ALPHA_LATEST,
-      command: npmCommandFor("latest"),
+      command: npmCommandFor(STABLE_NEXT),
       currentVersion: ALPHA_LATEST,
       distTag: "latest",
+      installedVersion: STABLE_NEXT,
       latestVersion: STABLE_NEXT,
       service: { status: "not-installed" },
       skipped: false,
@@ -459,14 +474,17 @@ async function registryUnreachable() {
     ALPHA_PR,
   );
   const stable = withRegistry(npmInstall("offline-stable", STABLE_OLD), DEAD_REGISTRY);
-  // A stable install cannot be ahead of latest, so it still runs @latest,
-  // which fails here because npm cannot reach the registry either.
+  // Without an exact version there is nothing safe to install: a dist-tag
+  // resolves from npm's own cache, which may be stale.
   assertUpgrade(
     name,
-    "stable still runs @latest (and fails with npm)",
+    "stable refuses without a version check too",
     stable,
     {
-      error: { code: "upgrade_failed", message: "failed to upgrade tokenmaxxing" },
+      error: {
+        code: "upgrade_version_check",
+        message: "could not check the latest tokenmaxxing version",
+      },
       status: "error",
     } as UpgradeJson,
     STABLE_OLD,
@@ -500,27 +518,137 @@ async function distTagsUnavailable() {
     afterAlpha.every((request) => request.path.includes("/dist-tags")),
     afterAlpha.map((request) => `${request.method} ${request.path} ${request.status}`).join(", "),
   );
+  const beforeStable = (await registry!.requests()).length;
   assertUpgrade(
     name,
-    `stable runs @latest anyway -> ${STABLE_LATEST}`,
+    "stable refuses too",
     stable,
     {
-      channel: "latest",
-      channelVersion: null,
-      command: npmCommandFor("latest"),
-      currentVersion: STABLE_OLD,
-      distTag: null,
-      latestVersion: null,
-      service: { status: "not-installed" },
-      skipped: false,
-      status: "ok",
-      targetVersion: null,
-      updated: true,
-      versionCheck: "unavailable",
-    },
-    STABLE_LATEST,
+      error: {
+        code: "upgrade_version_check",
+        message: "could not check the latest tokenmaxxing version",
+      },
+      status: "error",
+    } as UpgradeJson,
+    STABLE_OLD,
+  );
+  const afterStable = (await registry!.requests()).slice(beforeStable);
+  check(
+    name,
+    "stable never asked npm to install anything",
+    afterStable.every((request) => request.path.includes("/dist-tags")),
+    afterStable.map((request) => `${request.method} ${request.path} ${request.status}`).join(", "),
   );
   await distTags({}, "ok");
+}
+
+// ------------------------------------------------------------------ stale package-manager cache
+/**
+ * Right after a publish, npm still holds the packument it cached before it
+ * (registry.npmjs.org sends max-age=300): `latest` there is the previous
+ * release and the new version is missing. 0.7.0-alpha.2 installed `@latest`
+ * from that cache, got the old release, and reported "Upgraded to v0.7.0".
+ */
+async function staleCacheAfterPublish() {
+  const name = "upgrade: stale npm cache right after a publish";
+  const cache = join(root, "npm-cache-stale");
+  const beforePublish = {
+    distTags: { alpha: ALPHA_LATEST, latest: STABLE_LATEST },
+    hiddenVersions: [STABLE_NEXT],
+    name: PACKAGE,
+  };
+  await registry!.setState({
+    distTags: beforePublish.distTags,
+    packument: beforePublish,
+    packumentMaxAge: 300,
+  });
+  // npm caches the pre-publish packument (latest 0.6.9, no 0.7.0) here.
+  const install = npmInstall("stale-cache", STABLE_OLD, registry!.url, cache);
+
+  // Publish 0.7.0 as latest. npm's cached packument is still fresh for 300 s.
+  await registry!.setState({ distTags: { latest: STABLE_NEXT }, packument: null });
+  const control = run(
+    "npm install -g 0.7.0 from the stale cache (control)",
+    npmCommand(),
+    ["install", "-g", `${PACKAGE}@${STABLE_NEXT}`, "--no-audit", "--no-fund"],
+    { env: { ...install.env, npm_config_prefix: join(root, "npm", "stale-cache-control") } },
+  );
+  check(
+    name,
+    "control: without --prefer-online npm resolves from its stale packument (ETARGET)",
+    control.code !== 0 && /ETARGET|notarget|No matching version/i.test(control.out),
+    `exit ${control.code}; ${oneLine(control.out, 300)}`,
+  );
+
+  assertUpgrade(
+    name,
+    `${STABLE_OLD} -> ${STABLE_NEXT} by exact version, revalidating npm's cache`,
+    install,
+    {
+      command: npmCommandFor(STABLE_NEXT),
+      currentVersion: STABLE_OLD,
+      distTag: "latest",
+      installedVersion: STABLE_NEXT,
+      latestVersion: STABLE_NEXT,
+      status: "ok",
+      targetVersion: STABLE_NEXT,
+      updated: true,
+    },
+    STABLE_NEXT,
+  );
+  await registry!.setState({ packumentMaxAge: null });
+}
+
+/**
+ * The CLI's dist-tag check already sees 0.7.0, but the packument npm gets
+ * does not have it yet (a lagging mirror). The upgrade must fail with npm's
+ * own error, and must not install (or report) anything else.
+ */
+async function packumentLagsDistTags() {
+  const name = "upgrade: packument lags the dist-tags";
+  await registry!.setState({
+    distTags: { alpha: ALPHA_LATEST, latest: STABLE_LATEST },
+    packument: null,
+  });
+  const install = npmInstall("lagging", STABLE_OLD);
+  await registry!.setState({
+    distTags: { latest: STABLE_NEXT },
+    packument: {
+      distTags: { alpha: ALPHA_LATEST, latest: STABLE_LATEST },
+      hiddenVersions: [STABLE_NEXT],
+      name: PACKAGE,
+    },
+  });
+
+  assertUpgrade(
+    name,
+    "fails as upgrade_failed, never falls back to the stale latest",
+    install,
+    {
+      error: { code: "upgrade_failed", message: "failed to upgrade tokenmaxxing" },
+      status: "error",
+    } as UpgradeJson,
+    STABLE_OLD,
+  );
+  const human = run("tokenmaxxing upgrade (lagging)", "tokenmaxxing", ["upgrade"], {
+    env: install.env,
+  });
+  check(
+    name,
+    "the human error shows the command and npm's own error",
+    human.code !== 0 &&
+      human.out.includes(`command: ${npmCommandFor(STABLE_NEXT)}`) &&
+      /ETARGET|notarget|No matching version/i.test(human.out) &&
+      !human.out.includes("Upgraded to"),
+    `exit ${human.code}; ${oneLine(human.out, 600)}`,
+  );
+  check(
+    name,
+    `installed version is still ${STABLE_OLD}`,
+    installedVersion(install) === STABLE_OLD,
+    `tokenmaxxing --version -> ${installedVersion(install)}`,
+  );
+  await registry!.setState({ packument: null });
 }
 
 // ------------------------------------------------------------------ service runner auto-update
@@ -715,6 +843,8 @@ try {
     await scenario("upgrade: prerelease follows its channel", prereleaseFollowsChannel);
     await scenario("upgrade: registry unreachable", registryUnreachable);
     await scenario("upgrade: version check fails, packages reachable", distTagsUnavailable);
+    await scenario("upgrade: stale npm cache right after a publish", staleCacheAfterPublish);
+    await scenario("upgrade: packument lags the dist-tags", packumentLagsDistTags);
     await scenario("auto-update: stable runner", serviceStable);
     await scenario("auto-update: prerelease runner", servicePrerelease);
     check("upgrade", "all scenarios ran", true, "");
