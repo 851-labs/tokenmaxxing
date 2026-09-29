@@ -10,8 +10,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 ### Upgrading
 
 - From 0.6.0: the background service updates itself to 0.7.0 and migrates its files on the next
-  run; nothing to do. On macOS this can show "“tokenmaxxing.sh” can run in the background" one
-  last time. Later updates leave the service files alone.
+  run; nothing to do. On macOS this can show the “tokenmaxxing.sh can run in the background”
+  notice one last time. Later updates leave the service files alone.
 - `tokenmaxxing login` now uses a device-code flow. Existing logins keep working, and older CLIs
   keep the previous flow until 2027-11-01.
 - From 0.7.0-alpha.2 or earlier:
@@ -63,7 +63,7 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 ### Fixed
 
 - The background service:
-  - On macOS, updates no longer show "“tokenmaxxing.sh” can run in the background" again. Refreshes
+  - On macOS, updates no longer show the “tokenmaxxing.sh can run in the background” notice again. Refreshes
     and repairs leave unchanged files alone and only reload launchd or systemd when the definition
     changed, and the script keeps the same `PATH` from any terminal (per-shell fnm directories
     resolve to fnm's default alias; temporary, agent-session and app-bundle directories are left

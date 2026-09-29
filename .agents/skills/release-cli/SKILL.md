@@ -108,7 +108,7 @@ git push --atomic origin HEAD:main cli-vX.Y.Z
 
 The `cli-vX.Y.Z` tag starts the `Release CLI` GitHub Actions workflow. The workflow builds generated native packages first, publishes those packages, then publishes the generated `@851-labs/tokenmaxxing` package with matching optional dependencies. Stable versions publish with `latest`; prerelease versions such as `X.Y.Z-alpha.0` publish with the matching dist-tag such as `alpha`.
 
-After publishing succeeds, the workflow's `Create GitHub release` job creates the `cli-vX.Y.Z` GitHub release (`apps/cli/script/github-release.ts`): title `tokenmaxxing vX.Y.Z`, the `## X.Y.Z` section of `CHANGELOG.md` at the tag plus the install command, marked prerelease for `-alpha`/`-beta`/`-rc`, and marked Latest only when it is the highest stable version.
+After publishing succeeds, the workflow's `Create GitHub release` job creates the `cli-vX.Y.Z` GitHub release (`apps/cli/script/github-release.ts`): title `vX.Y.Z`, the `## X.Y.Z` section of `CHANGELOG.md` at the tag plus the install command, marked prerelease for `-alpha`/`-beta`/`-rc`, and marked Latest only when it is the highest stable version.
 
 ## Step 6: Monitor Publish Workflow
 
