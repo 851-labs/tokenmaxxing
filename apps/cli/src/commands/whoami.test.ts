@@ -2,9 +2,11 @@ import { Effect, Layer } from "effect";
 import { UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { makeStubApiClient, type StubResponse } from "../testing/stub-api-client";
 import {
   ApiClientService,
   type CliConfig,
+  ClockService,
   ConfigService,
   ConsoleService,
   type TokenmaxxingApiClient,
@@ -57,17 +59,28 @@ const config: CliConfig = {
   wwwUrl: "https://tokenmaxxing.test",
 };
 
-function testLayer() {
+/** `meResponses` answers `/me` through the real contract client, in order. */
+function testLayer(meResponses?: StubResponse[]) {
   const errors: string[] = [];
   const logs: string[] = [];
+  const requests: string[] = [];
+  const sleeps: number[] = [];
   const layer = Layer.mergeAll(
     Layer.succeed(ApiClientService)({
       make: () =>
-        Effect.succeed({
-          me: {
-            me: () => Effect.succeed({ user }),
-          },
-        } as unknown as TokenmaxxingApiClient),
+        meResponses === undefined
+          ? Effect.succeed({
+              me: {
+                me: () => Effect.succeed({ user }),
+              },
+            } as unknown as TokenmaxxingApiClient)
+          : makeStubApiClient({ "GET /me": meResponses }, requests),
+    }),
+    Layer.succeed(ClockService)({
+      sleep: (ms) =>
+        Effect.sync(() => {
+          sleeps.push(ms);
+        }),
     }),
     Layer.succeed(ConfigService)({
       clearToken: () =>
@@ -91,7 +104,7 @@ function testLayer() {
     }),
   );
 
-  return { errors, layer, logs };
+  return { errors, layer, logs, requests, sleeps };
 }
 
 function setTty(value: boolean) {
@@ -163,5 +176,31 @@ describe("whoamiEffect", () => {
     expect(errors).toEqual([]);
     expect(promptCalls).toEqual([]);
     expect(logs).toEqual([JSON.stringify({ user })]);
+  });
+
+  it("retries /me once, quickly, on a transient failure", async () => {
+    const { layer, logs, requests, sleeps } = testLayer([
+      { status: 503 },
+      { body: { user }, status: 200 },
+    ]);
+
+    await Effect.runPromise(whoamiEffect({ json: true }).pipe(Effect.provide(layer)));
+
+    expect(requests).toEqual(["GET /me", "GET /me"]);
+    expect(sleeps).toEqual([500]);
+    expect(logs).toEqual([JSON.stringify({ user })]);
+  });
+
+  it("does not retry a decoded Unauthorized", async () => {
+    const { layer, requests } = testLayer([
+      { body: { _tag: "Unauthorized", message: "Sign in required." }, status: 401 },
+    ]);
+
+    const exit = await Effect.runPromiseExit(
+      whoamiEffect({ json: true }).pipe(Effect.provide(layer)),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(requests).toEqual(["GET /me"]);
   });
 });

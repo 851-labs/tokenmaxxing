@@ -105,6 +105,7 @@ import {
   serviceInstallProgram,
   serviceLockStatus,
   serviceRunFailureState,
+  serviceAuthFailureError,
   serviceRunLogLine,
   serviceRunSuccessState,
   ServiceRepairError,
@@ -2090,9 +2091,16 @@ describe("service repair helpers", () => {
     ]) {
       expect(isTransientServiceFailure(cause)).toBe(true);
     }
+    const unreadable = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.DecodeError({
+        request,
+        response: HttpClientResponse.fromWeb(request, new Response("<html>", { status: 200 })),
+      }),
+    });
     for (const cause of [
       new NotLoggedInError(),
       new SyncAuthValidationError({ cause: status(400) }),
+      new SyncAuthValidationError({ cause: unreadable }),
       new Error("EACCES"),
     ]) {
       expect(isTransientServiceFailure(cause)).toBe(false);
@@ -3527,6 +3535,60 @@ describe("service run state", () => {
     expect(line.upserted).toBeUndefined();
     expect(line.syncStatus).toBeUndefined();
     expect(serviceRunLogLine(state, "success")).toMatchObject({ rows: 42, syncStatus: "ok" });
+  });
+
+  it("says what a failed login check ran into, and when the next run can fix it", () => {
+    const request = HttpClientRequest.get("https://api.tokenmaxxing.example/me");
+    const offline = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.TransportError({
+        cause: Object.assign(new TypeError("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" }),
+        request,
+      }),
+    });
+    const forbidden = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.DecodeError({
+        request,
+        response: HttpClientResponse.fromWeb(request, new Response("denied", { status: 403 })),
+      }),
+    });
+    const networkFailure = new SyncAuthValidationError({ attempts: 3, cause: offline });
+
+    expect(serviceAuthFailureError(networkFailure)).toBe(
+      "failed to validate stored login after 3 attempts; network unavailable (ENOTFOUND); will retry next run",
+    );
+    expect(serviceAuthFailureError(new SyncAuthValidationError({ cause: forbidden }))).toBe(
+      "failed to validate stored login; the tokenmaxxing API answered HTTP 403",
+    );
+    expect(serviceAuthFailureError(new NotLoggedInError())).toBe(
+      "NotLoggedInError: error: not logged in\nhint: run tokenmaxxing login",
+    );
+
+    const state = serviceRunFailureState(
+      { version: 1 },
+      {
+        arch: "arm64",
+        attemptAt: "2026-09-29T20:33:25.000Z",
+        durationMs: 36_000,
+        error: serviceAuthFailureError(networkFailure),
+        version: "0.7.0",
+      },
+    );
+    const line = JSON.parse(
+      JSON.stringify(
+        serviceRunLogLine(state, "failure", {
+          hasResults: false,
+          loginCheck: networkFailure.loginCheck,
+        }),
+      ),
+    );
+    expect(line).toMatchObject({
+      error:
+        "failed to validate stored login after 3 attempts; network unavailable (ENOTFOUND); will retry next run",
+      loginCheck: { attempts: 3, code: "ENOTFOUND", kind: "network" },
+      status: "failure",
+    });
+    expect(JSON.stringify(line)).not.toContain("authorization");
+    expect(serviceRunLogLine(state, "failure")).not.toHaveProperty("loginCheck", expect.anything());
   });
 
   it("renders structured service log lines without undefined fields", () => {

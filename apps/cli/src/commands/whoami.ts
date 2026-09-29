@@ -4,7 +4,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import { booleanFlag } from "../flags";
 import { ApiClientService, ConfigService } from "../services";
 import { humanFrame, humanSpinner, writeJson } from "../output";
-import { apiFailureMessage, ME_TIMEOUT_MS, withApiTimeout } from "../api-failure";
+import { apiFailureMessage, ME_RETRY_POLICY, withApiRetry } from "../api-failure";
 import { isUnauthorizedError } from "../auth-validation";
 
 class NotLoggedInError extends Data.TaggedError("NotLoggedInError")<{}> {
@@ -46,8 +46,8 @@ function whoamiEffect(options: { json: boolean }) {
 
       const client = yield* clients.make({ baseUrl: stored.apiUrl, token: stored.token });
       const spinner = yield* humanSpinner("Fetching account", options);
-      const me = yield* withApiTimeout(client.me.me(), ME_TIMEOUT_MS).pipe(
-        Effect.mapError((cause) =>
+      const me = yield* withApiRetry(() => client.me.me(), ME_RETRY_POLICY).pipe(
+        Effect.mapError(({ cause }) =>
           isUnauthorizedError(cause) ? new NotLoggedInError() : new WhoamiError({ cause }),
         ),
         Effect.tapError(() => Effect.sync(() => spinner.error("Could not fetch account"))),

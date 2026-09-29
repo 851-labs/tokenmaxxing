@@ -20,8 +20,7 @@ import { basename, delimiter, dirname, isAbsolute, join, win32 } from "node:path
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 
-import { Cause, Data, Effect, Option } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import { Data, Effect, Option } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type {
   ServiceAutoUpdateManager,
@@ -32,7 +31,6 @@ import type {
   ServiceRepairStatus,
   UsageSource,
 } from "@tokenmaxxing/api-contract";
-import { InternalServerError, ServiceUnavailable } from "@tokenmaxxing/api-contract";
 
 import {
   type DistTags,
@@ -45,8 +43,11 @@ import {
   resolveUpdate,
 } from "../cli-version";
 import {
-  ApiTimeoutError,
-  rateLimitRetryAfterSeconds,
+  type ApiRetryPolicy,
+  describeApiFailure,
+  formatApiFailureDetail,
+  isTransientApiFailure,
+  SCHEDULED_ME_RETRY_POLICY,
   USAGE_UPLOAD_TIMEOUT_MS,
 } from "../api-failure";
 import { booleanFlag } from "../flags";
@@ -68,7 +69,9 @@ import {
   type ServiceRunnerTarget,
 } from "../service-runner-targets";
 import {
+  type LoginCheckFailure,
   resolveSyncAuth,
+  SyncAuthValidationError,
   syncProgram,
   sourcesWithoutLogs,
   SyncSourcesFailedError,
@@ -121,6 +124,9 @@ const SERVICE_INTERVAL_MINUTES = 5;
 const SERVICE_INTERVAL_SECONDS = SERVICE_INTERVAL_MINUTES * 60;
 const SERVICE_JITTER_MAX_MS = 60 * 1000;
 const SERVICE_API_TIMEOUT_MS = 60 * 1000;
+// Resolving a scheduled run's login: SCHEDULED_ME_RETRY_POLICY's worst case
+// (about 51 s) plus reading the config.
+const SERVICE_AUTH_TIMEOUT_MS = 90 * 1000;
 const SERVICE_FETCH_TIMEOUT_MS = 15 * 1000;
 const SERVICE_COMMAND_TIMEOUT_MS = 60 * 1000;
 const SERVICE_REPAIR_RUN_WAIT_MS = 15 * 60 * 1000;
@@ -1688,13 +1694,15 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       }
     }
 
-    const authResult = yield* resolveServiceSyncAuth();
+    const authResult = yield* resolveServiceSyncAuth(
+      options.scheduled ? SCHEDULED_ME_RETRY_POLICY : undefined,
+    );
     if (authResult._tag === "failure") {
       const failedState = serviceRunFailureState(currentState, {
         arch: cliArch,
         attemptAt: startedAtIso,
         durationMs: Date.now() - startedAtMs,
-        error: String(authResult.cause),
+        error: serviceAuthFailureError(authResult.cause),
         reloadRequired,
         schedulerActive: nativeStatus.active,
         since: scheduledSince,
@@ -1713,7 +1721,13 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       yield* writeScheduledServiceLog(
         console,
         options,
-        serviceRunLogLine(finalFailedState, "failure", { hasResults: false }),
+        serviceRunLogLine(finalFailedState, "failure", {
+          hasResults: false,
+          loginCheck:
+            authResult.cause instanceof SyncAuthValidationError
+              ? authResult.cause.loginCheck
+              : undefined,
+        }),
       );
       return yield* Effect.fail(new ServiceRunError({ cause: authResult.cause }));
     }
@@ -1944,9 +1958,9 @@ function serviceRunnerCheckIn(
   };
 }
 
-function resolveServiceSyncAuth() {
-  return resolveSyncAuth({ json: true }).pipe(
-    Effect.timeout(`${SERVICE_API_TIMEOUT_MS} millis`),
+function resolveServiceSyncAuth(loginCheckRetry?: ApiRetryPolicy) {
+  return resolveSyncAuth({ json: true, loginCheckRetry }).pipe(
+    Effect.timeout(`${SERVICE_AUTH_TIMEOUT_MS} millis`),
     Effect.match({
       onFailure: (cause) => ({ _tag: "failure" as const, cause }),
       onSuccess: (value) => ({ _tag: "success" as const, value }),
@@ -2074,23 +2088,32 @@ function serviceRepairNeedsSchedulerInstall(input: {
 function isTransientServiceFailure(cause: unknown): boolean {
   let current = cause;
   for (let depth = 0; depth < 6 && current !== null && current !== undefined; depth += 1) {
-    if (
-      current instanceof ApiTimeoutError ||
-      Cause.isTimeoutError(current) ||
-      current instanceof InternalServerError ||
-      current instanceof ServiceUnavailable ||
-      rateLimitRetryAfterSeconds(current) !== undefined
-    ) {
-      return true;
-    }
-    if (HttpClientError.isHttpClientError(current)) {
-      const status = current.response?.status;
-      return status === undefined || status >= 500;
+    // The first API failure down the chain decides (a wrapper such as
+    // SyncPushError classifies as unknown and defers to its cause).
+    if (describeApiFailure(current).kind !== "unknown") {
+      return isTransientApiFailure(current);
     }
     current = (current as { cause?: unknown }).cause;
   }
 
   return false;
+}
+
+/**
+ * `lastError` for a run whose login check failed. A `/me` that failed for
+ * any reason but a bad token says what it ran into, and when the next run
+ * can succeed where this one did not (no network while a Mac wakes from
+ * sleep, a server error), says so: nothing needs fixing.
+ */
+function serviceAuthFailureError(cause: unknown): string {
+  if (!(cause instanceof SyncAuthValidationError)) {
+    return String(cause);
+  }
+
+  const detail = formatApiFailureDetail(describeApiFailure(cause.cause));
+  return `${cause.summary}; ${detail}${
+    isTransientApiFailure(cause.cause) ? "; will retry next run" : ""
+  }`;
 }
 
 function serviceRepairCanInstallScheduler(input: {
@@ -2608,7 +2631,14 @@ function serviceSourcesForState(result: SyncResult): ServiceSourceState[] {
 function serviceRunLogLine(
   state: ServiceState,
   status: "failure" | "success",
-  { hasResults = true }: { hasResults?: boolean } = {},
+  {
+    hasResults = true,
+    loginCheck,
+  }: {
+    hasResults?: boolean;
+    /** What a failed login check ran into (see `SyncAuthValidationError`). */
+    loginCheck?: LoginCheckFailure | undefined;
+  } = {},
 ) {
   return {
     arch: state.lastArch,
@@ -2618,6 +2648,7 @@ function serviceRunLogLine(
     // Set on a success too when the run left sources for the next one.
     error: state.lastError,
     event: "service_run",
+    loginCheck,
     reloadRequired: state.reloadRequired,
     ...serviceRepairLogFields(state),
     rows: hasResults ? state.lastRows : undefined,
@@ -6414,6 +6445,7 @@ export {
   servicePathsEffect,
   servicePaths,
   serviceRunFailureState,
+  serviceAuthFailureError,
   serviceRunLogLine,
   writeServiceCheckIn,
   serviceRunSuccessState,
