@@ -598,6 +598,8 @@ describe("serviceEnvDrift", () => {
     CODEX_HOME: 'C:\\Users\\alex\\Codex "Logs"',
     HOME: "/home/alex",
     PATH: "/usr/bin",
+    // A batch file writes a literal % as %%.
+    TOKENMAXXING_CONFIG_DIR: "C:\\bt\\Zoë O'Neil (Work) & Co 100% ✓\\tm",
   };
 
   for (const platform of ["linux", "win32"] as const) {
@@ -612,6 +614,7 @@ describe("serviceEnvDrift", () => {
       expect(parseServiceWrapperEnv(wrapper)).toMatchObject({
         CLAUDE_CONFIG_DIR: shell.CLAUDE_CONFIG_DIR,
         CODEX_HOME: shell.CODEX_HOME,
+        TOKENMAXXING_CONFIG_DIR: shell.TOKENMAXXING_CONFIG_DIR,
       });
       expect(serviceEnvDrift(wrapper, shell)).toEqual([]);
     });

@@ -5465,7 +5465,8 @@ function parseServiceWrapperEnv(wrapper: string): Record<string, string> {
 
     const windows = /^set "([A-Za-z_][A-Za-z0-9_]*)=(.*)"$/.exec(line);
     if (windows?.[1] !== undefined && windows[2] !== undefined) {
-      env[windows[1]] = windows[2].replaceAll('\\"', '"');
+      // Undoes escapeCmdSetValue.
+      env[windows[1]] = windows[2].replaceAll("%%", "%").replaceAll('\\"', '"');
     }
   }
 

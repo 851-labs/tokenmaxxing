@@ -39,6 +39,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   `TOKENMAXXING_CONFIG_DIR` differs from the installed one only in case no longer re-register the
   task and rewrite the service files in the new spelling. They keep the installed spelling and
   change nothing.
+- On Windows, `service doctor` no longer reports a changed source root for an agent data
+  directory whose path contains `%`.
 - `tokenmaxxing login` no longer waits forever for an API that accepts the connection but never
   answers: starting a login gives up after 15 s, and a login check that takes longer is retried
   within the login's usual time limit.
