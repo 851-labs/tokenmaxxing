@@ -25,6 +25,7 @@ import {
   autoUpdateCommandDescription,
   backendForPlatform,
   capturedServiceEnv,
+  commandShimInvocation,
   deferredServiceRepairInvocation,
   doctorServiceEnvCheck,
   parseServiceWrapperEnv,
@@ -733,6 +734,38 @@ printf 'HERMES_HOME=%s\\n' "\${HERMES_HOME-unset}"
     expect(autoUpdateCommandDescription("yarn", "0.7.0")).toBe(
       "yarn global add @851-labs/tokenmaxxing@0.7.0 --silent",
     );
+  });
+
+  it("runs npm's Windows .cmd shim through cmd.exe, and anything else directly", () => {
+    expect(
+      commandShimInvocation(
+        "C:\\Users\\alex\\AppData\\Roaming\\npm\\tokenmaxxing.CMD",
+        ["--version"],
+        "win32",
+        { ComSpec: "C:\\Windows\\system32\\cmd.exe" },
+      ),
+    ).toEqual({
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        '""C:\\Users\\alex\\AppData\\Roaming\\npm\\tokenmaxxing.CMD" --version"',
+      ],
+      command: "C:\\Windows\\system32\\cmd.exe",
+      windowsVerbatimArguments: true,
+    });
+    expect(
+      commandShimInvocation("C:\\bun\\bin\\tokenmaxxing.exe", ["--version"], "win32", {}),
+    ).toEqual({
+      args: ["--version"],
+      command: "C:\\bun\\bin\\tokenmaxxing.exe",
+      windowsVerbatimArguments: false,
+    });
+    expect(commandShimInvocation("/usr/local/bin/tokenmaxxing", ["--version"], "linux")).toEqual({
+      args: ["--version"],
+      command: "/usr/local/bin/tokenmaxxing",
+      windowsVerbatimArguments: false,
+    });
   });
 
   it("keeps the package manager's error output, trimmed and without colors", () => {

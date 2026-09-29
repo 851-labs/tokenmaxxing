@@ -3238,12 +3238,17 @@ function cleanupServiceRunnerVersions(
   }).pipe(Effect.catch(() => Effect.void));
 }
 
-function readInstalledCliVersion(commandPath: string): Effect.Effect<string | null, never> {
+function readInstalledCliVersion(
+  commandPath: string,
+  platform: NodeJS.Platform = process.platform,
+): Effect.Effect<string | null, never> {
+  const invocation = commandShimInvocation(commandPath, ["--version"], platform);
   return Effect.tryPromise({
     try: async () => {
-      const { stderr, stdout } = await execFilePromise(commandPath, ["--version"], {
+      const { stderr, stdout } = await execFilePromise(invocation.command, invocation.args, {
         timeout: SERVICE_VERSION_TIMEOUT_MS,
         windowsHide: true,
+        windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       });
 
       return parseCliVersion(`${stdout}\n${stderr}`);
@@ -3315,7 +3320,37 @@ function packageManagerFailureOutput(cause: unknown): string {
 }
 
 function refreshServiceAfterUpdate(options: { commandPath: string }): Effect.Effect<void, unknown> {
-  return runExecutable(options.commandPath, ["service", "install", "--refresh"]);
+  const invocation = commandShimInvocation(options.commandPath, [
+    "service",
+    "install",
+    "--refresh",
+  ]);
+  return runExecutable(invocation.command, invocation.args, {
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+  });
+}
+
+/**
+ * How to run the `tokenmaxxing` found on PATH with `args`. On Windows that is
+ * usually npm's `tokenmaxxing.cmd` shim, which execFile cannot start without
+ * a shell (EINVAL), so it goes through `cmd.exe /d /s /c "<shim> <args>"`.
+ * `args` are fixed words, never user input.
+ */
+function commandShimInvocation(
+  commandPath: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env,
+): { args: string[]; command: string; windowsVerbatimArguments: boolean } {
+  if (platform !== "win32" || !/\.(?:cmd|bat)$/i.test(commandPath)) {
+    return { args: [...args], command: commandPath, windowsVerbatimArguments: false };
+  }
+
+  return {
+    args: ["/d", "/s", "/c", `""${commandPath}" ${args.join(" ")}"`],
+    command: env["ComSpec"] ?? "cmd.exe",
+    windowsVerbatimArguments: true,
+  };
 }
 
 function readLogTail(path: string, maxLines: number): Effect.Effect<string[], never> {
@@ -4441,13 +4476,14 @@ function uninstallNativeScheduler(paths: ServicePaths): Effect.Effect<void, unkn
 function runExecutable(
   command: string,
   args: readonly string[],
-  options: { timeoutMs?: number | undefined } = {},
+  options: { timeoutMs?: number | undefined; windowsVerbatimArguments?: boolean | undefined } = {},
 ): Effect.Effect<void, unknown> {
   return Effect.tryPromise({
     try: async () => {
       await execFilePromise(command, [...args], {
         timeout: options.timeoutMs ?? SERVICE_COMMAND_TIMEOUT_MS,
         windowsHide: true,
+        windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
       });
     },
     catch: (cause) => cause,
@@ -5018,6 +5054,7 @@ export {
   autoUpdateCommandDescription,
   backendForPlatform,
   capturedServiceEnv,
+  commandShimInvocation,
   doctorServiceEnvCheck,
   parseServiceWrapperEnv,
   serviceEnvDrift,
