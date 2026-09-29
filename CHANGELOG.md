@@ -15,6 +15,14 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   control character, with an error that says so. Before, a Linux install there failed with a
   generic error, and moving an existing install to such a dir reported success but left a unit
   that never ran.
+- Windows: a sync that starts while another is still running (the service's wrapper run by hand,
+  or a run left going after the task was ended) no longer exits 0 without running or logging
+  anything. `cmd` holds `service.log` for a whole run, so the second run couldn't open it; it now
+  logs to `service-overlap-1.log` (up to `-4`) instead, and a log held by another process is no
+  longer half-rotated. Task Scheduler itself never overlaps runs. The service rewrites its
+  wrapper once on its next run.
+- A scheduled run that finds another run holding the lock logs a `"status":"skipped"`,
+  `"reason":"locked"` line instead of printing nothing.
 
 ## 0.7.0 - 2026-09-29
 
