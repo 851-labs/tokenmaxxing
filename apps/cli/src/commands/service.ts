@@ -11,6 +11,7 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -69,6 +70,7 @@ import {
   type SyncStatus,
   type UploadRetryPolicy,
 } from "./sync";
+import { defaultServicePath, stableServicePath } from "./service-path";
 
 const execFilePromise = promisify(execFile);
 const gunzipPromise = promisify(gunzip);
@@ -159,6 +161,13 @@ interface ServicePaths {
   statePath: string;
   updateLockPath: string;
   wrapperPath: string;
+}
+
+// What writeServiceFiles actually rewrote: the scheduler definition (plist or systemd units) and
+// the wrapper it runs.
+interface ServiceFilesChange {
+  definition: boolean;
+  wrapper: boolean;
 }
 
 interface ServiceLock {
@@ -546,7 +555,10 @@ function serviceInstallProgram(
     env?: Record<string, string | undefined>;
     findCommandInstall?: () => Effect.Effect<CommandInstall | null, unknown>;
     home?: string;
-    installScheduler?: (paths: ServicePaths) => Effect.Effect<void, unknown>;
+    installScheduler?: (
+      paths: ServicePaths,
+      change: ServiceFilesChange,
+    ) => Effect.Effect<void, unknown>;
     installServiceRunner?: (paths: ServicePaths) => Effect.Effect<ServiceRunnerInstall, unknown>;
     now?: Date;
     platform?: NodeJS.Platform;
@@ -554,7 +566,7 @@ function serviceInstallProgram(
       paths: ServicePaths,
       wrapper: string,
       metadata: ServiceMetadata,
-    ) => Effect.Effect<void, unknown>;
+    ) => Effect.Effect<ServiceFilesChange, unknown>;
     writeRunnerPointer?: (paths: ServicePaths, runnerPath: string) => Effect.Effect<void, unknown>;
   } = {},
 ) {
@@ -613,7 +625,7 @@ function serviceInstallProgram(
         ),
         Effect.mapError((cause) => new ServiceInstallError({ cause })),
       );
-      const serviceEnv = capturedServiceEnv(env);
+      const serviceEnv = capturedServiceEnv(env, platform);
       const wrapper = renderServiceWrapper({
         env: serviceEnv,
         logPath: paths.logPath,
@@ -635,8 +647,12 @@ function serviceInstallProgram(
       };
 
       const filesSpinner = yield* humanSpinner("Writing service files", options);
-      yield* (runtime.writeFiles ?? writeServiceFiles)(paths, wrapper, metadata).pipe(
-        Effect.flatMap(() =>
+      const filesChange = yield* (runtime.writeFiles ?? writeServiceFiles)(
+        paths,
+        wrapper,
+        metadata,
+      ).pipe(
+        Effect.tap(() =>
           (runtime.writeRunnerPointer ?? writeServiceRunnerPointer)(paths, installedRunner.path),
         ),
         Effect.tap(() => Effect.sync(() => filesSpinner.stop("Service files written"))),
@@ -646,7 +662,7 @@ function serviceInstallProgram(
         Effect.mapError((cause) => new ServiceInstallError({ cause })),
       );
       const schedulerSpinner = yield* humanSpinner("Installing scheduler", options);
-      yield* (runtime.installScheduler ?? installNativeScheduler)(paths).pipe(
+      yield* (runtime.installScheduler ?? installNativeScheduler)(paths, filesChange).pipe(
         Effect.tap(() => Effect.sync(() => schedulerSpinner.stop("Scheduler installed"))),
         Effect.tapError(() =>
           Effect.sync(() => schedulerSpinner.error("Failed installing scheduler")),
@@ -787,7 +803,7 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
         );
 
         const wrapper = renderServiceWrapper({
-          env: capturedServiceEnv(env),
+          env: capturedServiceEnv(env, platform),
           logPath: paths.logPath,
           platform,
           runnerPointerPath: paths.runnerPointerPath,
@@ -807,8 +823,8 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
         };
 
         const filesSpinner = yield* humanSpinner("Writing service files", options);
-        yield* writeServiceFiles(paths, wrapper, metadata).pipe(
-          Effect.flatMap(() => writeServiceRunnerPointer(paths, runner.path)),
+        const filesChange = yield* writeServiceFiles(paths, wrapper, metadata).pipe(
+          Effect.tap(() => writeServiceRunnerPointer(paths, runner.path)),
           Effect.tap(() => Effect.sync(() => filesSpinner.stop("Service files written"))),
           Effect.tapError(() =>
             Effect.sync(() => filesSpinner.error("Failed writing service files")),
@@ -839,7 +855,7 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
         }
 
         const schedulerSpinner = yield* humanSpinner("Repairing scheduler", options);
-        yield* installNativeScheduler(paths).pipe(
+        yield* installNativeScheduler(paths, filesChange).pipe(
           Effect.tap(() => Effect.sync(() => schedulerSpinner.stop("Scheduler repaired"))),
           Effect.tapError(() =>
             Effect.sync(() => schedulerSpinner.error("Failed repairing scheduler")),
@@ -1780,7 +1796,7 @@ function deferredServiceRepairInvocation(
         "--collect",
         "--on-active=2s",
         `--unit=${systemdRepairUnitName(reason)}`,
-        ...systemdRunEnvArgs(capturedServiceEnv(env)),
+        ...systemdRunEnvArgs(capturedServiceEnv(env, platform)),
         commandPath,
         "service",
         "repair",
@@ -4072,11 +4088,15 @@ WantedBy=timers.target
 `;
 }
 
+// Files whose bytes already match are left alone (same inode and mtime), and the result says
+// whether the scheduler definition or the wrapper changed. macOS Background Task Management
+// tracks both the plist and the wrapper it runs; replacing them on every update is what made
+// it show "can run in the background" again after each one.
 function writeServiceFiles(
   paths: ServicePaths,
   wrapper: string,
   metadata: ServiceMetadata,
-): Effect.Effect<void, unknown> {
+): Effect.Effect<ServiceFilesChange, unknown> {
   return Effect.tryPromise({
     try: async () => {
       await mkdir(paths.configDir, { recursive: true });
@@ -4087,23 +4107,37 @@ function writeServiceFiles(
       for (const legacyWrapperPath of legacyServiceWrapperPaths(paths)) {
         await rm(legacyWrapperPath, { force: true });
       }
-      await writeFileAtomic(paths.wrapperPath, wrapper);
-      if (paths.backend !== "windows-task-scheduler") {
-        await chmod(paths.wrapperPath, 0o755);
-      }
+      const wrapperChanged = await writeFileIfChanged(
+        paths.wrapperPath,
+        wrapper,
+        paths.backend === "windows-task-scheduler" ? undefined : 0o755,
+      );
       const launcherPath = windowsLauncherPath(paths);
       if (launcherPath !== null) {
         await writeWindowsLauncherFile(launcherPath);
       }
-      await writeFileAtomic(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+      await writeFileIfChanged(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
 
+      let definitionChanged = false;
       if (paths.backend === "launchd" && paths.definitionPath !== null) {
-        await writeFileAtomic(paths.definitionPath, renderLaunchdPlist(paths));
+        definitionChanged = await writeFileIfChanged(
+          paths.definitionPath,
+          renderLaunchdPlist(paths),
+        );
       }
       if (paths.backend === "systemd" && paths.definitionPath !== null) {
-        await writeFileAtomic(paths.definitionPath, renderSystemdService(paths));
-        await writeFileAtomic(systemdTimerPath(paths.definitionPath), renderSystemdTimer());
+        const serviceChanged = await writeFileIfChanged(
+          paths.definitionPath,
+          renderSystemdService(paths),
+        );
+        const timerChanged = await writeFileIfChanged(
+          systemdTimerPath(paths.definitionPath),
+          renderSystemdTimer(),
+        );
+        definitionChanged = serviceChanged || timerChanged;
       }
+
+      return { definition: definitionChanged, wrapper: wrapperChanged };
     },
     catch: (cause) => cause,
   });
@@ -4149,28 +4183,60 @@ function legacyServiceWrapperPaths(paths: ServicePaths): string[] {
   return legacyWrapperPath === paths.wrapperPath ? [] : [legacyWrapperPath];
 }
 
-function installNativeScheduler(paths: ServicePaths): Effect.Effect<void, unknown> {
+// Reloads the job only when its definition changed or the scheduler is not running what is on
+// disk (not loaded, loaded from other settings, or systemd reporting NeedDaemonReload), so a
+// refresh that changed nothing leaves launchd and systemd alone. A deferred launchd repair
+// writes the plist without reloading it; the loaded-job comparison catches that on the next
+// foreground refresh or repair. The Windows task is always re-registered: its XML carries the
+// registration time as the trigger's start, and Task Scheduler has nothing that re-prompts.
+function installNativeScheduler(
+  paths: ServicePaths,
+  change: ServiceFilesChange = { definition: true, wrapper: true },
+  runtime: {
+    readOutput?: typeof readExecutableOutput;
+    run?: typeof runExecutable;
+  } = {},
+): Effect.Effect<void, unknown> {
+  const run = runtime.run ?? runExecutable;
+  const readOutput = runtime.readOutput ?? readExecutableOutput;
+
   if (paths.backend === "launchd") {
     const domain = launchdDomain();
     return Effect.gen(function* () {
-      yield* runExecutable("launchctl", ["bootout", domain, paths.definitionPath!]).pipe(
-        Effect.ignore,
-      );
-      yield* runExecutable("launchctl", ["bootstrap", domain, paths.definitionPath!]);
-      yield* runExecutable("launchctl", ["enable", `${domain}/${SERVICE_LABEL}`]);
+      if (!change.definition) {
+        const loaded = yield* readOutput("launchctl", ["print", `${domain}/${SERVICE_LABEL}`]);
+        if (loaded !== null && launchdJobMatches(loaded, paths)) {
+          return;
+        }
+      }
+      yield* run("launchctl", ["bootout", domain, paths.definitionPath!]).pipe(Effect.ignore);
+      yield* run("launchctl", ["bootstrap", domain, paths.definitionPath!]);
+      yield* run("launchctl", ["enable", `${domain}/${SERVICE_LABEL}`]);
     });
   }
 
   if (paths.backend === "systemd") {
     return Effect.gen(function* () {
-      yield* runExecutable("systemctl", ["--user", "daemon-reload"]);
-      yield* runExecutable("systemctl", ["--user", "enable", "--now", `${SYSTEMD_NAME}.timer`]);
+      if (!change.definition) {
+        const units = yield* readOutput("systemctl", [
+          "--user",
+          "show",
+          `${SYSTEMD_NAME}.service`,
+          `${SYSTEMD_NAME}.timer`,
+          "--property=Id,NeedDaemonReload,ActiveState,UnitFileState",
+        ]);
+        if (units !== null && systemdUnitsAreCurrent(units)) {
+          return;
+        }
+      }
+      yield* run("systemctl", ["--user", "daemon-reload"]);
+      yield* run("systemctl", ["--user", "enable", "--now", `${SYSTEMD_NAME}.timer`]);
     });
   }
 
   return Effect.gen(function* () {
     for (const taskName of windowsTaskNames()) {
-      yield* runExecutable("schtasks", ["/Delete", "/TN", taskName, "/F"]).pipe(Effect.ignore);
+      yield* run("schtasks", ["/Delete", "/TN", taskName, "/F"]).pipe(Effect.ignore);
     }
     const xmlPath = windowsTaskXmlPath(paths);
     yield* Effect.tryPromise({
@@ -4178,10 +4244,57 @@ function installNativeScheduler(paths: ServicePaths): Effect.Effect<void, unknow
         writeFileAtomic(xmlPath, encodeWindowsTaskXml(renderWindowsTaskXml(paths, process.env))),
       catch: (cause) => cause,
     });
-    yield* runExecutable("schtasks", windowsTaskCreateArgs(paths)).pipe(
+    yield* run("schtasks", windowsTaskCreateArgs(paths)).pipe(
       Effect.ensuring(Effect.promise(() => rm(xmlPath, { force: true }).catch(() => undefined))),
     );
   });
+}
+
+// `launchctl print` shows the loaded job's settings one tab deep; these are everything
+// renderLaunchdPlist sets besides the label the job was looked up by.
+function launchdJobMatches(printOutput: string, paths: ServicePaths): boolean {
+  const fields = new Map<string, string>();
+  for (const line of printOutput.split("\n")) {
+    const match = /^\t([^\t=][^=]*?) = (.*)$/.exec(line);
+    if (match !== null && !fields.has(match[1]!)) {
+      fields.set(match[1]!, match[2]!);
+    }
+  }
+
+  return (
+    fields.get("path") === paths.definitionPath &&
+    fields.get("program") === paths.wrapperPath &&
+    fields.get("run interval") === `${SERVICE_INTERVAL_SECONDS} seconds` &&
+    fields.get("stdout path") === paths.logPath &&
+    fields.get("stderr path") === paths.logPath
+  );
+}
+
+// `systemctl show` prints one block of properties per unit, separated by blank lines.
+function systemdUnitsAreCurrent(showOutput: string): boolean {
+  const units = new Map(
+    showOutput
+      .trim()
+      .split(/\n\s*\n/)
+      .map((block) => {
+        const properties = new Map(
+          block
+            .split("\n")
+            .filter((line) => line.includes("="))
+            .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+        );
+        return [properties.get("Id"), properties] as const;
+      }),
+  );
+  const service = units.get(`${SYSTEMD_NAME}.service`);
+  const timer = units.get(`${SYSTEMD_NAME}.timer`);
+
+  return (
+    service?.get("NeedDaemonReload") === "no" &&
+    timer?.get("NeedDaemonReload") === "no" &&
+    timer.get("ActiveState") === "active" &&
+    timer.get("UnitFileState") === "enabled"
+  );
 }
 
 // The task is imported from XML rather than built with /TR: schtasks rewrites every ' in the
@@ -4286,6 +4399,22 @@ function runExecutable(
     },
     catch: (cause) => cause,
   });
+}
+
+function readExecutableOutput(
+  command: string,
+  args: readonly string[],
+): Effect.Effect<string | null, never> {
+  return Effect.tryPromise({
+    try: async () =>
+      (
+        await execFilePromise(command, [...args], {
+          timeout: SERVICE_COMMAND_TIMEOUT_MS,
+          windowsHide: true,
+        })
+      ).stdout,
+    catch: (cause) => cause,
+  }).pipe(Effect.catch(() => Effect.succeed(null)));
 }
 
 function findTokenmaxxingCommandInstall(
@@ -4408,8 +4537,8 @@ const SERVICE_SOURCE_ROOT_ENV_KEYS = [
   "OPENCLAW_DIR",
 ] as const;
 
-// Environment the scheduled wrapper re-exports; PATH is always set (with a
-// default) and empty or unset values are omitted.
+// Environment the scheduled wrapper re-exports; PATH is always set (made
+// stable across shells, with a default) and empty or unset values are omitted.
 const SERVICE_ENV_KEYS = [
   "HOME",
   "USERPROFILE",
@@ -4426,9 +4555,13 @@ const SERVICE_ENV_KEYS = [
 
 function capturedServiceEnv(
   env: Record<string, string | undefined> = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
   const captured: Record<string, string> = {
-    PATH: env["PATH"] ?? defaultPath(),
+    PATH:
+      env["PATH"] === undefined
+        ? defaultServicePath(platform)
+        : stableServicePath(env["PATH"], { env, platform }),
   };
 
   for (const key of SERVICE_ENV_KEYS) {
@@ -4505,12 +4638,6 @@ function doctorServiceEnvCheck(
     )
     .join("; ");
   return doctorCheck("warn", "source roots", `${changes}; repair with ${serviceRepairCommand()}`);
-}
-
-function defaultPath(): string {
-  return process.platform === "win32"
-    ? "C:\\Windows\\System32;C:\\Windows"
-    : "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 }
 
 function isEphemeralCommandPath(path: string): boolean {
@@ -4709,10 +4836,7 @@ function isServiceInstalled(paths: ServicePaths): Effect.Effect<boolean, never> 
 
 // Leaves a current launcher untouched so a running wscript.exe never sees it replaced.
 async function writeWindowsLauncherFile(path: string): Promise<void> {
-  const current = await readFile(path, "utf8").catch(() => null);
-  if (current !== renderWindowsLauncher()) {
-    await writeFileAtomic(path, renderWindowsLauncher());
-  }
+  await writeFileIfChanged(path, renderWindowsLauncher());
 }
 
 function writeWindowsLauncher(path: string): Effect.Effect<void, unknown> {
@@ -4761,6 +4885,25 @@ async function writeFileAtomic(
     await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw cause;
   }
+}
+
+// Returns whether it wrote. A file that already has these bytes keeps its inode and mtime; only
+// a differing mode is fixed, in place.
+async function writeFileIfChanged(
+  path: string,
+  data: string | Uint8Array,
+  mode?: number,
+): Promise<boolean> {
+  const current = await readFile(path).catch(() => null);
+  if (current !== null && current.equals(Buffer.from(data))) {
+    if (mode !== undefined && ((await stat(path)).mode & 0o777) !== mode) {
+      await chmod(path, mode);
+    }
+    return false;
+  }
+
+  await writeFileAtomic(path, data, mode);
+  return true;
 }
 
 async function copyFileAtomic(
@@ -4835,6 +4978,7 @@ export {
   isEphemeralCommandPath,
   isTransientCommandShimPath,
   isWindowsNpmPrefixShim,
+  launchdJobMatches,
   isServiceInstalled,
   legacyServiceWrapperPaths,
   deterministicServiceJitterMs,
@@ -4850,6 +4994,7 @@ export {
   renderSystemdTimer,
   renderWindowsLauncher,
   refreshServiceAfterUpdate,
+  installNativeScheduler,
   installServiceRunner,
   installServiceRunnerForRepair,
   installServiceRunnerFromOptionalPackage,
@@ -4876,6 +5021,7 @@ export {
   serviceInstallProgram,
   serviceLockStatus,
   serviceStateJson,
+  systemdUnitsAreCurrent,
   extractServiceRunnerFromTarball,
   servicePathsEffect,
   servicePaths,
@@ -4912,6 +5058,7 @@ export type {
   CommandInstall,
   ServiceBackend,
   ServiceCheckIn,
+  ServiceFilesChange,
   ServiceInstallOptions,
   ServiceMetadata,
   ServiceAutoUpdateReport,

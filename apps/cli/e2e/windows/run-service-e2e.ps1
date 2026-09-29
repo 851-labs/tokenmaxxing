@@ -13,7 +13,9 @@
 # 6. service-e2e.ps1, then ../shared/summarize.ts
 param(
   [Parameter(Mandatory)] [string]$BuildJson,
-  [string]$Root = (Join-Path $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }) "tmx-e2e"),
+  # Not under %TEMP%: a service install drops temporary directories from the
+  # PATH it captures, and the fake bun lives under the root.
+  [string]$Root = (Join-Path $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:LOCALAPPDATA }) "tmx-e2e"),
   [string]$OutDir = (Join-Path $Root "out"),
   # Must predate the hidden launcher (#100, first released in 0.7.0-alpha.1):
   # its task runs the .cmd directly, which the upgrade scenario migrates and

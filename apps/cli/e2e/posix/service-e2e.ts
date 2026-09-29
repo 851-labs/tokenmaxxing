@@ -27,7 +27,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import {
@@ -89,7 +89,9 @@ import {
 import { summarize } from "../shared/summarize";
 
 const build = readBuild(requiredFlag("build"));
-const root = flag("root") ?? join(process.env.RUNNER_TEMP ?? tmpdir(), "tmx-e2e");
+// Not under the OS temp dir: a service install drops temporary directories from
+// the PATH it captures, and the fake bun lives under the root.
+const root = flag("root") ?? join(process.env.RUNNER_TEMP ?? join(homedir(), ".cache"), "tmx-e2e");
 const outDir = flag("out") ?? join(root, "out");
 const legacyVersion = flag("legacy") ?? "0.7.0-alpha.0";
 const title = `${backend === "launchd" ? "macOS launchd" : "Linux systemd --user"} service e2e`;
@@ -500,6 +502,126 @@ async function assertReloadRequiredRepair(
   );
 }
 
+function fileStamp(path: string): string {
+  try {
+    const info = statSync(path);
+    return `ino ${info.ino} mtime ${info.mtimeMs}`;
+  } catch {
+    return "missing";
+  }
+}
+
+function definitionFiles(): string[] {
+  return backend === "launchd"
+    ? [launchdPlistPath()]
+    : [
+        join(systemdUnitDir(context.baseEnv), `${SYSTEMD_UNIT}.service`),
+        join(systemdUnitDir(context.baseEnv), `${SYSTEMD_UNIT}.timer`),
+      ];
+}
+
+function userJournalSince(epochSeconds: number): string {
+  return run(
+    "journalctl --user",
+    "journalctl",
+    ["--user", "--no-pager", "-o", "cat", "--since", `@${epochSeconds}`],
+    { env: { ...process.env, ...systemdUserEnv() }, quiet: true },
+  ).out;
+}
+
+// macOS Background Task Management re-posts "can run in the background" when
+// the plist or the program it runs is replaced or its mtime changes, even with
+// the same bytes, so a refresh that changes nothing must leave both alone and
+// must not reload the job. A scheduler that is actually broken still gets
+// re-registered by repair.
+async function assertUnchangedRefresh(scenarioName: string, profile: Profile) {
+  const tracked = [...definitionFiles(), wrapperPath(profile)];
+  const before = tracked.map(fileStamp);
+  const runsBefore = backend === "launchd" ? launchdJob().runs : 0;
+  const timerBefore =
+    backend === "systemd"
+      ? systemdShow(`${SYSTEMD_UNIT}.timer`, ["ActiveEnterTimestampMonotonic"])
+          .ActiveEnterTimestampMonotonic
+      : "";
+  const since = Math.floor(Date.now() / 1000);
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+  const refresh = tmx(profile, ["service", "install", "--refresh", "--json"]);
+  const json = parseCliJson<{ status?: string }>(refresh.out);
+  check(
+    scenarioName,
+    "service install --refresh",
+    refresh.code === 0 && json?.status === "ok",
+    oneLine(refresh.out, 300),
+  );
+  const after = tracked.map(fileStamp);
+  check(
+    scenarioName,
+    "unchanged refresh leaves the definition and wrapper untouched (inode + mtime)",
+    after.every((stamp, index) => stamp === before[index] && stamp !== "missing"),
+    tracked.map((path, index) => `${path}: ${before[index]} -> ${after[index]}`).join("; "),
+  );
+
+  if (backend === "launchd") {
+    const job = launchdJob();
+    check(
+      scenarioName,
+      "unchanged refresh did not reload the agent (launchd run count kept)",
+      runsBefore > 0 && job.loaded && job.runs === runsBefore,
+      `runs ${runsBefore} -> ${job.runs}; state=${job.state}`,
+    );
+  } else {
+    const timer = systemdShow(`${SYSTEMD_UNIT}.timer`, [
+      "ActiveEnterTimestampMonotonic",
+      "ActiveState",
+      "NeedDaemonReload",
+    ]);
+    const journal = userJournalSince(since);
+    check(
+      scenarioName,
+      "unchanged refresh ran no daemon-reload and left the timer running",
+      !/Reloading/.test(journal) &&
+        timer.ActiveState === "active" &&
+        timer.NeedDaemonReload === "no" &&
+        timer.ActiveEnterTimestampMonotonic === timerBefore,
+      `ActiveEnter ${timerBefore} -> ${timer.ActiveEnterTimestampMonotonic}; NeedDaemonReload=${timer.NeedDaemonReload}; journal: ${oneLine(journal, 300) || "(empty)"}`,
+    );
+    // Positive control: a daemon-reload does show up in the user journal.
+    const controlSince = Math.floor(Date.now() / 1000);
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    systemctl(["daemon-reload"], true);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    check(
+      scenarioName,
+      "a daemon-reload is visible in the user journal (positive control)",
+      /Reloading/.test(userJournalSince(controlSince)),
+      oneLine(userJournalSince(controlSince), 300),
+    );
+  }
+
+  // Repair still re-registers a scheduler that lost the job, with every file unchanged.
+  if (backend === "launchd") {
+    run("launchctl bootout", "launchctl", ["bootout", `${launchdDomain()}/${LAUNCHD_LABEL}`], {
+      quiet: true,
+    });
+  } else {
+    systemctl(["disable", "--now", `${SYSTEMD_UNIT}.timer`], true);
+  }
+  const repair = tmx(profile, ["service", "repair", "--json"]);
+  const repairJson = parseCliJson<{ active?: boolean; status?: string }>(repair.out);
+  const reloaded =
+    backend === "launchd"
+      ? launchdJob().loaded
+      : systemctl(["is-active", `${SYSTEMD_UNIT}.timer`], true).stdout === "active" &&
+        systemctl(["is-enabled", `${SYSTEMD_UNIT}.timer`], true).stdout === "enabled";
+  check(
+    scenarioName,
+    "repair re-registers an unloaded job whose files are unchanged",
+    repair.code === 0 && repairJson?.status === "ok" && repairJson.active === true && reloaded,
+    oneLine(repair.out, 300),
+  );
+}
+
 function assertSchedulerStillRegistered(scenarioName: string) {
   if (backend === "launchd") {
     const job = launchdJob();
@@ -616,6 +738,7 @@ async function core() {
     oneLine(JSON.stringify(run1.line?.autoUpdate), 300),
   );
   await assertStatusAndDoctor(name, profile);
+  await assertUnchangedRefresh(name, profile);
 
   // Error paths keep the wrapper's exit codes through the scheduler.
   const pointer = configFile(profile, "service-runner-current");
@@ -807,14 +930,20 @@ async function legacyUpgrade() {
   );
   keep(outDir, writeTemp("legacy-wrapper-before.txt", oldWrapper), "legacy-wrapper-before.txt");
   keep(outDir, wrapperPath(profile), "legacy-wrapper-after.txt");
-  // Templates 5 and 6 render the same POSIX wrapper, so the rewrite shows in
-  // the mtime rather than the content.
+  // Templates 5 and 6 render the same POSIX wrapper; only the captured PATH
+  // can differ. Repair rewrites a wrapper whose bytes changed and leaves an
+  // identical one alone: macOS treats a rewritten program (even with the same
+  // bytes, or only a new mtime) as a new background item and notifies again.
+  const wrapperChanged = newWrapper !== oldWrapper;
+  const wrapperMtime = statSync(wrapperPath(profile)).mtimeMs;
   check(
     name,
-    "repair rewrote the wrapper",
-    statSync(wrapperPath(profile)).mtimeMs > oldWrapperMtime &&
-      newWrapper.includes("tokenmaxxing service sync"),
-    `${oldWrapper.length} -> ${newWrapper.length} bytes; ${newWrapper === oldWrapper ? "same content" : "content changed"}`,
+    wrapperChanged
+      ? "repair rewrote the changed wrapper"
+      : "repair left the identical wrapper untouched",
+    newWrapper.includes("tokenmaxxing service sync") &&
+      (wrapperChanged ? wrapperMtime > oldWrapperMtime : wrapperMtime === oldWrapperMtime),
+    `${oldWrapper.length} -> ${newWrapper.length} bytes; ${wrapperChanged ? "content changed" : "same content"}; mtime ${oldWrapperMtime} -> ${wrapperMtime}`,
   );
   if (backend === "systemd") {
     // The deferred repair runs in its own transient unit and re-registers.
@@ -858,6 +987,7 @@ async function legacyUpgrade() {
     return;
   }
   const runsBefore = backend === "launchd" ? launchdJob().runs : 0;
+  const plistBefore = backend === "launchd" ? readText(launchdPlistPath()) : "";
   const activeBefore =
     backend === "systemd"
       ? systemdShow(`${SYSTEMD_UNIT}.timer`, ["ActiveEnterTimestampMonotonic"])
@@ -883,12 +1013,18 @@ async function legacyUpgrade() {
     `templateVersion=${serviceJson(profile)?.templateVersion} runnerVersion=${serviceJson(profile)?.runnerVersion}`,
   );
   if (backend === "launchd") {
+    // The plist has rendered the same since before the legacy release, so the
+    // loaded job already matches it and repair must not re-bootstrap it (a
+    // re-bootstrap resets the run count). A changed plist must be reloaded.
     const job = launchdJob();
+    const plistChanged = readText(launchdPlistPath()) !== plistBefore;
     check(
       name,
-      "repair re-bootstrapped the agent (launchd run count reset)",
-      job.loaded && job.runs < runsBefore,
-      `runs ${runsBefore} -> ${job.runs}`,
+      plistChanged
+        ? "repair re-bootstrapped the agent for its changed plist (launchd run count reset)"
+        : "repair left the unchanged, loaded agent alone (launchd run count kept)",
+      job.loaded && (plistChanged ? job.runs < runsBefore : job.runs === runsBefore),
+      `plist changed=${plistChanged}; runs ${runsBefore} -> ${job.runs}`,
     );
   } else {
     const activeAfter = systemdShow(`${SYSTEMD_UNIT}.timer`, [
