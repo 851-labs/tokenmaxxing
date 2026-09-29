@@ -40,8 +40,8 @@ import {
   durableTokenmaxxingCommandPath,
   extractServiceRunnerFromTarball,
   findCommandOnPath,
+  formatServiceLastError,
   formatServiceLockStatus,
-  formatServiceStatusAutoUpdate,
   installNativeScheduler,
   installServiceRunner,
   installServiceRunnerBinary,
@@ -80,8 +80,13 @@ import {
   serviceRepairState,
   serviceNewerThanCli,
   ServiceNewerThanCliError,
-  doctorLockDetail,
   doctorTemplateCheck,
+  reportServiceDoctor,
+  serviceAutoUpdateCheck,
+  serviceDoctorChecks,
+  serviceDoctorHealth,
+  ServiceDoctorProblemsError,
+  serviceLockCheck,
   serviceStatusRunnerLines,
   serviceRunnerPackageName,
   serviceRunnerTarget,
@@ -107,6 +112,9 @@ import {
   ServiceRunnerUpdateError,
   ServiceSourcesFailedError,
   type CommandInstall,
+  type DoctorCheck,
+  type ServiceDoctorFacts,
+  type ServiceLockStatus,
   type ServiceAutoUpdateReport,
   type ServiceFilesChange,
   type ServiceMetadata,
@@ -661,6 +669,7 @@ describe("serviceEnvDrift", () => {
     expect(doctorServiceEnvCheck(wrapper, { CODEX_HOME: "/data/codex" })).toEqual({
       detail:
         "CODEX_HOME is /data/codex-old for the service but /data/codex here; repair with tokenmaxxing service repair",
+      fix: "repair with tokenmaxxing service repair",
       label: "source roots",
       status: "warn",
     });
@@ -1745,10 +1754,12 @@ describe("Windows hidden launcher", () => {
       label: "launcher",
       status: "ok",
     });
+    // A missing launcher fails every scheduled run.
     expect(windowsLauncherDoctorCheck("C:\\tm\\service-sync.vbs", "missing")).toEqual({
       detail: "C:\\tm\\service-sync.vbs missing; repair with tokenmaxxing service repair",
+      fix: "repair with tokenmaxxing service repair",
       label: "launcher",
-      status: "warn",
+      status: "fail",
     });
     expect(windowsLauncherDoctorCheck("C:\\tm\\service-sync.vbs", "outdated").status).toBe("warn");
   });
@@ -4179,33 +4190,59 @@ describe("repair never moves the runner back", () => {
   });
 });
 
-describe("formatServiceStatusAutoUpdate", () => {
+describe("serviceAutoUpdateCheck", () => {
+  const base = {
+    backend: "launchd" as const,
+    commandPath: "/usr/local/bin/tokenmaxxing",
+    installedAt: "2026-06-16T00:00:00.000Z",
+    schedule: "daily",
+    version: 1 as const,
+  };
+  const check = (
+    metadata: ServiceMetadata | null,
+    input: Partial<Parameters<typeof serviceAutoUpdateCheck>[1]> = {},
+  ) =>
+    serviceAutoUpdateCheck(metadata, {
+      installed: true,
+      manager: metadata?.autoUpdateManager,
+      managerExists: true,
+      ...input,
+    });
+
   it("does not imply auto-update is enabled before service metadata exists", () => {
-    expect(formatServiceStatusAutoUpdate(null)).toBe("unknown (service not installed)");
+    expect(check(null, { installed: false })).toEqual({
+      detail: "unknown (service not installed)",
+      label: "auto-update",
+      status: "info",
+    });
     // Installed, but service.json is gone or garbage: the runner cannot auto-update.
-    expect(formatServiceStatusAutoUpdate(null, true)).toBe(
-      "off (service.json missing or unreadable; repair with tokenmaxxing service repair)",
-    );
-    expect(
-      formatServiceStatusAutoUpdate({
-        autoUpdate: false,
-        backend: "launchd",
-        commandPath: "/usr/local/bin/tokenmaxxing",
-        installedAt: "2026-06-16T00:00:00.000Z",
-        schedule: "daily",
-        version: 1,
-      } as ServiceMetadata),
-    ).toBe("enabled (package manager not detected)");
-    expect(
-      formatServiceStatusAutoUpdate({
-        autoUpdateManager: "npm",
-        backend: "launchd",
-        commandPath: "/usr/local/bin/tokenmaxxing",
-        installedAt: "2026-06-16T00:00:00.000Z",
-        schedule: "daily",
-        version: 1,
-      }),
-    ).toBe("enabled via npm");
+    expect(check(null)).toEqual({
+      detail: "off (service.json missing or unreadable); repair with tokenmaxxing service repair",
+      fix: "repair with tokenmaxxing service repair",
+      label: "auto-update",
+      status: "warn",
+    });
+  });
+
+  it("is OK via registry runner packages or a package manager on PATH", () => {
+    expect(check({ ...base, autoUpdateManager: "registry" })).toEqual({
+      detail: "enabled via registry runner packages",
+      label: "auto-update",
+      status: "ok",
+    });
+    expect(check({ ...base, autoUpdateManager: "npm" })).toMatchObject({
+      detail: `enabled via npm (${autoUpdateCommandDescription("npm", "<version>")})`,
+      status: "ok",
+    });
+    expect(check({ ...base, autoUpdateManager: "npm" }, { managerExists: false })).toMatchObject({
+      detail: "enabled via npm, but npm is not on PATH; repair with tokenmaxxing service repair",
+      status: "warn",
+    });
+    expect(check(base)).toMatchObject({
+      detail:
+        "enabled, but the package manager was not detected; repair with tokenmaxxing service repair",
+      status: "warn",
+    });
   });
 });
 
@@ -4747,11 +4784,13 @@ describe("a service newer than this CLI", () => {
     expect(doctorTemplateCheck({ ...metadata, templateVersion: 8 }, false)).toEqual({
       detail:
         "the service is newer than this CLI (template 8 vs 7); upgrade the CLI with tokenmaxxing upgrade",
+      fix: "upgrade the CLI with tokenmaxxing upgrade",
       label: "template",
       status: "warn",
     });
     expect(doctorTemplateCheck({ ...metadata, templateVersion: 6 }, true)).toEqual({
       detail: "reload required; repair with tokenmaxxing service repair",
+      fix: "repair with tokenmaxxing service repair",
       label: "template",
       status: "warn",
     });
@@ -4770,6 +4809,13 @@ describe("a service newer than this CLI", () => {
       "The service is newer than this CLI (template 8 vs 7); upgrade the CLI with tokenmaxxing upgrade",
       "Runner: 0.8.0 (darwin-arm64)",
     ]);
+    // A runner that auto-updated past the global CLI is normal, as in doctor.
+    expect(
+      serviceStatusRunnerLines({
+        ...base,
+        newerThanCli: { runner: { cli: "0.7.0", installed: "0.8.0" } },
+      }),
+    ).toEqual(["Runner: 0.8.0 (darwin-arm64)"]);
     expect(
       serviceStatusRunnerLines({
         ...base,
@@ -4819,7 +4865,7 @@ describe("repair reasons", () => {
   });
 });
 
-describe("doctorLockDetail", () => {
+describe("serviceLockCheck", () => {
   const paths = servicePaths({
     env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing" },
     home: "/Users/alex",
@@ -4827,26 +4873,403 @@ describe("doctorLockDetail", () => {
   })!;
   // Far above any real pid, so it is gone on this machine.
   const deadPid = 2 ** 22 + 12_345;
-  const held = (hostname: string | undefined) =>
-    ({
-      acquiredAt: "2026-06-16T10:00:00.000Z",
-      hostname,
-      locked: true,
-      pid: deadPid,
-      stale: false,
-    }) as const;
+  const held = (hostname: string | undefined, pid = deadPid, stale = false): ServiceLockStatus => ({
+    acquiredAt: "2026-06-16T10:00:00.000Z",
+    hostname,
+    locked: true,
+    pid,
+    stale,
+  });
+  const lockCheck = (status: ServiceLockStatus, host = "mac") =>
+    Effect.runPromise(serviceLockCheck(paths, status, host));
+
+  it("is OK with no lock", async () => {
+    await expect(lockCheck({ locked: false, stale: false })).resolves.toEqual({
+      detail: "none",
+      label: "lock",
+      status: "ok",
+    });
+  });
 
   it("only promises a takeover for a dead pid on this machine", async () => {
-    await expect(Effect.runPromise(doctorLockDetail(paths, held("mac"), "MAC"))).resolves.toBe(
-      `held (since 2026-06-16T10:00:00.000Z, pid ${deadPid}); pid ${deadPid} is gone, so the next run takes it over`,
+    await expect(lockCheck(held("mac"), "MAC")).resolves.toEqual({
+      detail: `held (since 2026-06-16T10:00:00.000Z, pid ${deadPid}); pid ${deadPid} is gone, so the next run takes it over`,
+      label: "lock",
+      status: "info",
+    });
+    await expect(lockCheck(held(undefined))).resolves.toMatchObject({
+      detail: expect.stringContaining("the next run takes it over"),
+      status: "info",
+    });
+    await expect(lockCheck(held("linux-box"))).resolves.toEqual({
+      detail: `held (since 2026-06-16T10:00:00.000Z, pid ${deadPid}); held by linux-box, where a sync may be running; runs here skip until it is released`,
+      label: "lock",
+      status: "info",
+    });
+  });
+
+  it("is fine while a sync holds it, and warns once a live process held it too long", async () => {
+    await expect(lockCheck(held("mac", process.pid))).resolves.toEqual({
+      detail: `held (since 2026-06-16T10:00:00.000Z, pid ${process.pid}); a sync is running`,
+      label: "lock",
+      status: "info",
+    });
+    await expect(lockCheck(held("mac", process.pid, true))).resolves.toEqual({
+      detail: `held (since 2026-06-16T10:00:00.000Z, pid ${process.pid}) (stale); pid ${process.pid} on this machine has held it for over 2 hours, so every run skips; if it is not a tokenmaxxing sync, remove ${paths.lockPath}`,
+      fix: `if it is not a tokenmaxxing sync, remove ${paths.lockPath}`,
+      label: "lock",
+      status: "warn",
+    });
+    // A stale lock whose process is gone is simply taken over.
+    await expect(lockCheck(held("mac", deadPid, true))).resolves.toMatchObject({
+      status: "info",
+    });
+  });
+});
+
+describe("service doctor", () => {
+  const platforms = ["darwin", "linux", "win32"] as const;
+  const repair = "repair with tokenmaxxing service repair";
+
+  function healthyFacts(platform: (typeof platforms)[number]): ServiceDoctorFacts {
+    const home = platform === "win32" ? "C:\\Users\\alex" : "/home/alex";
+    const configDir = platform === "win32" ? "C:\\tm" : "/tmp/tm";
+    const env = {
+      CODEX_HOME: `${home}/codex`,
+      PATH: "/usr/bin",
+      TOKENMAXXING_CONFIG_DIR: configDir,
+    };
+    const paths = servicePaths({ env, home, platform })!;
+    const runnerPath = join(paths.runnersDir, "0.7.0", "target", "tokenmaxxing");
+    const metadata: ServiceMetadata = {
+      autoUpdateManager: "registry",
+      backend: paths.backend,
+      commandPath: runnerPath,
+      installedAt: "2026-06-16T09:00:00.000Z",
+      runnerTarget: "target",
+      runnerVersion: "0.7.0",
+      schedule: "syncs every 5 minutes",
+      templateVersion: 7,
+      version: 1,
+    };
+    const launcherPath = windowsLauncherPath(paths);
+
+    return {
+      authConfig: { _tag: "success", value: { deviceId: "device_1", token: "tmx_1" } },
+      autoUpdate: serviceAutoUpdateCheck(metadata, {
+        installed: true,
+        manager: "registry",
+        managerExists: true,
+      }),
+      definitionExists: true,
+      env,
+      envToken: false,
+      installed: true,
+      launcher: launcherPath === null ? null : { path: launcherPath, status: "current" },
+      lock: { detail: "none", label: "lock", status: "ok" },
+      metadata,
+      metadataCommandExists: true,
+      nativeStatus: { active: true, command: "scheduler query", detail: "active" },
+      owner: "this",
+      paths,
+      reloadRequired: false,
+      runner: { _tag: "ok", path: runnerPath },
+      state: { lastSuccessAt: "2026-06-16T10:00:00.000Z", version: 1 },
+      wrapper: renderServiceWrapper({
+        env: capturedServiceEnv(env, platform),
+        logPath: paths.logPath,
+        platform,
+        runnerPointerPath: paths.runnerPointerPath,
+      }),
+    };
+  }
+
+  function report(checks: readonly DoctorCheck[], json = false) {
+    const logs: string[] = [];
+    return Effect.runPromiseExit(
+      reportServiceDoctor(
+        {
+          checks,
+          recentLog: [],
+          reloadRequired: false,
+          scheduler: healthyFacts("linux").nativeStatus,
+          state: null,
+        },
+        { json },
+      ).pipe(
+        Effect.provideService(ConsoleService, {
+          error: () => undefined,
+          log: (message?: unknown) => {
+            logs.push(String(message));
+          },
+        }),
+      ),
+    ).then((exit) => ({ exit, logs }));
+  }
+
+  function problemsMessage(exit: Exit.Exit<void, unknown>): string | undefined {
+    if (exit._tag !== "Failure") {
+      return undefined;
+    }
+    const failure = exit.cause.reasons.find(Cause.isFailReason);
+    return failure?.error instanceof ServiceDoctorProblemsError ? failure.error.message : undefined;
+  }
+
+  // Would a script see a problem? Only WARN and FAIL lines say how to fix one.
+  function expectNoHintsOnFineLines(checks: readonly DoctorCheck[]) {
+    for (const check of checks.filter((c) => c.status === "ok" || c.status === "info")) {
+      expect(check.fix, doctorLineFor(check)).toBeUndefined();
+      expect(doctorLineFor(check)).not.toMatch(
+        /\b(repair|retry|upgrade the CLI|install) with\b|\brun tokenmaxxing\b/,
+      );
+    }
+  }
+
+  function doctorLineFor(check: DoctorCheck) {
+    return `${check.status} ${check.label} ${check.detail}`;
+  }
+
+  it.each(platforms)("exits 0 on a healthy %s install, every check OK", async (platform) => {
+    const checks = serviceDoctorChecks(healthyFacts(platform));
+
+    expect(checks.filter((check) => check.status !== "ok")).toEqual([
+      { detail: "none", label: "last repair", status: "info" },
+    ]);
+    expect(checks.map((check) => check.label)).toEqual([
+      "scheduler",
+      "active",
+      "template",
+      "definition",
+      "wrapper",
+      ...(platform === "win32" ? ["launcher"] : []),
+      "source roots",
+      "runner",
+      "metadata",
+      "binary",
+      "auto-update",
+      "auth",
+      "lock",
+      "last success",
+      "last error",
+      "last repair",
+    ]);
+    expect(serviceDoctorHealth(checks)).toBe("ok");
+    expectNoHintsOnFineLines(checks);
+
+    const { exit, logs } = await report(checks);
+    expect(exit._tag).toBe("Success");
+    expect(logs).toContain("OK   active       active");
+    expect(logs).toContain("INFO last repair  none");
+  });
+
+  it.each(platforms)("stays at exit 0 in fine but informational %s states", async (platform) => {
+    const paths = healthyFacts(platform).paths;
+    const liveLock = await Effect.runPromise(
+      serviceLockCheck(paths, {
+        acquiredAt: new Date().toISOString(),
+        locked: true,
+        pid: process.pid,
+        stale: false,
+      }),
     );
-    await expect(
-      Effect.runPromise(doctorLockDetail(paths, held(undefined), "mac")),
-    ).resolves.toContain("the next run takes it over");
-    await expect(
-      Effect.runPromise(doctorLockDetail(paths, held("linux-box"), "mac")),
-    ).resolves.toBe(
-      `held (since 2026-06-16T10:00:00.000Z, pid ${deadPid}); held by linux-box; if no sync is running there, remove ${paths.lockPath}`,
+    const deadLock = await Effect.runPromise(
+      serviceLockCheck(paths, {
+        acquiredAt: new Date().toISOString(),
+        locked: true,
+        pid: 2 ** 22 + 12_345,
+        stale: false,
+      }),
     );
+    const states: Array<Partial<ServiceDoctorFacts>> = [
+      // Installed, never synced yet.
+      { state: null },
+      // A scheduled run holds the lock right now.
+      { lock: liveLock },
+      // A killed run's lock, which the next run takes over.
+      { lock: deadLock },
+      // The runner auto-updated past the global CLI.
+      {
+        metadata: { ...healthyFacts(platform).metadata!, runnerVersion: "99.0.0" },
+      },
+      {
+        state: {
+          lastRepairReason: "auto-updated",
+          lastRepairStatus: "success",
+          lastSuccessAt: "2026-06-16T10:00:00.000Z",
+          version: 1,
+        },
+      },
+      { authConfig: { _tag: "success", value: { token: "tmx_1" } } },
+    ];
+
+    for (const overrides of states) {
+      const checks = serviceDoctorChecks({ ...healthyFacts(platform), ...overrides });
+      expect(checks.filter((check) => check.status === "warn" || check.status === "fail")).toEqual(
+        [],
+      );
+      expectNoHintsOnFineLines(checks);
+      expect((await report(checks)).exit._tag).toBe("Success");
+    }
+  });
+
+  it.each(platforms)("exits 1 on a %s WARN, with its fix as the hint", async (platform) => {
+    const checks = serviceDoctorChecks({
+      ...healthyFacts(platform),
+      state: { lastError: "ccusage source collection failed", version: 1 },
+    });
+
+    expect(checks.find((check) => check.label === "last error")).toEqual({
+      detail: "ccusage source collection failed; retry with tokenmaxxing service run to see why",
+      fix: "retry with tokenmaxxing service run to see why",
+      label: "last error",
+      status: "warn",
+    });
+    expect(serviceDoctorHealth(checks)).toBe("warn");
+    expectNoHintsOnFineLines(checks);
+
+    const { exit, logs } = await report(checks);
+    expect(problemsMessage(exit)).toBe(
+      "error: service doctor found 1 warning (last error)\nhint: retry with tokenmaxxing service run to see why",
+    );
+    expect(logs).toContain(
+      "WARN last error   ccusage source collection failed; retry with tokenmaxxing service run to see why",
+    );
+  });
+
+  it("shows the first line of a failed run's error", () => {
+    const checks = serviceDoctorChecks({
+      ...healthyFacts("darwin"),
+      state: {
+        lastError:
+          "SyncAuthValidationError: error: failed to validate stored login\nhint: check your network and run tokenmaxxing sync again",
+        version: 1,
+      },
+    });
+
+    expect(checks.find((check) => check.label === "last error")?.detail).toBe(
+      "failed to validate stored login; retry with tokenmaxxing service run to see why",
+    );
+    expect(formatServiceLastError("ccusage source collection failed")).toBe(
+      "ccusage source collection failed",
+    );
+  });
+
+  it.each(platforms)("exits 1 on a %s FAIL, and counts every problem", async (platform) => {
+    const facts = healthyFacts(platform);
+    const broken = serviceDoctorChecks({
+      ...facts,
+      nativeStatus: { active: false, command: "scheduler query", detail: "inactive (exit 3)" },
+      runner: { _tag: "broken", detail: `runner missing: ${facts.metadata!.commandPath}` },
+    });
+
+    expect(broken.filter((check) => check.status === "fail")).toEqual([
+      {
+        detail: `inactive (exit 3); ${repair}`,
+        fix: repair,
+        label: "active",
+        status: "fail",
+      },
+      {
+        detail: `runner missing: ${facts.metadata!.commandPath}; ${repair}`,
+        fix: repair,
+        label: "runner",
+        status: "fail",
+      },
+    ]);
+    expect(serviceDoctorHealth(broken)).toBe("fail");
+    expectNoHintsOnFineLines(broken);
+    expect(problemsMessage((await report(broken)).exit)).toBe(
+      `error: service doctor found 2 failures (active, runner)\nhint: ${repair}`,
+    );
+
+    const mixed = serviceDoctorChecks({
+      ...facts,
+      authConfig: { _tag: "success", value: {} },
+      reloadRequired: true,
+    });
+    expect(serviceDoctorHealth(mixed)).toBe("fail");
+    expect(problemsMessage((await report(mixed)).exit)).toBe(
+      "error: service doctor found 1 failure (auth) and 1 warning (template)\nhint: each FAIL and WARN check says how to fix it",
+    );
+  });
+
+  it.each(platforms)("says to install when nothing is installed for %s", (platform) => {
+    const facts = healthyFacts(platform);
+    const checks = serviceDoctorChecks({
+      ...facts,
+      installed: false,
+      metadata: null,
+      owner: "none",
+      state: null,
+      wrapper: null,
+    });
+
+    expect(checks.map((check) => `${check.status} ${check.label}`)).toEqual([
+      "fail scheduler",
+      "ok auth",
+      "ok lock",
+      "info last success",
+      "ok last error",
+      "info last repair",
+    ]);
+    expect(checks[0]).toEqual({
+      detail: `not installed (${facts.paths.backend}); install with tokenmaxxing service install`,
+      fix: "install with tokenmaxxing service install",
+      label: "scheduler",
+      status: "fail",
+    });
+    // The scheduler job belongs to another config dir: a repair here refuses.
+    expect(serviceDoctorChecks({ ...facts, owner: "other" })[0]).toMatchObject({
+      fix: "set TOKENMAXXING_CONFIG_DIR to that service's config dir",
+      status: "fail",
+    });
+  });
+
+  it("names a partial install's missing files, each fixed by repair", () => {
+    const facts = healthyFacts("darwin");
+    const checks = serviceDoctorChecks({
+      ...facts,
+      definitionExists: false,
+      installed: false,
+      metadataCommandExists: false,
+      wrapper: null,
+    });
+
+    expect(
+      checks.filter((check) => check.status === "fail" || check.status === "warn"),
+    ).toMatchObject([
+      { detail: `not installed (launchd); ${repair}`, label: "scheduler", status: "fail" },
+      { detail: `missing: ${facts.paths.definitionPath}; ${repair}`, label: "definition" },
+      { detail: `missing: ${facts.paths.wrapperPath}; ${repair}`, label: "wrapper" },
+      { detail: `missing: ${facts.metadata!.commandPath}; ${repair}`, label: "binary" },
+    ]);
+    expect(checks.find((check) => check.label === "source roots")).toEqual({
+      detail: "not checked (wrapper missing)",
+      label: "source roots",
+      status: "info",
+    });
+  });
+
+  it("reports the verdict in --json next to the command's own status", async () => {
+    const healthy = await report(serviceDoctorChecks(healthyFacts("linux")), true);
+    expect(healthy.exit._tag).toBe("Success");
+    expect(JSON.parse(healthy.logs[0]!)).toMatchObject({ health: "ok", status: "ok" });
+
+    const warned = await report(
+      serviceDoctorChecks({ ...healthyFacts("linux"), reloadRequired: true }),
+      true,
+    );
+    expect(problemsMessage(warned.exit)).toContain("1 warning (template)");
+    const json = JSON.parse(warned.logs[0]!) as { checks: DoctorCheck[]; health: string };
+    expect(json.health).toBe("warn");
+    expect(json.checks.find((check) => check.label === "template")).toEqual({
+      detail: `reload required; ${repair}`,
+      fix: repair,
+      label: "template",
+      status: "warn",
+    });
+    expect(new ServiceDoctorProblemsError({ checks: json.checks }).jsonFields).toEqual({
+      health: "warn",
+    });
   });
 });

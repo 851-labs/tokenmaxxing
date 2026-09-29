@@ -324,12 +324,17 @@ function Invoke-Core {
   $status = ConvertFrom-CliJson (Tmx @("service", "status", "--json")).out
   Add-Check $scenario "status --json reports the launcher" ($status.launcherPath -eq (Config-File "service-sync.vbs") -and $status.launcherStatus -eq "current") "launcherPath=$($status.launcherPath) launcherStatus=$($status.launcherStatus) installed=$($status.installed) reloadRequired=$($status.reloadRequired)"
   $launcherLine = { ((Tmx @("service", "doctor")).out -split "\r?\n" | Where-Object { $_ -match '\blauncher\b' } | Select-Object -First 1) }
+  # Any WARN or FAIL check makes doctor exit 1, so a healthy install must exit 0.
+  $doctor = Tmx @("service", "doctor")
+  $problems = @($doctor.out -split "\r?\n" | Where-Object { $_ -match '^\s*(WARN|FAIL)\s' })
+  Add-Check $scenario "doctor: exit 0 with no WARN or FAIL check" ($doctor.code -eq 0 -and $problems.Count -eq 0) "exit $($doctor.code): $(Format-OneLine ($problems -join ' | ') 600)"
   $line = & $launcherLine
   Add-Check $scenario "doctor: OK launcher" ($line -match '^\s*OK\s+launcher\s+.*service-sync\.vbs') "$line"
 
   Remove-Item -LiteralPath (Config-File "service-sync.vbs") -Force
-  $line = & $launcherLine
-  Add-Check $scenario "doctor: WARN launcher missing" ($line -match '^\s*WARN\s+launcher\s+.*missing; repair with tokenmaxxing service repair') "$line"
+  $doctor = Tmx @("service", "doctor")
+  $line = ($doctor.out -split "\r?\n" | Where-Object { $_ -match '\blauncher\b' } | Select-Object -First 1)
+  Add-Check $scenario "doctor: FAIL launcher missing, exit 1" ($line -match '^\s*FAIL\s+launcher\s+.*missing; repair with tokenmaxxing service repair' -and $doctor.code -eq 1) "exit $($doctor.code): $line"
   $status = ConvertFrom-CliJson (Tmx @("service", "status", "--json")).out
   Add-Check $scenario "status --json launcherStatus=missing" ($status.launcherStatus -eq "missing") "launcherStatus=$($status.launcherStatus)"
   # wscript //B must fail silently, never with an error dialog.
@@ -359,8 +364,9 @@ function Invoke-Core {
   $dead.WaitForExit()
   $lock = @{ acquiredAt = (Get-Date).ToUniversalTime().ToString("o"); hostname = $env:COMPUTERNAME; ownerId = "killed"; pid = $dead.Id; version = 1 } | ConvertTo-Json -Compress
   Set-Content -LiteralPath (Config-File "service.lock") -Value $lock -Encoding utf8NoBOM
-  $deadLine = ((Tmx @("service", "doctor")).out -split "\r?\n" | Where-Object { $_ -match '\block\b' } | Select-Object -First 1)
-  Add-Check $scenario "doctor: a dead pid's lock is taken over by the next run" ($deadLine -match "pid $($dead.Id) is gone") "$deadLine"
+  $doctor = Tmx @("service", "doctor")
+  $deadLine = ($doctor.out -split "\r?\n" | Where-Object { $_ -match '\block\b' } | Select-Object -First 1)
+  Add-Check $scenario "doctor: a dead pid's lock is taken over by the next run (INFO, exit 0)" ($deadLine -match "^\s*INFO\s+lock\s+.*pid $($dead.Id) is gone" -and $doctor.code -eq 0) "exit $($doctor.code): $deadLine"
   $lockRun = Invoke-TaskRun "core-dead-lock"
   Assert-SuccessfulRun $scenario $lockRun -AllowCooldown
   Add-Check $scenario "the run took over the dead pid's lock and released it" (-not (Test-Path -LiteralPath (Config-File "service.lock"))) "lock left: $(if (Test-Path -LiteralPath (Config-File 'service.lock')) { Get-Content -LiteralPath (Config-File 'service.lock') -Raw } else { 'none' })"

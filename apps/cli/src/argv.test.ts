@@ -255,7 +255,8 @@ describe.skipIf(process.platform === "win32").concurrent("CLI argv parsing", () 
     { args: ["bootstrap"], output: "bootstrap needs a service decision", status: 1 },
     { args: ["sync", "--dry-run"], output: "Nothing to sync", status: 0 },
     { args: ["service", "status"], output: "Log:", status: 0 },
-    { args: ["service", "doctor"], output: "last success never", status: 0 },
+    // Nothing is installed in the sandbox: a FAIL check, so doctor exits 1.
+    { args: ["service", "doctor"], output: "last success never", status: 1 },
     { args: ["service", "uninstall"], output: "Automatic sync uninstalled", status: 0 },
     { args: ["service", "run"], output: "error: tokenmaxxing service run failed", status: 1 },
   ])("runs `$args` with its boolean flags omitted", { timeout: 30_000 }, async (testCase) => {
@@ -338,12 +339,47 @@ describe.skipIf(process.platform === "win32").concurrent("CLI argv parsing", () 
   });
 
   it("exits non-zero when every source fails", { timeout: 30_000 }, async () => {
-    const run = await runCli(["sync", "--dry-run"], { ccusage: "fail" });
+    const run = await runCli(["sync", "--dry-run"], {
+      ccusage: "fail",
+      setup: (root) => {
+        const projects = join(root, "home", ".claude", "projects", "app");
+        mkdirSync(projects, { recursive: true });
+        writeFileSync(join(projects, "session.jsonl"), "{}\n");
+      },
+    });
 
     expect(run.status).toBe(1);
     expect(run.stdout).toMatch(/^claude +failed/m);
-    expect(run.stderr).toContain("error: no usage synced; ccusage failed for claude, codex");
+    // Only claude has logs; the other 17 agents failed too but are counted.
+    expect(run.stderr).toContain(
+      "error: no usage synced; ccusage failed for claude and 17 agents without logs\nclaude and 17 agents without logs: ccusage command failed: fake ccusage failure",
+    );
   });
+
+  it(
+    "service doctor exits 1 on a FAIL check, with the verdict in --json",
+    { timeout: 30_000 },
+    async () => {
+      const run = await runCli(["service", "doctor", "--json"]);
+
+      expectParsed(run);
+      expect(run.status).toBe(1);
+      const report = JSON.parse(run.stdout) as {
+        checks: Array<{ fix?: string; label: string; status: string }>;
+        health: string;
+        status: string;
+      };
+      expect(report).toMatchObject({ health: "fail", status: "ok" });
+      expect(report.checks.find((check) => check.label === "scheduler")).toMatchObject({
+        fix: "install with tokenmaxxing service install",
+        status: "fail",
+      });
+      expect(JSON.parse(run.stderr.split("\n")[0] ?? "")).toMatchObject({
+        error: { code: "service_doctor_problems", health: "fail" },
+        status: "error",
+      });
+    },
+  );
 
   // Only meaningful where no real bun/npx sits in /usr/bin or /bin, which stay on PATH.
   it.skipIf(["/usr/bin/bun", "/usr/bin/npx", "/bin/bun", "/bin/npx"].some(existsSync))(

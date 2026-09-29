@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { Cause, Effect, Fiber, Layer, Option } from "effect";
 import { TestClock } from "effect/testing";
 import { Unauthorized, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
@@ -32,6 +36,7 @@ import {
   SyncAuthValidationError,
   SyncPushError,
   SyncSourcesFailedError,
+  sourcesWithoutLogs,
   type SyncAuth,
   type SyncSourceIssue,
   uploadUsageReports,
@@ -1220,6 +1225,48 @@ describe("SyncSourcesFailedError", () => {
         "hint: check that ccusage runs for these agents, then run tokenmaxxing sync again",
       ].join("\n"),
     );
+  });
+
+  // A broken ccusage (node missing) fails all 18 agents; naming them all
+  // buried the two that have usage.
+  it("names only the agents with logs and counts the rest", () => {
+    const failed = issue("command_failed", "ccusage command failed");
+    const failures = (["claude", "codex", "gemini", "amp"] as const).map((source) => ({
+      issue: { ...failed, detail: "sh: exec: node: not found" },
+      source,
+    }));
+
+    expect(new SyncSourcesFailedError({ failures, withoutLogs: ["gemini", "amp"] }).message).toBe(
+      [
+        "error: no usage synced; ccusage failed for claude, codex and 2 agents without logs",
+        "claude, codex and 2 agents without logs: ccusage command failed: sh: exec: node: not found",
+        "hint: check that ccusage runs for these agents, then run tokenmaxxing sync again",
+      ].join("\n"),
+    );
+    expect(
+      new SyncSourcesFailedError({ failures: failures.slice(2), withoutLogs: ["gemini", "amp"] })
+        .message,
+    ).toContain("error: no usage synced; ccusage failed for 2 agents without logs\n");
+    expect(
+      new SyncSourcesFailedError({ failures: failures.slice(0, 3), withoutLogs: ["gemini"] })
+        .message,
+    ).toContain("ccusage failed for claude, codex and 1 agent without logs\n");
+  });
+
+  it("tells agents with logs from those without", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tokenmaxxing-without-logs-"));
+    try {
+      await mkdir(join(home, ".claude", "projects", "app"), { recursive: true });
+      await writeFile(join(home, ".claude", "projects", "app", "session.jsonl"), "{}\n");
+
+      await expect(
+        Effect.runPromise(
+          sourcesWithoutLogs(["claude", "codex", "gemini"], { cwd: home, env: {}, home }),
+        ),
+      ).resolves.toEqual(["codex", "gemini"]);
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
   });
 });
 

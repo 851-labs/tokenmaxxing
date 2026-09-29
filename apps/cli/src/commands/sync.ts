@@ -23,6 +23,7 @@ import {
   runCcusageSessionReport,
 } from "../ccusage/runner";
 import type { SyncSourcePlan, SyncSourcePlans } from "../ccusage/cadence";
+import { fingerprintSource, type LogRootOptions } from "../ccusage/fingerprint";
 import { DEFAULT_SOURCE_NAMES, resolveSources } from "../ccusage/sources";
 import {
   ApiClientService,
@@ -103,9 +104,25 @@ class SyncSourcesFailedError extends Data.TaggedError("SyncSourcesFailedError")<
   /** Sources the run's limits left for the next run (`SyncSourceLimits`). */
   readonly deferred?: number | undefined;
   readonly failures: readonly SyncSourceFailure[];
+  /**
+   * Failed sources with no logs on this machine (`sourcesWithoutLogs`). A
+   * broken ccusage fails every agent, so the message counts these instead of
+   * naming all 18 next to the few that have usage.
+   */
+  readonly withoutLogs?: readonly UsageSource[] | undefined;
 }> {
   override get message() {
     const sources = this.failures.map((failure) => failure.source);
+    const withoutLogs = new Set(this.withoutLogs);
+    const named = (failed: readonly UsageSource[]) => {
+      const listed = failed.filter((source) => !withoutLogs.has(source));
+      const rest = failed.length - listed.length;
+      const others = `${rest} agent${rest === 1 ? "" : "s"} without logs`;
+      if (rest === 0) {
+        return listed.join(", ");
+      }
+      return listed.length === 0 ? others : `${listed.join(", ")} and ${others}`;
+    };
     if (sources.length === 0) {
       return "error: no usage synced; source collection failed\nhint: run tokenmaxxing sync again";
     }
@@ -126,8 +143,8 @@ class SyncSourcesFailedError extends Data.TaggedError("SyncSourcesFailedError")<
     }
     const deferred = this.deferred ?? 0;
     return [
-      `error: no usage synced; ccusage failed for ${sources.join(", ")}`,
-      ...[...reasons].map(([reason, failed]) => `${failed.join(", ")}: ${reason}`),
+      `error: no usage synced; ccusage failed for ${named(sources)}`,
+      ...[...reasons].map(([reason, failed]) => `${named(failed)}: ${reason}`),
       ...(deferred > 0
         ? [`skipped ${deferred} more source${deferred === 1 ? "" : "s"} until the next run`]
         : []),
@@ -339,8 +356,12 @@ function syncEffect(options: SyncOptions) {
       // Every source failed: exit non-zero. The rendered failure doubles as
       // the summary line, after the per-source rows / JSON payload.
       if (result.status === "error") {
+        const failures = failedSyncSources(result.sourceResults);
         return yield* Effect.fail(
-          new SyncSourcesFailedError({ failures: failedSyncSources(result.sourceResults) }),
+          new SyncSourcesFailedError({
+            failures,
+            withoutLogs: yield* sourcesWithoutLogs(failures.map((failure) => failure.source)),
+          }),
         );
       }
 
@@ -714,6 +735,28 @@ function failedSyncSources(results: readonly SyncSourceResult[]): SyncSourceFail
   );
 }
 
+/**
+ * The sources whose agent left no logs on this machine: no file where
+ * ccusage would look (the same roots the scheduled cadence fingerprints). A
+ * source whose roots cannot be told counts as having logs.
+ */
+function sourcesWithoutLogs(
+  sources: readonly UsageSource[],
+  options: LogRootOptions = {},
+): Effect.Effect<UsageSource[]> {
+  return Effect.promise(async () => {
+    const without: UsageSource[] = [];
+    for (const source of sources) {
+      const fingerprint = await fingerprintSource(source, options).catch(() => null);
+      if (fingerprint !== null && fingerprint.files === 0) {
+        without.push(source);
+      }
+    }
+
+    return without;
+  });
+}
+
 function syncJsonPayload(result: SyncResult) {
   if (result.dryRun || result.rows === 0) {
     return {
@@ -1032,6 +1075,7 @@ export {
   renderSyncSourceResult,
   renderSyncTable,
   resolveSyncAuth,
+  sourcesWithoutLogs,
   syncSourceIssue,
   syncStatusForSources,
   syncCommand,

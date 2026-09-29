@@ -5,6 +5,30 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Changed
+
+- `tokenmaxxing service doctor` now exits 1 when any check is `WARN` or `FAIL`, and 0 when every
+  check is `OK` or `INFO`, so scripts and CI can gate on it. It used to exit 0 whatever it found.
+  A new `FAIL` level marks what stops scheduled syncs (scheduler missing or inactive, a missing
+  definition, wrapper or launcher, a broken runner, no stored login); `WARN` is for what doesn't.
+  `--json` adds `health` (`ok`, `warn` or `fail`) and a `fix` for each problem check; `status`
+  still only says the doctor ran. Fine states stay `INFO` and exit 0: never synced yet, a lock held
+  by a running sync, or a lock left by a run that died, which the next run takes over.
+- `service doctor` lines now say what's good when `OK` and what's wrong plus the one command that
+  fixes it when `WARN` or `FAIL`. `OK active` no longer says "repair with tokenmaxxing service
+  repair" and names what's active (for example `loaded in launchd (gui/501/sh.tokenmaxxing.sync)`).
+  With nothing installed for the config dir, doctor says to run `tokenmaxxing service install`
+  (not `service repair`, which refuses) and skips the checks of files that don't exist.
+- `service status` and `service doctor` word the lock, auto-update and scheduler the same way.
+  `status` no longer tells you to upgrade the CLI when only the runner auto-updated past it. Both
+  show the first line of the last run's error instead of the whole multi-line message.
+
+### Fixed
+
+- When ccusage fails for every agent (for example `node` missing from the service's `PATH`), the
+  error names only the agents with logs on this machine and counts the rest ("ccusage failed for
+  claude, codex and 16 agents without logs") instead of listing all 18.
+
 ## 0.7.0-alpha.4 - 2026-09-29
 
 ### Upgrading from 0.7.0-alpha.2 or earlier

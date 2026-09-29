@@ -31,6 +31,12 @@ repair`; rerun one of those after changing them. Without `HERMES_HOME`, Hermes
 usage includes every named profile under `~/.hermes/profiles/`.
 Use `tokenmaxxing service status` for the last run and `tokenmaxxing service
 doctor` to inspect scheduler files, auth, auto-update, locks, and recent logs.
+Each doctor check is `OK`, `INFO` (fine, but worth knowing: never synced yet, a
+sync running right now), `WARN` (syncs still run, but something is off) or
+`FAIL` (scheduled syncs can't happen); every `WARN` and `FAIL` line ends with
+the command that fixes it. `service doctor` exits 1 when any check is `WARN` or
+`FAIL` and 0 otherwise, so scripts and CI can gate on it. With `--json`, the
+report's `health` is `ok`, `warn` or `fail` (`status` only says the doctor ran).
 
 Run `sync` as often as you like, from as many machines as you like —
 profiles aggregate across devices. Useful flags: `--dry-run`,

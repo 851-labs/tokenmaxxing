@@ -450,7 +450,7 @@ async function assertStatusAndDoctor(scenarioName: string, profile: Profile) {
   const line = (name: string) =>
     doctor.out
       .split(/\r?\n/)
-      .find((text) => new RegExp(`^\\s*(OK|WARN|INFO)\\s+${name}\\b`).test(text)) ?? "";
+      .find((text) => new RegExp(`^\\s*(OK|WARN|FAIL|INFO)\\s+${name}\\b`).test(text)) ?? "";
   const expectedOk = [
     "scheduler",
     "active",
@@ -471,6 +471,20 @@ async function assertStatusAndDoctor(scenarioName: string, profile: Profile) {
     notOk.length === 0
       ? oneLine(expectedOk.map(line).join("\n"), 900)
       : `not OK: ${notOk.map((name) => line(name) || `${name} (missing)`).join(" | ")}`,
+  );
+  // Scripts gate on the exit code, or on `health` under --json.
+  const doctorJson = tmx(profile, ["service", "doctor", "--json"]);
+  const report = parseCliJson<{
+    checks?: Array<{ label?: string; status?: string }>;
+    health?: string;
+  }>(doctorJson.out);
+  check(
+    scenarioName,
+    "doctor --json: health ok, exit 0, no WARN or FAIL check",
+    doctorJson.code === 0 &&
+      report?.health === "ok" &&
+      (report.checks ?? []).every((entry) => entry.status === "ok" || entry.status === "info"),
+    `exit ${doctorJson.code}: ${oneLine(doctorJson.out, 900)}`,
   );
 }
 
@@ -908,9 +922,9 @@ async function hangingCcusage() {
   const doctor = tmx(profile, ["service", "doctor"]);
   check(
     name,
-    "doctor warns with the run's error",
-    /^\s*WARN\s+last error\s+ccusage timed out for claude/m.test(doctor.out),
-    oneLine(doctor.out.split(/\r?\n/).find((line) => line.includes("last error")) ?? "", 300),
+    "doctor warns with the run's error and exits 1",
+    /^\s*WARN\s+last error\s+ccusage timed out for claude/m.test(doctor.out) && doctor.code === 1,
+    `exit ${doctor.code}: ${oneLine(doctor.out.split(/\r?\n/).find((line) => line.includes("last error")) ?? "", 300)}`,
   );
 
   // The timed-out source cools down; the ones it left behind run now.
