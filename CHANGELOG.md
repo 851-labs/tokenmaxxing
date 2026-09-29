@@ -5,296 +5,126 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
-## 0.7.0-alpha.5 - 2026-09-29
+## 0.7.0 - 2026-09-29
 
-### Changed
+### Upgrading
 
-- `tokenmaxxing service doctor` now exits 1 when any check is `WARN` or `FAIL`, and 0 when every
-  check is `OK` or `INFO`, so scripts and CI can gate on it. It used to exit 0 whatever it found.
-  A new `FAIL` level marks what stops scheduled syncs (scheduler missing or inactive, a missing
-  definition, wrapper or launcher, a broken runner, no stored login); `WARN` is for what doesn't.
-  `--json` adds `health` (`ok`, `warn` or `fail`) and a `fix` for each problem check; `status`
-  still only says the doctor ran. Fine states stay `INFO` and exit 0: never synced yet, a lock held
-  by a running sync, or a lock left by a run that died, which the next run takes over.
-- `service doctor` lines now say what's good when `OK` and what's wrong plus the one command that
-  fixes it when `WARN` or `FAIL`. `OK active` no longer says "repair with tokenmaxxing service
-  repair" and names what's active (for example `loaded in launchd (gui/501/sh.tokenmaxxing.sync)`).
-  With nothing installed for the config dir, doctor says to run `tokenmaxxing service install`
-  (not `service repair`, which refuses) and skips the checks of files that don't exist.
-- `service status` and `service doctor` word the lock, auto-update and scheduler the same way.
-  `status` no longer tells you to upgrade the CLI when only the runner auto-updated past it. Both
-  show the first line of the last run's error instead of the whole multi-line message.
-
-### Fixed
-
-- A scheduled sync no longer fails on one dropped login check (`/me`). It retries network errors,
-  timeouts, server errors (5xx) and rate limits (429, waiting out a `Retry-After` of up to 10 s)
-  3 times, 1 s then 4 s apart, so a run that starts while a Mac is still waking from sleep gets
-  through. `sync` and `whoami` retry once, after half a second (not after a timeout). A revoked
-  token (`Unauthorized`) is never retried and is handled as before.
-- A failed login check now says what happened instead of only "failed to validate stored login":
-  a timeout, a network error with its code (`network unavailable (ENOTFOUND)`,
-  `network error (ECONNRESET)`), the HTTP status plus the error's `_tag`, or a response the CLI
-  couldn't read, and how many attempts it made. The service log line gets a `loginCheck` field
-  (`attempts`, `kind`, `code`, `status`, `tag`, `timeoutMs`), `sync --json` errors get the same
-  `loginCheck` object, and the service's last error ends in "will retry next run" when the next
-  run can succeed (no repair is scheduled for those). Other API errors (upload, whoami, login)
-  also name the network error code or HTTP status when they have no more specific wording.
-- When ccusage fails for every agent (for example `node` missing from the service's `PATH`), the
-  error names only the agents with logs on this machine and counts the rest ("ccusage failed for
-  claude, codex and 16 agents without logs") instead of listing all 18.
-- On Windows, `tokenmaxxing upgrade` of an npm install no longer leaves a ~78 MB copy of the
-  previous version behind in `node_modules\@851-labs\.tokenmaxxing-<hash>`. npm moves the old
-  package aside and then can't delete the exe that is running the upgrade, so it only logs a
-  warning. The next `tokenmaxxing upgrade` or scheduled service run now removes that copy. It only
-  removes dirs with npm's staging name next to an installed `@851-labs/tokenmaxxing`, and never
-  the installed package itself. There was only ever one such copy per npm prefix, because npm
-  reuses the name. Copies left by earlier upgrades are removed too.
-
-## 0.7.0-alpha.4 - 2026-09-29
-
-### Upgrading from 0.7.0-alpha.2 or earlier
-
-- On Windows, reinstall an `npm install -g --prefix <dir>` install once by hand:
-  `npm install -g --prefix <dir> @851-labs/tokenmaxxing@latest`. `tokenmaxxing upgrade` from
-  alpha.2 or earlier installs into npm's default prefix instead, so the copy on `PATH` stays old.
-- Upgrade the global CLI before running `tokenmaxxing service repair`. A repair from an alpha.2 or
-  older global CLI can briefly move the service back to that version; the service updates itself
-  again on its next run.
-
-### Changed
-
-- `tokenmaxxing service repair` and `service install --refresh` now refuse to run when the
-  installed service's template is newer than the CLI's (an auto-update already moved the service
-  forward), instead of moving it back. `service status` and `service doctor` say "the service is
-  newer than this CLI (template 8 vs 7); upgrade the CLI" instead of "Reload required: yes". This
-  helps from 0.7.0 on; older CLIs can't know about it.
-- `tokenmaxxing upgrade --json` errors now include the command that ran and the package manager's
-  output (`command`, `output`), or for an upgrade that didn't take effect, `command`,
-  `commandPath`, `expectedVersion` and `installedVersion`. The JSON used to drop everything but
-  the first line and the hint.
-
-### Fixed
-
-- A service run no longer blocks automatic sync for 30 minutes when ccusage hangs (for example
-  `npx ccusage` on a network that drops packets). Each source waited out its own 180 s timeout, so
-  a full run (the first after every CLI update) of 18 sources took 54 minutes; systemd killed it
-  after 30 with nothing recorded. After a ccusage timeout a run now skips the remaining sources
-  (`runner_timed_out`), and no source starts more than 10 minutes into a run (`run_deadline`); the
-  next run picks the skipped sources up. The service log and state record what was skipped, so
-  `service doctor` shows it.
-- On Windows, `service repair` and `service install --refresh` from a shell whose
-  `TOKENMAXXING_CONFIG_DIR` differs from the installed one only in case no longer re-register the
-  task and rewrite the service files in the new spelling. They keep the installed spelling and
-  change nothing.
-- On Windows, `service doctor` no longer reports a changed source root for an agent data
-  directory whose path contains `%`.
-- `tokenmaxxing login` no longer waits forever for an API that accepts the connection but never
-  answers: starting a login gives up after 15 s, and a login check that takes longer is retried
-  within the login's usual time limit.
-- `tokenmaxxing login` now says how long to wait when starting a login is rate limited by
-  something in front of the API (an HTML 429 with `Retry-After`), instead of "check your network".
-- A server error (HTTP 5xx) from the API now says it's a server error and to try again later,
-  instead of "check your network" (for example "failed to validate stored login").
-- `service doctor` no longer says a lock from another machine (a config dir on a synced drive)
-  will be taken over on the next run because its pid isn't running here. It names the machine
-  instead.
-- `service status` now flags a missing, empty or broken service runner instead of printing the
-  version `service.json` records.
-- `tokenmaxxing service repair --json` run by hand now reports its own reason (`manual` when
-  nothing needed repair), not the reason of the last automatic repair.
-
-## 0.7.0-alpha.3 - 2026-09-29
-
-### Changed
-
-- `tokenmaxxing upgrade` now installs the exact version the registry reports (for example
-  `npm install -g @851-labs/tokenmaxxing@0.7.0 --prefer-online`, `bun add -g …@0.7.0 --no-cache`),
-  never a dist-tag. When the registry can't be reached it now stops for stable installs too,
-  as it already did for prereleases. Before, it ran `@latest` without knowing which version
-  that would install.
-
-### Fixed
-
-- `tokenmaxxing upgrade` could install an older release and still report success. npm resolved
-  `@latest` from a packument it had cached before the release, and `bun update -g --latest` could
-  do nothing. Upgrade now checks `tokenmaxxing --version` after installing. If the new version
-  isn't what runs, it fails with `upgrade_verification` instead of reporting `updated: true`.
-  Right after a release it also no longer fails with npm's `ETARGET` for up to 5 minutes.
-- When the package manager fails, `tokenmaxxing upgrade` now shows the command it ran and the
-  package manager's own error output (for example npm's `ETARGET`), instead of only "failed to
-  upgrade tokenmaxxing".
-- `tokenmaxxing upgrade` no longer refreshes a service that another config dir installed. The
-  launchd plist and systemd units live under `HOME`, so an upgrade run with a different
-  `TOKENMAXXING_CONFIG_DIR` rewrote them to point at that config dir.
-- `tokenmaxxing sync` no longer hangs on "Uploading usage" when the API accepts the connection
-  but never answers. An upload now times out after 60 s, the same limit each scheduled attempt
-  already had. Checking the stored login times out after 15 s.
-- When the API rate-limits a request (HTTP 429), `sync`, `login` and `whoami` now say how long
-  to wait ("try again in 60 s"). Before, they told you to check your network or log in again.
-- A `config.json` that is valid JSON but not a config (`null`, or `{"apiUrl": 123}`) now fails
-  with "CLI config is not valid" and the file's path, instead of "unexpected CLI failure".
-- `tokenmaxxing sync` now says when neither bun nor npx is installed, and how to fix it, instead
-  of only "ccusage failed for …". When ccusage fails for another reason, the error names the
-  reason for each agent.
-- `tokenmaxxing` now exits with 128 + the signal number when a signal stops it, for example 143
-  for `SIGTERM` (it used to exit 130 for every signal). It also handles `SIGHUP`, which used to
-  kill it without stopping the running ccusage process.
-- A ccusage run that hangs no longer keeps the service running forever. ccusage now runs in its own
-  process group, and a timeout or interruption stops the whole group; before, a `node` that npx
-  or bun had started kept running. The CLI also exits as soon as its work is done. On Linux, a
-  scheduled run's unit then finishes (it stayed "activating" and blocked the timer). The systemd
-  unit also gets `TimeoutStartSec=30min` as a backstop.
-- A run killed by `SIGKILL`, the OOM killer or a power loss no longer blocks automatic sync for 2
-  hours. The next run takes over a lock whose process is gone. `service doctor` says whether a held
-  lock's process is still running, and how to clear it.
-- `tokenmaxxing service repair` or `service install` from an older global CLI no longer moves an
-  auto-updated service runner back to the CLI's own, older version.
-- A scheduled run in which every agent's ccusage failed now exits non-zero, so systemd, launchd
-  and Task Scheduler record a failure. The log and `sync --json` include the end of ccusage's
-  stderr (for example `/usr/bin/env: 'node': No such file or directory`).
-- On Linux, automatic sync keeps working after a reboot for services installed from an fnm shell
-  by 0.7.0-alpha.0 or alpha.1. Their script ran node from a per-shell fnm directory under
-  `/run/user`, which a reboot deletes. The service template moves to version 7, so each service
-  rewrites its script once, now pointing at fnm's default alias. On macOS this shows
-  "“tokenmaxxing.sh” can run in the background" one more time.
-- `service doctor` now reports a broken service runner (a missing, empty or non-executable runner,
-  or a pointer file that doesn't name one) instead of "OK", and says when `service.json` is missing
-  (auto-update is off until `service repair`). `service status` no longer says "service not
-  installed" in that case.
-- `service run` and `service repair` failures now name their cause (for example a read-only config
-  dir), in the terminal and in the service log. Before, `service repair` printed "unexpected CLI
-  failure".
-- Scheduled uploads that get HTTP 429 now wait for the time in `Retry-After`. When that is more
-  than a minute they stop retrying and leave it to the next run.
-- A failed scheduled run's log line no longer repeats the previous run's rows and `syncStatus`.
-- `service install --refresh` keeps the original `installedAt`, so an unchanged `service.json` is
-  no longer rewritten.
-- On Windows, `service install --refresh` (run by every upgrade) and `service repair` no longer
-  re-register the scheduled task when it is unchanged. Re-registering rewrote the task and
-  restarted its schedule from that moment. A refresh during a sync no longer fails with `EPERM`,
-  because an unchanged service runner is no longer copied over itself.
-- A scheduled run that fails because the API is unreachable, slow, rate-limited or answering
-  5xx no longer schedules a repair (on Windows, a new task every 5 minutes while offline). The
-  repair after any other failed run no longer re-registers a scheduler that is active and current.
-- `tokenmaxxing service repair` no longer installs a service when none is installed for its
-  config dir. It also no longer re-points a scheduler that another config dir installed, for
-  example when run from a shell without that service's `TOKENMAXXING_CONFIG_DIR`. It stops with
-  `service_not_installed` or `service_owned_elsewhere` instead. `upgrade` applies the same check
-  on Windows.
-- `tokenmaxxing upgrade` of an `npm install -g --prefix <dir>` install now updates it in that
-  prefix. Before, npm installed a second copy into its default prefix and the one on `PATH`
-  stayed old.
-- On Windows, `service install` and `service repair` refuse to run elevated ("Run as
-  administrator", or an administrator's SSH session) when UAC gives the user a limited token
-  day to day. A task registered from such a shell can only be changed from one, so every later
-  refresh or repair failed with "Access is denied". That error now says how to fix it. The
-  built-in Administrator account, and machines with UAC off, are not refused.
-
-## 0.7.0-alpha.2 - 2026-09-28
+- From 0.6.0: the background service updates itself to 0.7.0 and migrates its files on the next
+  run; nothing to do. On macOS this can show "“tokenmaxxing.sh” can run in the background" one
+  last time. Later updates leave the service files alone.
+- `tokenmaxxing login` now uses a device-code flow. Existing logins keep working, and older CLIs
+  keep the previous flow until 2027-11-01.
+- From 0.7.0-alpha.2 or earlier:
+  - On Windows, reinstall an `npm install -g --prefix <dir>` install once by hand
+    (`npm install -g --prefix <dir> @851-labs/tokenmaxxing@latest`); those versions' `upgrade`
+    installs into npm's default prefix instead.
+  - Upgrade the global CLI before running `tokenmaxxing service repair`. A repair from an older
+    global CLI can briefly move the service back to that version; it updates itself again on the
+    next run.
 
 ### Added
 
-- `TOKENMAXXING_NPM_REGISTRY` points the CLI's version checks and service-runner downloads at
-  another npm registry (a mirror, or the CLI e2e's local registry). A service install captures
-  it for scheduled syncs.
+- New sources: Grok Build CLI, Antigravity, ZCode, Amp, Qwen Code, Kimi CLI, Kilo Code, Goose,
+  Droid, Codebuff and OpenClaw (`--sources grok,antigravity,zcode,amp,qwen,kimi,kilo,goose,`
+  `droid,codebuff,openclaw`), each read through its focused ccusage subcommand. Scheduled syncs
+  keep their custom data directories (`GROK_HOME`, `ANTIGRAVITY_DATA_DIR`, `ZCODE_HOME`,
+  `AMP_DATA_DIR`, `QWEN_DATA_DIR`, `KIMI_DATA_DIR`, `KILO_DATA_DIR`, `GOOSE_PATH_ROOT`,
+  `DROID_SESSIONS_DIR`, `CODEBUFF_DATA_DIR`, `OPENCLAW_DIR`).
+- `TOKENMAXXING_NPM_REGISTRY` points version checks and service-runner downloads at another npm
+  registry (a mirror). A service install captures it for scheduled syncs.
+- `TOKENMAXXING_SYNC_WINDOW_DAYS` (1–90) overrides how many past days scheduled syncs re-send.
 
 ### Changed
 
-- `tokenmaxxing login` now waits out the server's new per-network login rate limit (HTTP 429,
-  honouring its retry delay) instead of failing mid-login, and explains a rate-limited start.
-
-### Fixed
-
-- `tokenmaxxing upgrade` now works for npm global installs on Windows. Their shim sits directly
-  in the npm prefix, so the install method was not detected and upgrade stopped with "could not
-  detect how tokenmaxxing was globally installed".
-- On Linux, automatic sync now runs when the config directory contains `%`, a quote or a
-  backslash (for example `/home/o'neil`). systemd refused to load the unit (`bad-setting`), so
-  the timer never synced even though `service install` reported success. Run
-  `tokenmaxxing service repair` to rewrite an affected unit.
-- On macOS, updating the CLI (and later, restarts or other apps' login items changing) no
-  longer shows "“tokenmaxxing.sh” can run in the background" again. Every update rewrote the
-  launchd plist and the service script with the same content and reloaded the job, and macOS
-  treats any rewritten file as a new background item. Service refreshes and repairs now leave
-  unchanged files alone and only reload the scheduler (launchd or systemd) when its definition
-  changed or it is not running what is on disk. The script also keeps the same `PATH` from any
-  terminal: per-shell fnm directories resolve to fnm's default alias, and temporary, agent
-  session, project `node_modules/.bin` and app-bundle directories are left out.
-- On macOS and Linux, a Ctrl+C or `kill` that arrives while `tokenmaxxing` is still starting
-  is now passed on to the native binary instead of killing only the npm launcher and leaving
-  the binary running.
-
-## 0.7.0-alpha.1 - 2026-09-26
-
-### Added
-
-- Added Grok Build CLI, Antigravity, ZCode, Amp, Qwen Code, Kimi CLI, Kilo Code, Goose, Droid,
-  Codebuff, and OpenClaw as supported sources (`--sources grok,antigravity,zcode,amp,qwen,kimi,`
-  `kilo,goose,droid,codebuff,openclaw`), each read through its focused ccusage subcommand.
-- Scheduled syncs now keep custom data directories for those agents (`GROK_HOME`,
-  `ANTIGRAVITY_DATA_DIR`, `ZCODE_HOME`, `AMP_DATA_DIR`, `QWEN_DATA_DIR`, `KIMI_DATA_DIR`,
-  `KILO_DATA_DIR`, `GOOSE_PATH_ROOT`, `DROID_SESSIONS_DIR`, `CODEBUFF_DATA_DIR`, `OPENCLAW_DIR`).
-
-### Changed
-
-- Required ccusage 20.0.22 or newer, the first release with every supported adapter (Antigravity
-  and ZCode arrived in 20.0.21) and with `claude-fable-5-1` usage counted again.
-
-### Fixed
-
-- Scheduled syncs now carry custom `CLAUDE_CONFIG_DIR` and `CODEX_HOME` log roots, like
-  `HERMES_HOME`, so the background service reads the same Claude and Codex usage as a manual
-  `sync`. Rerun `tokenmaxxing service repair` after changing a root; `service doctor` now warns
-  when the service's roots differ from your shell. Thanks @maxmoneycash (#71).
-- Hermes usage now includes named profiles (`~/.hermes/profiles/<name>/state.db`) alongside the
-  default root when `HERMES_HOME` is unset, in both `sync` and scheduled runs. Thanks @kvnloo (#68).
-- On Windows, the scheduled sync no longer opens a console window or steals focus every five
-  minutes: the task runs through a hidden `wscript` launcher, existing installs migrate
-  automatically, and config paths with spaces, `&`, `'`, parentheses or non-ASCII characters now
-  work. Thanks @sybrengg (#38) and @tanqyry (#72); fixes #57.
-- `bun add -g --trust` (and `yarn global add`) installs now work on Windows: the package `bin` is
-  a small launcher that runs the verified native binary. Thanks @Iydah (#28).
-- `tokenmaxxing upgrade` and the service's auto-updater never downgrade: prerelease installs follow
-  their channel (e.g. `alpha`) and move to `latest` only when it is newer. `upgrade --json`
-  reports `command: null` when nothing runs and adds `channel`/`channelVersion`.
+- Requires ccusage 20.0.22 or newer, which counts `claude-fable-5-1` usage again and has every
+  supported adapter.
+- Scheduled syncs re-send the last 21 days every 6 hours (and on the first run after upgrading),
+  so days that ccusage later re-counts are corrected on the leaderboard. This also recovers
+  September usage that ccusage 20.0.20 undercounted.
 - Scheduled syncs skip sources whose logs haven't changed and only rebuild session counts on the
   6-hourly reconcile, cutting background CPU for large Codex logs. `service run --force` runs every
   source. Thanks @NubsCarson for the report (#69).
-
-### Server
-
-- The API accepts the new sources on `/usage/ingest` and `/usage/sync`, and the site labels them
-  on the stats page, home page, FAQ, privacy policy, and llms.txt.
-- Re-syncing unchanged usage no longer re-prices history: stored cost is kept unless token counts
-  change (ccusage prices older Codex sessions from your current Fast/Standard config).
-- The production API only trusts `https://tokenmaxxing.sh` for CORS and sign-out.
-
-## 0.7.0-alpha.0 - 2026-09-23
-
-### Changed
-
-- `tokenmaxxing login` now uses a device-code flow: only the CLI that started a login can collect
-  its token, and the browser asks you to confirm the device before approving. Older CLIs keep
-  working with the previous flow until 2027-11-01.
-- Scheduled syncs re-send the last 21 days every 6 hours (and on the first run after upgrading),
-  so past days that ccusage later re-counts are corrected on the leaderboard. Override the window
-  with `TOKENMAXXING_SYNC_WINDOW_DAYS` (1–90).
+- `tokenmaxxing upgrade` installs the exact version the registry reports (for example
+  `npm install -g @851-labs/tokenmaxxing@0.7.0 --prefer-online`), never a dist-tag, and checks
+  `tokenmaxxing --version` afterwards. It never downgrades: prerelease installs follow their
+  channel (e.g. `alpha`) and move to `latest` only when it is newer. When the registry can't be
+  reached it stops instead of guessing. Failures show the command and the package manager's own
+  output, in `--json` too (`command`, `output`, `expectedVersion`, `installedVersion`), and
+  `upgrade --json` adds `channel`/`channelVersion`.
+- `tokenmaxxing service doctor` exits 1 when any check is `WARN` or `FAIL` and 0 when all are `OK`
+  or `INFO`. A new `FAIL` level marks what stops scheduled syncs, and `--json` adds `health` and a
+  `fix` per problem. Every line now says what's good, or what's wrong and the one command that
+  fixes it, and `service status` uses the same wording.
+- `service repair` and `service install --refresh` refuse to move a service backwards (a newer
+  runner or template than the CLI's); status and doctor say to upgrade the CLI instead.
+- `tokenmaxxing` exits with 128 + the signal number when a signal stops it (143 for `SIGTERM`),
+  and handles `SIGHUP` too.
 
 ### Fixed
 
-- Fixed every command failing with "Missing required flag" (for example `--json`) in builds from
-  the updated CLI framework, including the scheduled `service run --scheduled`.
-- `sync` now exits non-zero when every source fails, and rejects `--since` values that are not a
-  real `YYYY-MM-DD` date.
-- Login and sync errors now show the server's message (for example an expired login code).
-- A stored token is only cleared when the server says it is invalid, not on transient errors.
+- The background service:
+  - On macOS, updates no longer show "“tokenmaxxing.sh” can run in the background" again. Refreshes
+    and repairs leave unchanged files alone and only reload launchd or systemd when the definition
+    changed, and the script keeps the same `PATH` from any terminal (per-shell fnm directories
+    resolve to fnm's default alias; temporary, agent-session and app-bundle directories are left
+    out).
+  - On Windows, the scheduled sync no longer opens a console window or steals focus: it runs
+    through a hidden `wscript` launcher, and config paths with spaces, `&`, `'`, parentheses,
+    `%` or non-ASCII characters work. Refreshes and repairs no longer re-register an unchanged
+    task (which restarted its schedule), including from a shell whose config dir path differs only
+    in case. Thanks @sybrengg (#38) and @tanqyry (#72); fixes #57.
+  - On Linux, a config directory containing `%`, a quote or a backslash no longer gives a unit
+    systemd refuses to load. Run `tokenmaxxing service repair` to rewrite an affected unit.
+  - A hanging ccusage no longer blocks automatic sync. ccusage runs in its own process group and a
+    timeout stops the whole group; after one timeout a run skips the remaining sources, and no
+    source starts more than 10 minutes into a run. The systemd unit gets `TimeoutStartSec=30min`
+    as a backstop.
+  - A run killed by `SIGKILL`, the OOM killer or a power loss no longer blocks syncing for 2 hours:
+    the next run takes over a lock whose process is gone.
+  - A scheduled run where every agent's ccusage failed exits non-zero, and the log includes the end
+    of ccusage's stderr (for example `env: node: No such file or directory`).
+  - A failed login check (`/me`) is retried on network errors, timeouts, 5xx and 429, and says
+    what happened (`network unavailable (ENOTFOUND)`, the HTTP status, a timeout); the service log
+    gets a `loginCheck` field. Transient API failures no longer schedule a repair.
+  - `service repair` no longer installs a service where none exists, or re-points a scheduler that
+    another config dir installed; `upgrade` no longer refreshes another config dir's service.
+  - On Windows, `service install` and `service repair` refuse to run elevated when UAC gives the
+    user a limited token day to day, since a task registered that way can't be changed later.
+  - Scheduled syncs carry custom `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `HERMES_HOME` roots like a
+    manual `sync`; `service doctor` warns when the service's roots differ from your shell. Thanks
+    @maxmoneycash (#71).
+  - `service doctor` and `service status` report a broken runner (missing, empty, non-executable,
+    or a bad pointer), a missing `service.json`, and whether a held lock's process still runs.
+- `tokenmaxxing upgrade`:
+  - Works for npm global installs on Windows (the shim in the npm prefix wasn't detected), and for
+    `npm install -g --prefix <dir>` installs, which it now updates in place.
+  - On Windows it no longer leaves a ~78 MB copy of the previous version in
+    `node_modules\@851-labs\.tokenmaxxing-<hash>`; the next upgrade or scheduled run removes it.
+- `bun add -g --trust` and `yarn global add` installs work on Windows: the package `bin` is a
+  small launcher that runs the verified native binary. Thanks @Iydah (#28). On macOS and Linux, a
+  Ctrl+C or `kill` that arrives while the launcher is starting now reaches the native binary.
+- Hermes usage includes named profiles (`~/.hermes/profiles/<name>/state.db`). Thanks @kvnloo (#68).
+- `sync`, `login` and `whoami` time out instead of hanging on an API that never answers (60 s for
+  uploads, 15 s for login checks and login requests), wait out rate limits ("try again in 60 s"),
+  and report server errors as server errors instead of "check your network".
+- `sync` says when neither bun nor npx is installed, and names the reason ccusage failed per
+  agent. It exits non-zero when every source fails and rejects `--since` values that aren't a real
+  `YYYY-MM-DD` date.
+- A `config.json` that is valid JSON but not a config fails with "CLI config is not valid" and its
+  path. A stored token is only cleared when the server says it is invalid, not on transient errors.
+- Login and sync errors show the server's message (for example an expired login code).
 
 ### Server
 
+- The API accepts the new sources, and the site labels them on the stats page, home page, FAQ,
+  privacy policy and llms.txt.
 - Usage uploads are validated more strictly (dates, token counts, sources, sizes); future-dated
-  days are dropped instead of counted, and bad rows from older CLIs no longer reject a whole sync.
-- API errors now return a consistent JSON body with a `_tag` and `message`.
+  days are dropped, and bad rows from older CLIs no longer reject a whole sync.
+- Re-syncing unchanged usage no longer re-prices history: stored cost is kept unless token counts
+  change.
+- API errors return a consistent JSON body with a `_tag` and `message`. The unauthenticated CLI
+  login endpoints are rate-limited per network (HTTP 429 with `Retry-After`).
+- The production API only trusts `https://tokenmaxxing.sh` for CORS and sign-out.
 
 ## 0.6.0 - 2026-08-05
 
