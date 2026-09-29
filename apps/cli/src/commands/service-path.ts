@@ -34,7 +34,8 @@ function stableServicePath(value: string, options: StableServicePathOptions = {}
   const path = platform === "win32" ? win32 : posix;
   const exists = options.exists ?? existsSync;
   const readLink = options.readLink ?? readlinkSync;
-  const tempDirs = temporaryDirectories(options.env ?? process.env, platform);
+  const env = options.env ?? process.env;
+  const tempDirs = temporaryDirectories(env, platform);
   const seen = new Set<string>();
   const entries: string[] = [];
 
@@ -46,7 +47,7 @@ function stableServicePath(value: string, options: StableServicePathOptions = {}
 
     const fnm = /^(.*[\\/]fnm_multishells[\\/][^\\/]+)(.*)$/.exec(entry);
     if (fnm !== null) {
-      const resolved = resolveFnmMultishell(fnm[1]!, { exists, path, readLink });
+      const resolved = resolveFnmMultishell(fnm[1]!, { env, exists, path, platform, readLink });
       if (resolved === null) {
         continue;
       }
@@ -71,16 +72,22 @@ function stableServicePath(value: string, options: StableServicePathOptions = {}
 // fnm's per-shell directory is a symlink to `<fnm dir>/aliases/default` or to
 // the version the shell selected (`<fnm dir>/node-versions/<v>/installation`).
 // The default alias is what any new shell starts with, so it wins when it exists.
-// A per-shell directory that is gone was only ever useful to that shell.
+// A per-shell directory that is gone (they live on tmpfs under /run/user on
+// Linux, so a reboot removes them) still means "fnm's node": it resolves to
+// the default alias in fnm's usual data dirs, and is dropped only without one.
 function resolveFnmMultishell(
   multishellDir: string,
   {
+    env,
     exists,
     path,
+    platform,
     readLink,
   }: {
+    env: Record<string, string | undefined>;
     exists: (path: string) => boolean;
     path: PathModule;
+    platform: NodeJS.Platform;
     readLink: (path: string) => string;
   },
 ): string | null {
@@ -88,13 +95,40 @@ function resolveFnmMultishell(
   try {
     target = path.resolve(path.dirname(multishellDir), readLink(multishellDir));
   } catch {
-    return null;
+    return (
+      fnmDataDirs(env, platform, path)
+        .map((dir) => path.join(dir, "aliases", "default"))
+        .find((alias) => exists(alias)) ?? null
+    );
   }
 
   const fnmDir = /^(.*)[\\/](?:aliases|node-versions)[\\/]/.exec(target)?.[1];
   const defaultAlias = fnmDir === undefined ? null : path.join(fnmDir, "aliases", "default");
 
   return defaultAlias !== null && exists(defaultAlias) ? defaultAlias : target;
+}
+
+// Where fnm keeps its versions and aliases: FNM_DIR, else its XDG data dir,
+// the macOS application-support dir, or the legacy ~/.fnm.
+function fnmDataDirs(
+  env: Record<string, string | undefined>,
+  platform: NodeJS.Platform,
+  path: PathModule,
+): string[] {
+  const home = env["HOME"] ?? env["USERPROFILE"];
+  const dirs = [
+    env["FNM_DIR"],
+    env["XDG_DATA_HOME"] === undefined ? undefined : path.join(env["XDG_DATA_HOME"], "fnm"),
+    home === undefined ? undefined : path.join(home, ".local", "share", "fnm"),
+    home === undefined || platform !== "darwin"
+      ? undefined
+      : path.join(home, "Library", "Application Support", "fnm"),
+    home === undefined ? undefined : path.join(home, ".fnm"),
+  ];
+
+  return dirs.filter(
+    (dir): dir is string => dir !== undefined && dir !== "" && path.isAbsolute(dir),
+  );
 }
 
 function isVolatilePathEntry(

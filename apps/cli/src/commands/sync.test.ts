@@ -954,6 +954,53 @@ describe("uploadUsageReports", () => {
     expect(state.errors).toEqual([]);
   });
 
+  describe("scheduled retries after a 429", () => {
+    const policy = { attempts: 3, backoffMs: [1_000, 4_000], jitterRatio: 0, timeoutMs: 1_000 };
+    const rateLimited = (retryAfter: string) => ({
+      body: { _tag: "RateLimited", message: "slow down" },
+      headers: { "retry-after": retryAfter },
+      status: 429,
+    });
+    const accepted = {
+      body: { received: 1, syncedAt: "2026-06-15T00:00:00.000Z", upserted: 3 },
+      status: 200,
+    };
+
+    async function upload(responses: Parameters<typeof makeStubApiClient>[0]) {
+      const { layer, state } = makeConsoleLayer();
+      const requests: string[] = [];
+      const client = await Effect.runPromise(makeStubApiClient(responses, requests));
+      const exit = await Effect.runPromiseExit(
+        uploadUsageReports({
+          auth: { ...makeUploadAuth(() => Effect.never), client },
+          device: { name: "Mac.local", platform: "darwin" },
+          options: { json: true },
+          rawReports: [],
+          uploadPolicy: policy,
+        }).pipe(Effect.provide(layer)),
+      );
+      return { exit, requests, sleeps: state.sleeps };
+    }
+
+    it("waits the Retry-After instead of the shorter backoff", async () => {
+      const result = await upload({
+        "POST /usage/ingest": [rateLimited("30"), accepted],
+      });
+
+      expect(result.exit._tag).toBe("Success");
+      expect(result.sleeps).toEqual([30_000]);
+      expect(result.requests).toHaveLength(2);
+    });
+
+    it("stops retrying when the Retry-After is longer than a run should wait", async () => {
+      const result = await upload({ "POST /usage/ingest": rateLimited("3600") });
+
+      expect(result.exit._tag).toBe("Failure");
+      expect(result.sleeps).toEqual([]);
+      expect(result.requests).toHaveLength(1);
+    });
+  });
+
   it("does not write upload progress for json or silent output", async () => {
     const { layer, state } = makeConsoleLayer();
     const auth = makeUploadAuth(() =>

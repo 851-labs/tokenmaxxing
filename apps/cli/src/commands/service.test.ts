@@ -6,7 +6,7 @@ import { basename, delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 
-import { Cause, Effect, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
 import { Unauthorized, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -59,6 +59,8 @@ import {
   renderWindowsLauncher,
   runServiceAutoUpdate,
   scheduleDescription,
+  acquireServiceRunLock,
+  inspectServiceRunner,
   serviceLockCanBeReplaced,
   serviceRepairCanInstallScheduler,
   serviceReloadRequired,
@@ -79,7 +81,10 @@ import {
   serviceRunFailureState,
   serviceRunLogLine,
   serviceRunSuccessState,
+  ServiceRepairError,
+  ServiceRunError,
   ServiceRunnerUpdateError,
+  ServiceSourcesFailedError,
   type CommandInstall,
   type ServiceAutoUpdateReport,
   type ServiceFilesChange,
@@ -250,7 +255,11 @@ function makeTestLayer(options: TestLayerOptions) {
 }
 
 function makeInstallRuntime(
-  options: { env?: Record<string, string | undefined>; install?: CommandInstall } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    install?: CommandInstall;
+    metadata?: ServiceMetadata;
+  } = {},
 ) {
   const commandInstall: CommandInstall = options.install ?? {
     autoUpdateManager: "npm" as const,
@@ -290,6 +299,10 @@ function makeInstallRuntime(
       installServiceRunner: () => Effect.succeed(runner),
       now: new Date("2026-06-16T12:00:00.000Z"),
       platform: "darwin" as const,
+      readMetadata:
+        options.metadata === undefined
+          ? () => Effect.succeed(null)
+          : () => Effect.succeed(options.metadata!),
       writeFiles: (paths: ServicePaths, wrapper: string, metadata: ServiceMetadata) =>
         Effect.sync(() => {
           written.push({ metadata, paths, wrapper });
@@ -898,6 +911,8 @@ describe("native scheduler templates", () => {
     expect(linuxPath("/home/alex/Zoë (Work) & Co 100%/tm")).toContain(
       'ExecStart="/home/alex/Zoë (Work) & Co 100%%/tm/tokenmaxxing.sh"\n',
     );
+    // A wedged run must not keep the oneshot unit activating forever.
+    expect(linuxPath("/home/alex/.config/tokenmaxxing")).toContain("TimeoutStartSec=30min\n");
     expect(linuxPath(`/home/alex/Zoë O'Neil "x"\\y/tm`)).toContain(
       `ExecStart=/bin/sh "/home/alex/Zoë O'Neil \\"x\\"\\\\y/tm/tokenmaxxing.sh"\n`,
     );
@@ -936,7 +951,7 @@ describe("unchanged service refresh", () => {
     commandPath: "/Users/alex/.config/tokenmaxxing/service-runners/0.7.0/tokenmaxxing",
     installedAt: "2026-09-28T09:00:00.000Z",
     schedule: "syncs every 5 minutes",
-    templateVersion: 6,
+    templateVersion: 7,
     version: 1,
   };
   const wrapper = "#!/bin/sh\nexport PATH='/usr/bin:/bin'\n";
@@ -1363,7 +1378,7 @@ describe("Windows hidden launcher", () => {
         commandPath: join(paths.runnersDir, "tokenmaxxing.exe"),
         installedAt: "2026-06-16T09:00:00.000Z",
         schedule: "syncs every 5 minutes",
-        templateVersion: 6,
+        templateVersion: 7,
         version: 1,
       };
 
@@ -1451,7 +1466,8 @@ describe("Windows hidden launcher", () => {
     };
 
     expect(serviceReloadRequired(metadata)).toBe(true);
-    expect(serviceReloadRequired({ ...metadata, templateVersion: 6 })).toBe(false);
+    expect(serviceReloadRequired({ ...metadata, templateVersion: 6 })).toBe(true);
+    expect(serviceReloadRequired({ ...metadata, templateVersion: 7 })).toBe(false);
     expect(
       serviceRepairNeedsSchedulerInstall({
         reason: serviceRepairReason({ reloadRequired: true, schedulerActive: true })!,
@@ -2991,6 +3007,26 @@ describe("service run state", () => {
     });
   });
 
+  it("leaves the previous run's results out of a failed run's log line", () => {
+    const state = serviceRunFailureState(
+      { lastRows: 42, lastSyncStatus: "ok", lastUpserted: 40, version: 1 },
+      {
+        arch: "arm64",
+        attemptAt: "2026-06-16T10:00:00.000Z",
+        durationMs: 222,
+        error: "network unavailable",
+        version: "0.4.12",
+      },
+    );
+
+    const line = serviceRunLogLine(state, "failure", { hasResults: false });
+    expect(line).toMatchObject({ error: "network unavailable", status: "failure" });
+    expect(line.rows).toBeUndefined();
+    expect(line.upserted).toBeUndefined();
+    expect(line.syncStatus).toBeUndefined();
+    expect(serviceRunLogLine(state, "success")).toMatchObject({ rows: 42, syncStatus: "ok" });
+  });
+
   it("renders structured service log lines without undefined fields", () => {
     const line = serviceRunLogLine(
       {
@@ -3074,6 +3110,162 @@ describe("service lock status", () => {
       true,
     );
   });
+});
+
+describe("service run and repair errors", () => {
+  it("name the cause, since a scheduled run's only output is the log", () => {
+    const eacces = new Error(
+      "EACCES: permission denied, open '/home/alex/.config/tokenmaxxing/service-state.json'",
+    );
+
+    expect(new ServiceRunError({ cause: eacces }).message).toBe(
+      "error: tokenmaxxing service run failed\ncause: EACCES: permission denied, open '/home/alex/.config/tokenmaxxing/service-state.json'\nhint: inspect the service log for details",
+    );
+    expect(new ServiceRepairError({ cause: eacces }).message).toContain("\ncause: EACCES");
+    expect(new ServiceRunError({ cause: undefined }).message).toBe(
+      "error: tokenmaxxing service run failed\nhint: inspect the service log for details",
+    );
+  });
+
+  it("fail a scheduled run in which every source failed, with the reason", () => {
+    expect(
+      new ServiceSourcesFailedError({
+        failures: [
+          {
+            issue: {
+              code: "command_failed",
+              detail: "/usr/bin/env: 'node': No such file or directory",
+              message: "ccusage command failed",
+              report: "daily",
+            },
+            source: "claude",
+          },
+        ],
+      }).message,
+    ).toBe(
+      [
+        "error: no usage synced; ccusage failed for claude",
+        "claude: ccusage command failed: /usr/bin/env: 'node': No such file or directory",
+        "hint: check that ccusage runs for this agent, then run tokenmaxxing sync again",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("dead lock holders", () => {
+  // L2: a run killed by SIGKILL, OOM or a power loss left its lock, and every
+  // sync was skipped until the lock went stale 2 hours later.
+  const now = new Date("2026-06-16T10:05:00.000Z");
+  const lock = (pid: number, host?: string) =>
+    serviceLockStatus(
+      {
+        acquiredAt: "2026-06-16T10:00:00.000Z",
+        ...(host === undefined ? {} : { hostname: host }),
+        ownerId: "test",
+        pid,
+        version: 1,
+      },
+      now,
+    );
+  const deadPid = 2 ** 22 + 12_345;
+
+  it("takes over a fresh lock whose process is gone on this machine", async () => {
+    expect(lock(deadPid, "this-mac").stale).toBe(false);
+    await expect(
+      serviceLockCanBeReplaced(
+        lock(deadPid, "this-mac"),
+        { pidAwareStaleTakeover: true },
+        "this-mac",
+      ),
+    ).resolves.toBe(true);
+    // Locks written before 0.7.0 have no hostname; the config dir is local.
+    await expect(
+      serviceLockCanBeReplaced(lock(deadPid), { pidAwareStaleTakeover: true }, "this-mac"),
+    ).resolves.toBe(true);
+  });
+
+  it("keeps a fresh lock whose process is alive, or that another machine wrote", async () => {
+    await expect(
+      serviceLockCanBeReplaced(
+        lock(process.pid, "this-mac"),
+        { pidAwareStaleTakeover: true },
+        "this-mac",
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      serviceLockCanBeReplaced(
+        lock(deadPid, "other-mac"),
+        { pidAwareStaleTakeover: true },
+        "this-mac",
+      ),
+    ).resolves.toBe(false);
+  });
+
+  it("acquires a lock file left by a dead process", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-dead-lock-"));
+    try {
+      const path = join(dir, "service.lock");
+      await writeFile(
+        path,
+        JSON.stringify({
+          acquiredAt: new Date().toISOString(),
+          ownerId: "killed",
+          pid: deadPid,
+          version: 1,
+        }),
+      );
+
+      const result = await Effect.runPromise(acquireServiceRunLock(path, new Date()));
+
+      expect(result._tag).toBe("acquired");
+      expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ pid: process.pid });
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("doctor runner inspection", () => {
+  async function inspect(setup: (runner: string, pointer: string) => Promise<void>) {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-doctor-runner-"));
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: dir },
+        home: dir,
+        platform: "linux",
+      })!;
+      const runner = join(paths.runnersDir, "0.7.0", "linux-x64", "tokenmaxxing");
+      await mkdir(dirname(runner), { recursive: true });
+      await writeFile(runner, "#!/bin/sh\necho ok\n", { mode: 0o755 });
+      await writeFile(paths.runnerPointerPath, `${runner}\n`);
+      await setup(runner, paths.runnerPointerPath);
+      const result = await Effect.runPromise(inspectServiceRunner(paths));
+      return result._tag === "ok" ? "ok" : result.detail.replace(dir, "<dir>");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  }
+
+  it.skipIf(process.platform === "win32")(
+    "reports every way the wrapper would fail to run the runner",
+    async () => {
+      expect(await inspect(async () => {})).toBe("ok");
+      expect(await inspect((_runner, pointer) => rm(pointer))).toMatch(/^pointer missing: /);
+      expect(await inspect((_runner, pointer) => writeFile(pointer, ""))).toMatch(
+        /^pointer is not a runner path: /,
+      );
+      expect(await inspect((_runner, pointer) => writeFile(pointer, "garbage\x00"))).toMatch(
+        /^pointer is not a runner path: /,
+      );
+      expect(await inspect((runner) => rm(runner))).toMatch(/^runner missing: /);
+      expect(await inspect((runner) => writeFile(runner, ""))).toMatch(
+        /^runner is empty \(0 bytes\): /,
+      );
+      expect(await inspect((runner) => chmod(runner, 0o644))).toMatch(
+        /^runner is not executable: /,
+      );
+    },
+  );
 });
 
 describe("service runner registry artifacts", () => {
@@ -3412,9 +3604,53 @@ describe("service runner installation", () => {
   });
 });
 
+describe("repair never moves the runner back", () => {
+  // L3: an auto-updated runner (alpha.2) was "repaired" back to the global
+  // CLI's own, older runner (alpha.1), which then auto-updated again.
+  const paths = servicePaths({
+    env: { TOKENMAXXING_CONFIG_DIR: "/tmp/tokenmaxxing-repair-downgrade" },
+    home: "/Users/alex",
+    platform: "darwin",
+  })!;
+  const current = {
+    packageName: serviceRunnerPackageName("darwin-arm64"),
+    path: "/tmp/tokenmaxxing-repair-downgrade/service-runners/0.7.0-alpha.2/darwin-arm64/tokenmaxxing",
+    target: "darwin-arm64" as const,
+    version: "0.7.0-alpha.2",
+  };
+  const repair = (runnerVersion: string) =>
+    Effect.runPromiseExit(
+      installServiceRunnerForRepair(paths, {
+        cpuArch: "arm64",
+        fetchRunnerRelease: () => Effect.succeed(null),
+        platform: "darwin",
+        readCurrentRunner: () => Effect.succeed(current),
+        resolvePackageJson: () => null,
+        runnerVersion,
+      }),
+    );
+
+  it("keeps a current runner that is newer than this CLI", async () => {
+    const exit = await repair("0.7.0-alpha.1");
+
+    expect(exit).toEqual(Exit.succeed(current));
+  });
+
+  it("installs this CLI's runner when it is newer than the current one", async () => {
+    const exit = await repair("0.7.0");
+
+    // No optional package or registry release in this test: it tried to install.
+    expect(failureTag(exit)).toBe("ServiceRunnerPackageMissingError");
+  });
+});
+
 describe("formatServiceStatusAutoUpdate", () => {
   it("does not imply auto-update is enabled before service metadata exists", () => {
     expect(formatServiceStatusAutoUpdate(null)).toBe("unknown (service not installed)");
+    // Installed, but service.json is gone or garbage: the runner cannot auto-update.
+    expect(formatServiceStatusAutoUpdate(null, true)).toBe(
+      "off (service.json missing or unreadable; repair with tokenmaxxing service repair)",
+    );
     expect(
       formatServiceStatusAutoUpdate({
         autoUpdate: false,
@@ -3480,10 +3716,37 @@ describe("serviceInstallProgram", () => {
       installedAt: "2026-06-16T12:00:00.000Z",
       runnerTarget: "darwin-arm64",
       runnerVersion: "0.4.17",
-      templateVersion: 6,
+      templateVersion: 7,
     });
     expect(written[0]?.metadata).not.toHaveProperty("autoUpdate");
     expect(state.logs).toContain("Automatic sync installed");
+  });
+
+  it("keeps the original installedAt on a refresh, so an unchanged service.json stays put", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        token: "tmx_existing",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+    });
+    const { runtime, written } = makeInstallRuntime({
+      metadata: {
+        backend: "launchd",
+        commandPath: "/tmp/old-runner",
+        installedAt: "2026-06-01T08:00:00.000Z",
+        schedule: "syncs every 5 minutes",
+        templateVersion: 7,
+        version: 1,
+      },
+    });
+
+    const exit = await Effect.runPromiseExit(
+      serviceInstallProgram({ force: false, refresh: true }, runtime).pipe(Effect.provide(layer)),
+    );
+
+    expect(exit._tag).toBe("Success");
+    expect(written[0]?.metadata.installedAt).toBe("2026-06-01T08:00:00.000Z");
   });
 
   it("writes the installing shell's source roots into the service wrapper", async () => {

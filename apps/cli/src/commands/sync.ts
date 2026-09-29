@@ -42,7 +42,12 @@ import {
   shouldUseClack,
   writeJson,
 } from "../output";
-import { apiFailureMessage, USAGE_UPLOAD_TIMEOUT_MS, withApiTimeout } from "../api-failure";
+import {
+  apiFailureMessage,
+  rateLimitRetryAfterSeconds,
+  USAGE_UPLOAD_TIMEOUT_MS,
+  withApiTimeout,
+} from "../api-failure";
 import { validateCurrentLogin } from "../auth-validation";
 import { browserLoginEffect } from "./login";
 import { NotLoggedInError } from "./whoami";
@@ -111,7 +116,11 @@ class SyncSourcesFailedError extends Data.TaggedError("SyncSourcesFailedError")<
     // One line per distinct reason, naming the sources it hit.
     const reasons = new Map<string, UsageSource[]>();
     for (const { issue, source } of this.failures) {
-      reasons.set(issue.message, [...(reasons.get(issue.message) ?? []), source]);
+      const reason =
+        issue.detail === undefined
+          ? issue.message
+          : `${issue.message}: ${issue.detail.split("\n").at(-1)}`;
+      reasons.set(reason, [...(reasons.get(reason) ?? []), source]);
     }
     return [
       `error: no usage synced; ccusage failed for ${sources.join(", ")}`,
@@ -120,6 +129,9 @@ class SyncSourcesFailedError extends Data.TaggedError("SyncSourcesFailedError")<
     ].join("\n");
   }
 }
+
+/** The longest Retry-After a scheduled upload waits out before its next attempt. */
+const UPLOAD_RETRY_AFTER_MAX_MS = 60_000;
 
 const usd0 = new Intl.NumberFormat("en-US", {
   currency: "USD",
@@ -208,6 +220,8 @@ type SyncSourceSummary = SourceSummary & { sessions: number | null };
 
 interface SyncSourceIssue {
   code: CcusageRunErrorCode;
+  /** The end of ccusage's stderr, when it printed any. */
+  detail?: string | undefined;
   message: string;
   report: CcusageReportKind;
 }
@@ -613,8 +627,20 @@ function uploadWithRetry<A, E, R>(
       }
 
       lastError = result.cause;
+      // A 429 says when to come back: wait that long when it is short, and
+      // stop hammering when it is not (the next scheduled run retries).
+      const retryAfterSeconds = rateLimitRetryAfterSeconds(result.cause);
+      if (
+        typeof retryAfterSeconds === "number" &&
+        retryAfterSeconds * 1000 > UPLOAD_RETRY_AFTER_MAX_MS
+      ) {
+        break;
+      }
       if (attempt < attempts) {
-        const backoffMs = retryBackoffMs(policy, attempt);
+        const backoffMs =
+          typeof retryAfterSeconds === "number"
+            ? Math.max(retryAfterSeconds * 1000, retryBackoffMs(policy, attempt))
+            : retryBackoffMs(policy, attempt);
         if (backoffMs > 0) {
           yield* clock.sleep(backoffMs).pipe(Effect.catch(() => Effect.void));
         }
@@ -672,7 +698,12 @@ function syncSourceIssue(error: CcusageRunError): SyncSourceIssue {
             ? "ccusage returned invalid JSON"
             : `ccusage returned an invalid ${error.report} report`;
 
-  return { code: error.code, message, report: error.report };
+  return {
+    code: error.code,
+    ...(error.stderr === undefined ? {} : { detail: error.stderr }),
+    message,
+    report: error.report,
+  };
 }
 
 function syncStatusForSources(results: readonly SyncSourceResult[], rows: number): SyncStatus {
