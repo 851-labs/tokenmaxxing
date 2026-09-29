@@ -1,6 +1,6 @@
 ---
 name: release-cli
-description: Release a new version of the tokenmaxxing CLI to npm. Use when explicitly asked to release or publish @851-labs/tokenmaxxing, including checking main, bumping apps/cli/package.json, updating CHANGELOG.md, committing, tagging cli-vX.Y.Z, pushing, monitoring generated native package publishing, and smoke testing the published packages.
+description: Release a new version of the tokenmaxxing CLI to npm. Use when explicitly asked to release or publish @851-labs/tokenmaxxing, including checking main, bumping apps/cli/package.json, updating CHANGELOG.md, committing, tagging cli-vX.Y.Z, pushing, monitoring generated native package publishing and the GitHub release, and smoke testing the published packages.
 ---
 
 # CLI Release Process
@@ -108,6 +108,8 @@ git push --atomic origin HEAD:main cli-vX.Y.Z
 
 The `cli-vX.Y.Z` tag starts the `Release CLI` GitHub Actions workflow. The workflow builds generated native packages first, publishes those packages, then publishes the generated `@851-labs/tokenmaxxing` package with matching optional dependencies. Stable versions publish with `latest`; prerelease versions such as `X.Y.Z-alpha.0` publish with the matching dist-tag such as `alpha`.
 
+After publishing succeeds, the workflow's `Create GitHub release` job creates the `cli-vX.Y.Z` GitHub release (`apps/cli/script/github-release.ts`): title `tokenmaxxing vX.Y.Z`, the `## X.Y.Z` section of `CHANGELOG.md` at the tag plus the install command, marked prerelease for `-alpha`/`-beta`/`-rc`, and marked Latest only when it is the highest stable version.
+
 ## Step 6: Monitor Publish Workflow
 
 Wait for the workflow run to appear and watch it.
@@ -124,11 +126,20 @@ sleep 10
 gh run list --workflow "Release CLI" --limit 1
 ```
 
-If the workflow fails, inspect logs and follow [Publish Workflow Fails After Tag Push](#publish-workflow-fails-after-tag-push).
+If the workflow fails, inspect logs and follow [Publish Workflow Fails After Tag Push](#publish-workflow-fails-after-tag-push), or [GitHub Release Missing Or Wrong](#github-release-missing-or-wrong) when only the `Create GitHub release` job failed.
 
 ```sh
 gh run view --log-failed
 ```
+
+Once the run succeeds, confirm the GitHub release exists with the right title and flags:
+
+```sh
+gh release view cli-vX.Y.Z --json name,isPrerelease,url
+gh release list --limit 3
+```
+
+A stable release that is the highest version should show `Latest` in `gh release list`; prereleases show `Pre-release`.
 
 ## Step 7: Smoke Test Published Packages
 
@@ -161,6 +172,25 @@ bun -e 'import { serviceRunnerPublishOrder } from "./apps/cli/src/service-runner
 ```
 
 The list covers every native package and the main package, in publish order.
+
+### GitHub Release Missing Or Wrong
+
+The GitHub release is separate from the tag and from npm: re-creating or editing it never touches either, so never move or re-push the tag to fix a release.
+
+- **The `Create GitHub release` job failed** (for example `CHANGELOG.md` at the tag has no `## X.Y.Z - YYYY-MM-DD` section): npm publishing already succeeded. For a flake, re-run only the failed job with `gh run rerun <run-id> --failed`; it updates an existing release instead of failing. A missing changelog section cannot be fixed on the tag, so add the section to `CHANGELOG.md` on `main` through a normal PR, then create the release from an up-to-date `main` checkout with the same script. Preview with `--dry-run` first:
+
+  ```sh
+  bun apps/cli/script/github-release.ts cli-vX.Y.Z --dry-run
+  bun apps/cli/script/github-release.ts cli-vX.Y.Z
+  ```
+
+  The script reads `CHANGELOG.md` from the checkout, derives the prerelease and Latest flags from the `cli-v*` tags on `origin`, and creates or updates the release with `--verify-tag`, so it never creates a tag.
+
+- **Wrong notes, title or flags**: edit in place, for example `gh release edit cli-vX.Y.Z --notes-file notes.md`, `--prerelease=false`, or `--latest`. Re-running the script above also rewrites notes and flags.
+
+- **Start over**: `gh release delete cli-vX.Y.Z --yes` deletes only the release (never pass `--cleanup-tag`), then re-create it with the script. Deleting and re-creating notifies repo watchers again, so prefer editing.
+
+`apps/cli/script/backfill-github-releases.ts --dry-run` shows what every `cli-v*` release would look like; running it without `--dry-run` creates missing releases and updates existing ones, oldest first.
 
 ### Tag Already Exists
 

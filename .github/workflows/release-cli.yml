@@ -59,3 +59,28 @@ jobs:
 
       - name: Publish CLI and native packages
         run: bun apps/cli/script/publish.ts
+
+  github-release:
+    name: Create GitHub release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      # npm publishing has already succeeded by now. If this fails (for example
+      # CHANGELOG.md has no section for the version), fix the cause and re-run
+      # only this job; it updates an existing release instead of failing.
+      - name: Create or update GitHub release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: bun apps/cli/script/github-release.ts "$GITHUB_REF_NAME"
