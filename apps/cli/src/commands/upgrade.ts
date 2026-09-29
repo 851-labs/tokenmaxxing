@@ -13,6 +13,7 @@ import {
 } from "../cli-version";
 import { booleanFlag } from "../flags";
 import { humanFrame, humanSpinner, writeJson } from "../output";
+import { type NpmStagingCleanup, removeNpmStagingDirs } from "./npm-staging";
 import {
   autoUpdateCommandDescription,
   type AutoUpdateManager,
@@ -192,6 +193,10 @@ function upgradeProgram(
     readInstalledVersion?: (commandPath: string) => Effect.Effect<string | null, never>;
     readNpmPrefix?: () => Effect.Effect<string | null, never>;
     refreshService?: (options: { commandPath: string }) => Effect.Effect<void, unknown>;
+    removeNpmStagingDirs?: (
+      paths: readonly string[],
+      platform: NodeJS.Platform,
+    ) => Effect.Effect<NpmStagingCleanup, never>;
     runPackageManagerUpdate?: (
       manager: AutoUpdateManager,
       version: string,
@@ -233,6 +238,12 @@ function upgradeProgram(
         }),
       );
     }
+    // The copy npm could not delete when the last upgrade replaced the
+    // running exe (Windows); that exe has exited by now.
+    yield* (runtime.removeNpmStagingDirs ?? removeNpmStagingDirs)(
+      [install.commandPath, install.resolvedCommandPath, process.execPath],
+      platform,
+    );
     yield* Effect.sync(() => installSpinner.stop(`Using method: ${manager}`));
 
     const currentVersion = runtime.currentVersion ?? packageJson.version;

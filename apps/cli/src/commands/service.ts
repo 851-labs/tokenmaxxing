@@ -79,6 +79,7 @@ import {
   type SyncStatus,
   type UploadRetryPolicy,
 } from "./sync";
+import { removeNpmStagingDirs } from "./npm-staging";
 import { defaultServicePath, stableServicePath } from "./service-path";
 
 const execFilePromise = promisify(execFile);
@@ -1670,6 +1671,7 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
         ? earliestDateKey(incrementalSince, serviceReconcileSince(startedAt))
         : incrementalSince;
     const metadata = yield* readServiceMetadata(paths.metadataPath);
+    yield* removeCliNpmStagingDirs(metadata);
     const nativeStatus = yield* readNativeSchedulerStatus(paths);
     const reloadRequired = serviceReloadRequired(metadata, currentState);
     const baseCheckIn = {
@@ -1895,6 +1897,35 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       upserted: result.value.upserted ?? 0,
     };
   });
+}
+
+/**
+ * Removes the copy of the CLI that a Windows `npm install -g` (an upgrade run
+ * from the CLI) could not delete while that copy was running. A runner-mode
+ * service records its own runner as the command, so the npm install is the
+ * `tokenmaxxing` on the service's PATH (npm's shim in the prefix).
+ */
+function removeCliNpmStagingDirs(
+  metadata: ServiceMetadata | null,
+  platform: NodeJS.Platform = process.platform,
+): Effect.Effect<void, never> {
+  if (platform !== "win32") {
+    return Effect.void;
+  }
+
+  return Effect.tryPromise({
+    try: () => findCommandOnPath("tokenmaxxing", process.env, platform),
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.catch(() => Effect.succeed(null)),
+    Effect.flatMap((commandOnPath) =>
+      removeNpmStagingDirs(
+        [metadata?.commandPath, metadata?.resolvedCommandPath, commandOnPath, process.execPath],
+        platform,
+      ),
+    ),
+    Effect.asVoid,
+  );
 }
 
 function writeServiceCheckIn(auth: SyncAuth, checkIn: ServiceCheckIn) {
