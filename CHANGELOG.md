@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.0-alpha.2 - 2026-09-28
+
 ### Added
 
 - `TOKENMAXXING_NPM_REGISTRY` points the CLI's version checks and service-runner downloads at
