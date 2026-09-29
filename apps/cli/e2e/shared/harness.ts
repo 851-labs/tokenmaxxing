@@ -365,13 +365,19 @@ function readBuild(buildJson: string): Build {
 function buildFakeBin(dir: string): string {
   mkdirSync(dir, { recursive: true });
   if (isWindows) {
-    const build = run("bun build --compile fake-bun", "bun", [
-      "build",
-      "--compile",
-      join(sharedDir, "fakes", "fake-bun.ts"),
-      "--outfile",
-      join(dir, `bun${exe}`),
-    ]);
+    // From `dir`: --compile leaves a `.bun-build` temp copy of bun in its cwd.
+    const build = run(
+      "bun build --compile fake-bun",
+      "bun",
+      [
+        "build",
+        "--compile",
+        join(sharedDir, "fakes", "fake-bun.ts"),
+        "--outfile",
+        join(dir, `bun${exe}`),
+      ],
+      { cwd: dir },
+    );
     if (build.code !== 0) {
       throw new Error("could not compile the fake bun");
     }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,27 +28,29 @@ const cliDir = fileURLToPath(new URL("..", import.meta.url));
 const repoDir = resolve(cliDir, "../..");
 
 async function buildNativePackages(options: BuildNativePackageOptions): Promise<void> {
-  assertSafeOutputDir(options.outDir);
+  // Absolute: the compile runs from a scratch cwd (see compileFromScratchDir).
+  const outDir = resolve(options.outDir);
+  assertSafeOutputDir(outDir);
   const targets = selectedTargets(options);
   if (targets.length === 0) {
     throw new Error("no native package targets selected");
   }
 
   if (options.clean !== false) {
-    await rm(options.outDir, { force: true, recursive: true });
+    await rm(outDir, { force: true, recursive: true });
   }
-  await mkdir(options.outDir, { recursive: true });
+  await mkdir(outDir, { recursive: true });
 
   for (const target of targets) {
     const packageName = serviceRunnerPackageName(target);
-    const packageDir = join(options.outDir, packageName);
+    const packageDir = join(outDir, packageName);
     const platform = platformForServiceRunnerTarget(target);
     const binaryName = serviceRunnerBinaryName(platform);
     const outfile = join(packageDir, "bin", binaryName);
 
     console.log(`building ${packageName}`);
     await mkdir(dirname(outfile), { recursive: true });
-    const result = await Bun.build({
+    const result = await compileFromScratchDir({
       compile: {
         autoloadBunfig: false,
         autoloadDotenv: false,
@@ -86,6 +89,25 @@ async function buildNativePackages(options: BuildNativePackageOptions): Promise<
       )}\n`,
     );
     await cp(join(repoDir, "LICENSE"), join(packageDir, "LICENSE"));
+  }
+}
+
+/**
+ * A host-target `Bun.build({ compile })` leaves a copy of the bun executable
+ * (`.<hash>-00000000.bun-build`) in the process cwd, even on success; TMPDIR
+ * doesn't move it (oven-sh/bun#14020, bun 1.4.2). Compiling from a throwaway
+ * temp dir keeps it out of the checkout, including when bun dies mid-build.
+ * The compiled output doesn't depend on the cwd.
+ */
+async function compileFromScratchDir(config: Bun.BuildConfig): Promise<Bun.BuildOutput> {
+  const previousCwd = process.cwd();
+  const scratchDir = await mkdtemp(join(tmpdir(), "tokenmaxxing-bun-build-"));
+  process.chdir(scratchDir);
+  try {
+    return await Bun.build(config);
+  } finally {
+    process.chdir(previousCwd);
+    await rm(scratchDir, { force: true, recursive: true });
   }
 }
 
