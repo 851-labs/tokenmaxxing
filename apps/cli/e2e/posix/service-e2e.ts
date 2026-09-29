@@ -836,6 +836,16 @@ async function hangingCcusage() {
   if (backend === "systemd") {
     await waitForSystemdRun(60_000);
   }
+  // The first run after an install may be the one-time codex-only usage
+  // backfill; get it done so the hung run below covers every source.
+  const warmup = await scheduledRun(profile, "hang-warmup");
+  assertSuccessfulRun(name, warmup, { allowCooldown: true });
+  check(
+    name,
+    "the usage backfill is done before the hung run",
+    serviceState(profile)?.usageReplacementBackfillVersion !== undefined,
+    oneLine(JSON.stringify(warmup.line?.sources), 300),
+  );
   const hangFile = join(fakeBin, "hang");
   const callsLog = join(fakeBin, "calls.log");
   rmSync(configFile(profile, "service-sources.json"), { force: true });
