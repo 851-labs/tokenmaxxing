@@ -5,6 +5,17 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Linux: the deferred service repair (after an update, or when the timer is inactive) runs when the
+  config dir contains a quote, backslash or `$`. systemd re-reads its pending unit on any
+  `daemon-reload` and could not load that path, so the repair never ran and stayed "scheduled".
+  It also starts about 2 seconds after the scheduled run instead of up to a minute later.
+- `service install` and `service repair` refuse a config dir that contains a tab, newline or other
+  control character, with an error that says so. Before, a Linux install there failed with a
+  generic error, and moving an existing install to such a dir reported success but left a unit
+  that never ran.
+
 ## 0.7.0 - 2026-09-29
 
 ### Upgrading

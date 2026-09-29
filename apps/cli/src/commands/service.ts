@@ -470,6 +470,25 @@ class ServiceEphemeralCommandError extends Data.TaggedError("ServiceEphemeralCom
   }
 }
 
+/**
+ * A tab, newline or other control character in the config dir. systemd refuses one in an
+ * ExecStart path, the POSIX wrapper strips newlines from the runner pointer it reads, and a
+ * launchd plist cannot carry most of them, so the service would install but never run.
+ */
+class ServiceConfigDirUnsupportedError extends Data.TaggedError(
+  "ServiceConfigDirUnsupportedError",
+)<{
+  readonly configDir: string;
+}> {
+  override get message() {
+    return `error: the config dir contains a control character (such as a tab or newline)\npath: ${JSON.stringify(this.configDir)}\nhint: set TOKENMAXXING_CONFIG_DIR to a path without control characters, then run tokenmaxxing service install`;
+  }
+
+  get jsonFields() {
+    return { configDir: this.configDir };
+  }
+}
+
 class ServiceRunnerUnsupportedTargetError extends Data.TaggedError(
   "ServiceRunnerUnsupportedTargetError",
 )<{
@@ -839,6 +858,7 @@ function serviceInstallProgram(
     const env = runtime.env ?? process.env;
     const platform = runtime.platform ?? process.platform;
     const shellPaths = yield* servicePathsEffect(env, runtime.home, platform);
+    yield* ensureServiceConfigDirSupported(shellPaths);
     const { env: serviceEnv, paths } = withInstalledWindowsSpelling(
       shellPaths,
       capturedServiceEnv(env, platform),
@@ -1073,6 +1093,7 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
     }
 
     const repairResult = yield* Effect.gen(function* () {
+      yield* ensureServiceConfigDirSupported(paths);
       // A repair from a shell (or a deferred repair) whose config dir is not
       // the installed service's must not take the scheduler over, and one
       // with nothing installed here must not install a service.
@@ -2335,21 +2356,18 @@ function deferredServiceRepairInvocation(
   }
 
   if (platform === "linux") {
+    const repairArgs = ["service", "repair", "--deferred", "--json", "--reason", reason];
     return {
       args: [
         "--user",
         "--quiet",
         "--collect",
         "--on-active=2s",
+        // A transient timer defaults to AccuracySec=1min, which started the repair 8-12 s late.
+        "--timer-property=AccuracySec=100ms",
         `--unit=${systemdRepairUnitName(reason)}`,
         ...systemdRunEnvArgs(capturedServiceEnv(env, platform)),
-        commandPath,
-        "service",
-        "repair",
-        "--deferred",
-        "--json",
-        "--reason",
-        reason,
+        ...systemdRunCommandArgs(commandPath, repairArgs),
       ],
       command: "systemd-run",
       options: {
@@ -2376,6 +2394,25 @@ function deferredServiceRepairInvocation(
 
 function systemdRepairUnitName(reason: ServiceRepairReason): string {
   return `${SYSTEMD_NAME}-repair-${reason}`;
+}
+
+// systemd-run's timer keeps the transient service in /run/user/<uid>/systemd/transient/, and any
+// daemon-reload before it starts parses that file again. An executable path with a quote or
+// backslash then fails ("Executable path contains special characters") and one with a $ comes back
+// as $$ (203/EXEC). A $ in an argument does not survive the round trip either ($$ is written as
+// $$$$ but read back verbatim), so such a runner starts from its own directory by a relative name,
+// which reaches systemd only as WorkingDirectory=; that setting round-trips all of these.
+function systemdRunCommandArgs(commandPath: string, args: readonly string[]): string[] {
+  if (!/["'\\$]/.test(commandPath)) {
+    return [commandPath, ...args];
+  }
+
+  return [
+    `--working-directory=${dirname(commandPath)}`,
+    "/bin/sh",
+    "-c",
+    `exec ./${shellQuote(basename(commandPath))} ${args.map(shellQuote).join(" ")}`,
+  ];
 }
 
 function systemdRunEnvArgs(env: Record<string, string>): string[] {
@@ -4503,6 +4540,16 @@ function servicePaths({
   };
 }
 
+// Checked before install or repair writes anything, so neither leaves a unit that cannot run
+// (or re-points a working one at such a dir) and reports success.
+function ensureServiceConfigDirSupported(
+  paths: ServicePaths,
+): Effect.Effect<void, ServiceConfigDirUnsupportedError> {
+  return /\p{Cc}/u.test(paths.configDir)
+    ? Effect.fail(new ServiceConfigDirUnsupportedError({ configDir: paths.configDir }))
+    : Effect.void;
+}
+
 function backendForPlatform(platform: NodeJS.Platform): ServiceBackend | null {
   if (platform === "darwin") {
     return "launchd";
@@ -6395,6 +6442,7 @@ export {
   serviceEnvDrift,
   deferredServiceRepairInvocation,
   durableTokenmaxxingCommandPath,
+  ensureServiceConfigDirSupported,
   detectAutoUpdateManager,
   findCommandOnPath,
   findTokenmaxxingCommandInstall,
@@ -6492,6 +6540,7 @@ export {
   windowsTaskCreateArgs,
   writeServiceFiles,
   ServiceCommandNotFoundError,
+  ServiceConfigDirUnsupportedError,
   ServiceDoctorProblemsError,
   ServiceEnvTokenError,
   ServiceEphemeralCommandError,

@@ -13,7 +13,9 @@
  *                   stops after the first timeout, records why, and the next
  *                   run syncs the rest
  *   path cases      install -> run -> reload-required repair -> run -> uninstall
- *                   under config dirs with spaces, (), &, ', % and non-ASCII
+ *                   under config dirs with spaces, (), &, ', ", \, $, % and
+ *                   non-ASCII (Linux: with a daemon-reload while the repair
+ *                   is pending); a tab in the config dir is refused
  *   legacy upgrade  a release from before this template (0.7.0-alpha.0,
  *                   template 5) upgraded by a runner auto-update (deferred
  *                   repair) and by `service repair` (foreground)
@@ -108,6 +110,9 @@ initE2E(outDir, "service");
 const templateVersion = currentTemplateVersion(repoDir);
 const home = homedir();
 const zoe = "Zoë";
+// systemd cannot read an executable path with a quote, backslash or $ back from a transient unit.
+const quotesDir = `O'Neil "dq" \\back $HOME`;
+const quotesCase = `quotes, backslash and $ (${quotesDir})`;
 
 let sandbox: Sandbox | undefined;
 let registry: Registry | undefined;
@@ -492,16 +497,31 @@ async function assertReloadRequiredRepair(
   scenarioName: string,
   profile: Profile,
   runLabel: string,
+  options: { reloadWhilePending?: boolean } = {},
 ) {
   setTemplateVersion(profile, templateVersion - 1);
   const before = serviceState(profile)?.lastRepairAttemptAt as string | undefined;
   const reload = await scheduledRun(profile, `${runLabel}-reload-required`);
+  const ranAt = Date.now();
   check(
     scenarioName,
     "run reports reloadRequired",
     reload.line?.reloadRequired === true && reload.line.status === "success",
     oneLine(JSON.stringify(reload.line), 400),
   );
+  if (options.reloadWhilePending) {
+    // A daemon-reload re-parses the repair's transient unit before its timer fires. 0.7.0's unit
+    // then failed to load for a runner path with a quote or backslash ("Executable path contains
+    // special characters"), and the repair stayed "scheduled".
+    const timer = systemdShow(`${SYSTEMD_UNIT}-repair-reload-required.timer`, ["ActiveState"]);
+    systemctl(["daemon-reload"], true);
+    check(
+      scenarioName,
+      "daemon-reload while the deferred repair is pending",
+      timer.ActiveState === "active",
+      `repair timer ActiveState=${timer.ActiveState ?? ""} ${Date.now() - ranAt} ms after the run`,
+    );
+  }
   const state = await waitForRepair(profile, before);
   const meta = serviceJson(profile);
   check(
@@ -512,6 +532,16 @@ async function assertReloadRequiredRepair(
       meta?.templateVersion === templateVersion,
     `status=${state?.lastRepairStatus} reason=${state?.lastRepairReason} error=${state?.lastRepairError ?? ""} templateVersion=${meta?.templateVersion}`,
   );
+  if (backend === "systemd") {
+    // --on-active=2s; the transient timer's default AccuracySec=1min started it 8-12 s late.
+    const startedAfterMs = Date.parse(String(state?.lastRepairAttemptAt)) - ranAt;
+    check(
+      scenarioName,
+      "deferred repair started about 2 s after the run",
+      startedAfterMs < 6000,
+      `${startedAfterMs} ms`,
+    );
+  }
   assertSchedulerStillRegistered(scenarioName);
   const next = await scheduledRun(profile, `${runLabel}-after-reload`);
   assertSuccessfulRun(scenarioName, next, { allowCooldown: true });
@@ -955,9 +985,66 @@ async function pathCase(name: string, configDir: string) {
   const first = await scheduledRun(profile, `${keepAs}-run`);
   assertSuccessfulRun(name, first, { allowCooldown: backend === "systemd" });
   if (first.line?.status === "success") {
-    await assertReloadRequiredRepair(name, profile, keepAs);
+    await assertReloadRequiredRepair(name, profile, keepAs, {
+      reloadWhilePending: backend === "systemd",
+    });
   }
   assertUninstall(name, profile);
+}
+
+// systemd refuses a control character in ExecStart, and the wrapper strips newlines from the runner
+// pointer. 0.7.0 failed a fresh install here, and moving an existing install to such a dir
+// reported success while leaving a unit that never ran.
+async function controlCharacterPath() {
+  const name = "control character path (tab)";
+  const existing = await profileFor(join(root, "cfg-before-tab"));
+  if (!install(name, existing)) {
+    return;
+  }
+  if (backend === "systemd") {
+    await waitForSystemdRun(30_000);
+  }
+  const definition =
+    backend === "launchd"
+      ? launchdPlistPath()
+      : join(systemdUnitDir(context.baseEnv), `${SYSTEMD_UNIT}.service`);
+  const definitionBefore = `${fileStamp(definition)} ${readText(definition).length} bytes`;
+  const tabbed = await profileFor(join(root, "tab\there", "tm"));
+  for (const command of ["install", "repair"]) {
+    const result = tmx(tabbed, ["service", command, "--json"]);
+    const json = parseCliJson<{ error?: { code?: string; configDir?: string }; status?: string }>(
+      result.out,
+    );
+    check(
+      name,
+      `service ${command} refuses the config dir`,
+      result.code === 1 &&
+        json?.status === "error" &&
+        json.error?.code === "service_config_dir_unsupported" &&
+        json.error.configDir === tabbed.configDir,
+      oneLine(result.out, 400),
+    );
+  }
+  const written = ["tokenmaxxing.sh", "service.json", "service-runners"].filter((file) =>
+    existsSync(configFile(tabbed, file)),
+  );
+  check(
+    name,
+    "nothing written to the refused dir",
+    written.length === 0,
+    `[${written.join(", ")}]`,
+  );
+  const definitionAfter = `${fileStamp(definition)} ${readText(definition).length} bytes`;
+  check(
+    name,
+    "the existing service definition is untouched",
+    definitionAfter === definitionBefore && readText(definition).includes(existing.configDir),
+    `${definitionBefore} -> ${definitionAfter}`,
+  );
+  assertSchedulerStillRegistered(name);
+  const next = await scheduledRun(existing, "before-tab-run");
+  assertSuccessfulRun(name, next, { allowCooldown: true });
+  assertUninstall(name, existing);
 }
 
 async function installLegacy(name: string, configDir: string): Promise<Profile | null> {
@@ -1239,6 +1326,7 @@ try {
               `${zoe} O'Neil (Work) & Co 100%`,
               "tm",
             ),
+            [quotesCase]: join(root, quotesDir, "tm"),
           }
         : {
             [`spaces + non-ASCII + % (${zoe} (Work) 100%)`]: join(
@@ -1252,10 +1340,12 @@ try {
               `${zoe} O'Neil (Work) & Co 100%`,
               "tm",
             ),
+            [quotesCase]: join(root, quotesDir, "tm"),
           };
     for (const [name, dir] of Object.entries(pathCases)) {
       await scenario(name, () => pathCase(name, dir));
     }
+    await scenario("control character path (tab)", controlCharacterPath);
     if (legacyBin !== null) {
       await scenario("legacy upgrade", legacyUpgrade);
     } else {
