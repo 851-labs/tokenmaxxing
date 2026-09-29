@@ -23,6 +23,14 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   wrapper once on its next run.
 - A scheduled run that finds another run holding the lock logs a `"status":"skipped"`,
   `"reason":"locked"` line instead of printing nothing.
+- On Windows, `tokenmaxxing service uninstall` run by the service runner exe itself (the
+  `tokenmaxxing.exe` under `service-runners\`) failed with "Failed removing service files",
+  because Windows cannot delete a running exe. It now removes the task and every other service
+  file, moves the running runner aside, and a hidden cleanup deletes it once it exits.
+  `service status` and `service doctor` then report the service as not installed.
+- `tokenmaxxing service install` or `service repair` run by the service runner exe keeps that
+  runner instead of downloading it again. Without the npm registry it failed with "missing
+  service runner package".
 
 ## 0.7.0 - 2026-09-29
 
