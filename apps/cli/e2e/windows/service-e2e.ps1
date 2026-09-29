@@ -351,6 +351,21 @@ function Invoke-Core {
   Assert-SuccessfulRun $scenario $run
   Assert-NoWindow $scenario $run
 
+  # A run killed with taskkill /F (or a crash, or a power loss) leaves its lock
+  # behind. The next run takes it over once that pid is gone, instead of
+  # skipping every sync until the lock goes stale 2 hours later. This is the
+  # Windows check that process.kill(pid, 0) tells a dead pid from a live one.
+  $dead = Start-Process -FilePath "cmd.exe" -ArgumentList "/d /c exit" -WindowStyle Hidden -PassThru
+  $dead.WaitForExit()
+  $lock = @{ acquiredAt = (Get-Date).ToUniversalTime().ToString("o"); hostname = $env:COMPUTERNAME; ownerId = "killed"; pid = $dead.Id; version = 1 } | ConvertTo-Json -Compress
+  Set-Content -LiteralPath (Config-File "service.lock") -Value $lock -Encoding utf8NoBOM
+  $deadLine = ((Tmx @("service", "doctor")).out -split "\r?\n" | Where-Object { $_ -match '\block\b' } | Select-Object -First 1)
+  Add-Check $scenario "doctor: a dead pid's lock is taken over by the next run" ($deadLine -match "pid $($dead.Id) is gone") "$deadLine"
+  $lockRun = Invoke-TaskRun "core-dead-lock"
+  Assert-SuccessfulRun $scenario $lockRun -AllowCooldown
+  Add-Check $scenario "the run took over the dead pid's lock and released it" (-not (Test-Path -LiteralPath (Config-File "service.lock"))) "lock left: $(if (Test-Path -LiteralPath (Config-File 'service.lock')) { Get-Content -LiteralPath (Config-File 'service.lock') -Raw } else { 'none' })"
+  Assert-NoWindow $scenario $lockRun
+
   # A failed sync (revoked token) spawns a hidden service-failure repair.
   Invoke-RestMethod -Method Post -Uri "$Api/__sandbox/revoke" -ContentType "application/json" -Body (@{ userId = $script:UserId; revoked = $true } | ConvertTo-Json) | Out-Null
   $failRun = Invoke-TaskRun "core-service-failure" { $state = Wait-RepairFinished; "status=$($state.lastRepairStatus) error=$($state.lastRepairError)" }

@@ -71,6 +71,27 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 - `service install --refresh` keeps the original `installedAt`, so an unchanged `service.json` is
   no longer rewritten.
 
+- On Windows, `service install --refresh` (run by every upgrade) and `service repair` no longer
+  re-register the scheduled task when it is unchanged. Re-registering rewrote the task and
+  restarted its schedule from that moment. A refresh during a sync no longer fails with `EPERM`,
+  because an unchanged service runner is no longer copied over itself.
+- A scheduled run that fails because the API is unreachable, slow, rate-limited or answering
+  5xx no longer schedules a repair (on Windows, a new task every 5 minutes while offline). The
+  repair after any other failed run no longer re-registers a scheduler that is active and current.
+- `tokenmaxxing service repair` no longer installs a service when none is installed for its
+  config dir. It also no longer re-points a scheduler that another config dir installed, for
+  example when run from a shell without that service's `TOKENMAXXING_CONFIG_DIR`. It stops with
+  `service_not_installed` or `service_owned_elsewhere` instead. `upgrade` applies the same check
+  on Windows.
+- `tokenmaxxing upgrade` of an `npm install -g --prefix <dir>` install now updates it in that
+  prefix. Before, npm installed a second copy into its default prefix and the one on `PATH`
+  stayed old.
+- On Windows, `service install` and `service repair` refuse to run elevated ("Run as
+  administrator", or an administrator's SSH session) when UAC gives the user a limited token
+  day to day. A task registered from such a shell can only be changed from one, so every later
+  refresh or repair failed with "Access is denied". That error now says how to fix it. The
+  built-in Administrator account, and machines with UAC off, are not refused.
+
 ## 0.7.0-alpha.2 - 2026-09-28
 
 ### Added

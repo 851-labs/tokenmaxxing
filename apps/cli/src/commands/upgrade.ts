@@ -20,8 +20,11 @@ import {
   findTokenmaxxingCommandInstall,
   isEphemeralCommandPath,
   isServiceInstalled,
+  npmUpdatePrefix,
+  type PackageManagerUpdateOptions,
   PackageManagerUpdateError,
   readInstalledCliVersion,
+  readNpmConfiguredPrefix,
   refreshServiceAfterUpdate,
   runPackageManagerUpdate,
   serviceDefinitionUsesConfigDir,
@@ -171,10 +174,12 @@ function upgradeProgram(
     isServiceInstalled?: (paths: ServicePaths) => Effect.Effect<boolean, never>;
     platform?: NodeJS.Platform;
     readInstalledVersion?: (commandPath: string) => Effect.Effect<string | null, never>;
+    readNpmPrefix?: () => Effect.Effect<string | null, never>;
     refreshService?: (options: { commandPath: string }) => Effect.Effect<void, unknown>;
     runPackageManagerUpdate?: (
       manager: AutoUpdateManager,
       version: string,
+      options?: PackageManagerUpdateOptions,
     ) => Effect.Effect<void, unknown>;
     serviceUsesConfigDir?: (paths: ServicePaths) => Effect.Effect<boolean, never>;
   } = {},
@@ -261,7 +266,19 @@ function upgradeProgram(
       return;
     }
 
-    const command = autoUpdateCommandDescription(manager, target.version);
+    // A `npm i -g --prefix <dir>` install is updated in <dir>, not in npm's
+    // default prefix (a second copy that PATH never reaches).
+    const updateOptions: PackageManagerUpdateOptions =
+      manager === "npm"
+        ? {
+            npmPrefix: npmUpdatePrefix(
+              install,
+              yield* (runtime.readNpmPrefix ?? readNpmConfiguredPrefix)(),
+              platform,
+            ),
+          }
+        : {};
+    const command = autoUpdateCommandDescription(manager, target.version, updateOptions);
     yield* Effect.sync(() =>
       versionSpinner.stop(`From ${versionCheck.currentVersion} -> ${target.version}`),
     );
@@ -270,6 +287,7 @@ function upgradeProgram(
     yield* (runtime.runPackageManagerUpdate ?? runPackageManagerUpdate)(
       manager,
       target.version,
+      updateOptions,
     ).pipe(
       Effect.tapError(() => Effect.sync(() => upgradeSpinner.error("Upgrade failed"))),
       Effect.mapError((cause) => new UpgradeFailedError({ cause, command })),

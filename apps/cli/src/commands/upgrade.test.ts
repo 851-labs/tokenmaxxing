@@ -47,6 +47,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.4.3",
         findCommandInstall: () => Effect.succeed(install),
+        readNpmPrefix: () => Effect.succeed("/usr/local"),
         getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
         isServiceInstalled: () => Effect.succeed(false),
         readInstalledVersion: () => Effect.succeed("0.4.4"),
@@ -80,6 +81,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.4.3",
         findCommandInstall: () => Effect.succeed(install),
+        readNpmPrefix: () => Effect.succeed("/usr/local"),
         getDistTags: () => Effect.succeed({ latest: "0.4.3" }),
         isServiceInstalled: () => Effect.succeed(true),
         refreshService: (options) =>
@@ -112,6 +114,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.4.3",
         findCommandInstall: () => Effect.succeed(install),
+        readNpmPrefix: () => Effect.succeed("/usr/local"),
         getDistTags: () => Effect.fail("offline"),
         isServiceInstalled: () => Effect.succeed(false),
         runPackageManagerUpdate: (manager) =>
@@ -141,6 +144,7 @@ describe("upgradeProgram", () => {
         {
           currentVersion: "0.4.3",
           findCommandInstall: () => Effect.succeed(install),
+          readNpmPrefix: () => Effect.succeed("/usr/local"),
           getDistTags: () => Effect.succeed({ latest: "0.4.3" }),
           runPackageManagerUpdate: (manager) =>
             Effect.sync(() => {
@@ -181,6 +185,7 @@ describe("upgradeProgram", () => {
         {
           currentVersion: "0.4.3",
           findCommandInstall: () => Effect.succeed(install),
+          readNpmPrefix: () => Effect.succeed("/usr/local"),
           getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
           isServiceInstalled: () => Effect.succeed(false),
           readInstalledVersion: () => Effect.succeed("0.4.4"),
@@ -223,6 +228,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.4.3",
         findCommandInstall: () => Effect.succeed(install),
+        readNpmPrefix: () => Effect.succeed("/usr/local"),
         getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
         isServiceInstalled: () => Effect.succeed(true),
         readInstalledVersion: () => Effect.succeed("0.4.4"),
@@ -248,6 +254,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.4.3",
         findCommandInstall: () => Effect.succeed(install),
+        readNpmPrefix: () => Effect.succeed("/usr/local"),
         getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
         isServiceInstalled: () => Effect.succeed(true),
         readInstalledVersion: () => Effect.succeed("0.4.4"),
@@ -271,6 +278,7 @@ describe("upgradeProgram", () => {
         {
           currentVersion: "0.6.0",
           findCommandInstall: () => Effect.succeed(install),
+          readNpmPrefix: () => Effect.succeed("/usr/local"),
           getDistTags: () => Effect.succeed({ alpha: "0.7.0-alpha.2", latest: "0.7.0" }),
           isServiceInstalled: () => Effect.succeed(false),
           readInstalledVersion: () => Effect.succeed("0.6.0"),
@@ -302,6 +310,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.6.0",
         findCommandInstall: () => Effect.succeed(install),
+        readNpmPrefix: () => Effect.succeed("/usr/local"),
         getDistTags: () => Effect.succeed({ latest: "0.7.0" }),
         isServiceInstalled: () => Effect.succeed(true),
         readInstalledVersion: () => Effect.succeed(null),
@@ -329,6 +338,7 @@ describe("upgradeProgram", () => {
       upgradeProgram({
         currentVersion: "0.6.0",
         findCommandInstall: () => Effect.succeed(install),
+        readNpmPrefix: () => Effect.succeed("/usr/local"),
         getDistTags: () => Effect.succeed({ latest: "0.7.0" }),
         runPackageManagerUpdate: () =>
           Effect.fail(
@@ -365,6 +375,7 @@ describe("upgradeProgram", () => {
         {
           currentVersion: "0.4.3",
           findCommandInstall: () => Effect.succeed(install),
+          readNpmPrefix: () => Effect.succeed("/usr/local"),
           getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
           isServiceInstalled: () => Effect.succeed(true),
           readInstalledVersion: () => Effect.succeed("0.4.4"),
@@ -387,6 +398,43 @@ describe("upgradeProgram", () => {
     });
   });
 
+  // W3 (F2): an `npm i -g --prefix <dir>` install was "upgraded" into npm's
+  // default prefix, a second copy, while the one on PATH stayed old.
+  it("updates an npm install under its own prefix when that is not npm's configured one", async () => {
+    const { layer } = testConsole();
+    const updates: Array<{ options: unknown; version: string }> = [];
+    const custom = {
+      autoUpdateManager: "npm" as const,
+      commandPath: "/Users/alex/tools/npm-global/bin/tokenmaxxing",
+      resolvedCommandPath:
+        "/Users/alex/tools/npm-global/lib/node_modules/@851-labs/tokenmaxxing/bin/tokenmaxxing",
+    };
+
+    const exit = await Effect.runPromiseExit(
+      upgradeProgram(
+        {
+          currentVersion: "0.6.0",
+          findCommandInstall: () => Effect.succeed(custom),
+          readNpmPrefix: () => Effect.succeed("/opt/homebrew"),
+          getDistTags: () => Effect.succeed({ latest: "0.7.0" }),
+          isServiceInstalled: () => Effect.succeed(false),
+          platform: "darwin",
+          readInstalledVersion: () => Effect.succeed("0.7.0"),
+          runPackageManagerUpdate: (_manager, version, options) =>
+            Effect.sync(() => {
+              updates.push({ options, version });
+            }),
+        },
+        { json: true },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(exit._tag).toBe("Success");
+    expect(updates).toEqual([
+      { options: { npmPrefix: "/Users/alex/tools/npm-global" }, version: "0.7.0" },
+    ]);
+  });
+
   describe("release channels", () => {
     async function runUpgrade(input: {
       currentVersion: string;
@@ -402,6 +450,7 @@ describe("upgradeProgram", () => {
             currentVersion: input.currentVersion,
             findCommandInstall: () =>
               Effect.succeed({ ...install, autoUpdateManager: input.manager ?? "npm" }),
+            readNpmPrefix: () => Effect.succeed("/usr/local"),
             getDistTags: () => input.distTags,
             isServiceInstalled: () => Effect.succeed(false),
             readInstalledVersion: () =>
