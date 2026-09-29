@@ -108,10 +108,13 @@ interface RunCliOptions {
   ccusage?: "empty" | "fail" | "missing" | "partial" | "slow";
   env?: Record<string, string>;
   serviceState?: Record<string, unknown>;
+  /** Runs against the sandbox root before the CLI starts. */
+  setup?: (root: string) => void;
 }
 
 function runCli(args: readonly string[], options: RunCliOptions = {}) {
   const root = makeSandbox();
+  options.setup?.(root);
   if (options.ccusage === "missing") {
     rmSync(join(root, "bin", "bun"));
     rmSync(join(root, "bin", "npx"));
@@ -372,6 +375,44 @@ describe.skipIf(process.platform === "win32").concurrent("CLI argv parsing", () 
       const result = await interruptSync(signal);
 
       expect(result).toEqual({ ccusageAlive: false, code: expected, signal: null });
+    },
+  );
+
+  // W2 (F5): repair from a shell without the service's TOKENMAXXING_CONFIG_DIR
+  // installed a service in the default config dir and took the scheduler over.
+  it("refuses to repair when no service is installed here", { timeout: 30_000 }, async () => {
+    const run = await runCli(["service", "repair"]);
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain(`no tokenmaxxing service is installed for ${run.configDir}`);
+    // Only the read-only scheduler status query ran; nothing was (re)registered.
+    expect(
+      run.calls.filter((call) => /bootstrap|enable|daemon-reload|\/Create/.test(call)),
+    ).toEqual([]);
+    expect(readdirSync(run.configDir)).not.toContain("service.json");
+  });
+
+  it(
+    "refuses to repair a service that another config dir installed",
+    { timeout: 30_000 },
+    async () => {
+      const other = "/Users/someone/other-config/tokenmaxxing.sh";
+      const run = await runCli(["service", "repair", "--json"], {
+        setup: (root) => {
+          const definition =
+            process.platform === "darwin"
+              ? join(root, "home", "Library", "LaunchAgents", "sh.tokenmaxxing.sync.plist")
+              : join(root, "home", ".config", "systemd", "user", "tokenmaxxing-sync.service");
+          mkdirSync(join(definition, ".."), { recursive: true });
+          writeFileSync(definition, `ProgramArguments ${other}\nExecStart="${other}"\n`);
+        },
+      });
+
+      expect(run.status).toBe(1);
+      expect(JSON.parse(run.stderr)).toMatchObject({
+        error: { code: "service_owned_elsewhere" },
+        status: "error",
+      });
     },
   );
 

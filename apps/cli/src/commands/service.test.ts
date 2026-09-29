@@ -7,6 +7,9 @@ import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 
 import { Cause, Effect, Exit, Layer } from "effect";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { Unauthorized, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -25,6 +28,8 @@ import {
   autoUpdateCommandDescription,
   backendForPlatform,
   capturedServiceEnv,
+  npmPrefixOfInstall,
+  npmUpdatePrefix,
   commandShimInvocation,
   deferredServiceRepairInvocation,
   doctorServiceEnvCheck,
@@ -39,6 +44,11 @@ import {
   formatServiceStatusAutoUpdate,
   installNativeScheduler,
   installServiceRunner,
+  installServiceRunnerBinary,
+  isTransientServiceFailure,
+  windowsElevatedOverFilteredToken,
+  ServiceInstallError,
+  WindowsTaskAccessDeniedError,
   installServiceRunnerForRepair,
   installServiceRunnerFromOptionalPackage,
   isEphemeralCommandPath,
@@ -70,7 +80,11 @@ import {
   serviceRunnerPackageName,
   serviceRunnerTarget,
   serviceCompletedUsageReplacementBackfill,
+  serviceDefinitionOwner,
   serviceDefinitionUsesConfigDir,
+  windowsTaskMatches,
+  decodeWindowsCommandOutput,
+  readRegisteredWindowsTaskXml,
   serviceNeedsUsageReplacementBackfill,
   serviceReconcileDue,
   serviceReconcileSince,
@@ -105,7 +119,9 @@ import {
   windowsTaskNames,
   writeServiceFiles,
 } from "./service";
-import type { SyncResult } from "./sync";
+import { ApiTimeoutError } from "../api-failure";
+import { SyncAuthValidationError, SyncPushError, type SyncResult } from "./sync";
+import { NotLoggedInError } from "./whoami";
 
 interface TestLayerOptions {
   envTokenActive?: boolean;
@@ -781,6 +797,36 @@ printf 'HERMES_HOME=%s\\n' "\${HERMES_HOME-unset}"
     });
   });
 
+  it("finds the npm prefix an install lives under, and passes it only when npm's differs", () => {
+    const posix = {
+      commandPath: "/Users/alex/tools/npm-global/bin/tokenmaxxing",
+      resolvedCommandPath:
+        "/Users/alex/tools/npm-global/lib/node_modules/@851-labs/tokenmaxxing/node_modules/@851-labs/tokenmaxxing-darwin-arm64/bin/tokenmaxxing",
+    };
+    expect(npmPrefixOfInstall(posix, "darwin")).toBe("/Users/alex/tools/npm-global");
+    expect(npmUpdatePrefix(posix, "/Users/alex/tools/npm-global/", "darwin")).toBeUndefined();
+    expect(npmUpdatePrefix(posix, "/opt/homebrew", "darwin")).toBe("/Users/alex/tools/npm-global");
+    expect(npmUpdatePrefix(posix, null, "darwin")).toBeUndefined();
+
+    const windows = {
+      commandPath: "D:\\tools\\npm\\tokenmaxxing.CMD",
+      resolvedCommandPath: "D:\\tools\\npm\\tokenmaxxing.cmd",
+    };
+    expect(npmPrefixOfInstall(windows, "win32")).toBe("D:\\tools\\npm");
+    expect(npmUpdatePrefix(windows, "d:/tools/npm", "win32")).toBeUndefined();
+    expect(npmUpdatePrefix(windows, "C:\\Users\\alex\\AppData\\Roaming\\npm", "win32")).toBe(
+      "D:\\tools\\npm",
+    );
+
+    expect(autoUpdateCommandDescription("npm", "0.7.0", { npmPrefix: "D:\\my tools\\npm" })).toBe(
+      'npm install -g --prefix "D:\\my tools\\npm" @851-labs/tokenmaxxing@0.7.0 --prefer-online --loglevel=error',
+    );
+    // Only npm takes a prefix.
+    expect(autoUpdateCommandDescription("bun", "0.7.0", { npmPrefix: "/x" })).toBe(
+      "bun add -g @851-labs/tokenmaxxing@0.7.0 --no-cache --silent",
+    );
+  });
+
   it("keeps the package manager's error output, trimmed and without colors", () => {
     const output = packageManagerFailureOutput({
       stderr: `${Array.from({ length: 30 }, (_, index) => `npm error line ${index}`).join("\n")}\n\u001b[31mnpm error code ETARGET\u001b[0m\n`,
@@ -877,6 +923,10 @@ printf 'HERMES_HOME=%s\\n' "\${HERMES_HOME-unset}"
     expect(lines.slice(blockStart, blockEnd).join("\n")).not.toContain("SERVICE_RUNNER");
   });
 });
+
+function registeredTask(xml: string | null) {
+  return xml === null ? { _tag: "missing" as const } : { _tag: "xml" as const, xml };
+}
 
 describe("native scheduler templates", () => {
   it("renders five-minute launchd, systemd, and Windows schedules", () => {
@@ -1020,32 +1070,140 @@ describe("unchanged service refresh", () => {
     try {
       for (const platform of ["darwin", "linux"] as const) {
         const env = { XDG_CONFIG_HOME: join(dir, "xdg") };
+        const profile = (name: string) =>
+          servicePaths({
+            env: { ...env, TOKENMAXXING_CONFIG_DIR: join(dir, name) },
+            home: join(dir, platform),
+            platform,
+          })!;
         // A config dir that needs escaping in both the plist and the unit.
-        const real = servicePaths({
-          env: { ...env, TOKENMAXXING_CONFIG_DIR: join(dir, `Zoë O'Neil & Co 100%`) },
-          home: join(dir, platform),
-          platform,
-        })!;
-        const scratch = servicePaths({
-          env: { ...env, TOKENMAXXING_CONFIG_DIR: join(dir, "scratch") },
-          home: join(dir, platform),
-          platform,
-        })!;
+        const real = profile(`Zoë O'Neil & Co 100%`);
+        const scratch = profile("scratch");
+        // A name that starts with the real one must not pass as it.
+        const lookalike = profile(`Zoë O'Neil & Co 100%-2`);
+        const owner = (paths: ServicePaths) => Effect.runPromise(serviceDefinitionOwner(paths));
 
-        expect(await Effect.runPromise(serviceDefinitionUsesConfigDir(real))).toBe(false);
+        expect(await owner(real)).toBe("none");
         await Effect.runPromise(writeServiceFiles(real, wrapper, metadata));
-        expect(await Effect.runPromise(serviceDefinitionUsesConfigDir(real))).toBe(true);
+        expect(await owner(real)).toBe("this");
         // Same HOME, so the same definition file, but it runs the other wrapper.
         expect(scratch.definitionPath).toBe(real.definitionPath);
+        expect(await owner(scratch)).toBe("other");
+        expect(await owner(lookalike)).toBe("other");
         expect(await Effect.runPromise(serviceDefinitionUsesConfigDir(scratch))).toBe(false);
+        expect(await Effect.runPromise(serviceDefinitionUsesConfigDir(real))).toBe(true);
       }
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
 
-      const windows = servicePaths({
-        env: { TOKENMAXXING_CONFIG_DIR: join(dir, "win") },
-        home: dir,
+  it("tells whose config dir the registered Windows task runs", async () => {
+    const windows = (configDir: string) =>
+      servicePaths({
+        env: { SystemRoot: "C:\\Windows", TOKENMAXXING_CONFIG_DIR: configDir },
+        home: "C:\\Users\\alex",
         platform: "win32",
       })!;
-      expect(await Effect.runPromise(serviceDefinitionUsesConfigDir(windows))).toBe(true);
+    const mine = windows("C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing");
+    const other = windows("D:\\custom\\tm");
+    const registered = renderWindowsTaskXml(mine, { SystemRoot: "C:\\Windows" });
+    const owner = (paths: ServicePaths, xml: string | null) =>
+      Effect.runPromise(serviceDefinitionOwner(paths, () => Effect.succeed(registeredTask(xml))));
+
+    expect(await owner(mine, null)).toBe("none");
+    expect(await owner(mine, registered)).toBe("this");
+    // Task Scheduler may hand the paths back in another case.
+    expect(await owner(mine, registered.toUpperCase())).toBe("this");
+    expect(await owner(other, registered)).toBe("other");
+    // A template 5 task ran the .cmd wrapper directly, with no working directory.
+    expect(
+      await owner(
+        mine,
+        "<Task><Actions><Exec><Command>C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing\\service-sync.cmd</Command></Exec></Actions></Task>",
+      ),
+    ).toBe("this");
+  });
+
+  it("re-registers the Windows task only when the registered one differs or is disabled", () => {
+    const paths = servicePaths({
+      env: { SystemRoot: "C:\\Windows", TOKENMAXXING_CONFIG_DIR: "C:\\tm" },
+      home: "C:\\Users\\alex",
+      platform: "win32",
+    })!;
+    const env = { SystemRoot: "C:\\Windows" };
+    // What Task Scheduler hands back: its own formatting, an Enabled element,
+    // quotes unescaped, and a different start boundary.
+    const registered = renderWindowsTaskXml(paths, env, new Date("2026-01-01T00:00:00"))
+      .replaceAll("&quot;", '"')
+      .replace("<Settings>\r\n", "<Settings>\r\n    <Enabled>true</Enabled>\r\n")
+      .replaceAll("\r\n", "\n");
+
+    expect(windowsTaskMatches(registered, paths, env)).toBe(true);
+    expect(
+      windowsTaskMatches(
+        registered.replace("<Enabled>true</Enabled>", "<Enabled>false</Enabled>"),
+        paths,
+        env,
+      ),
+    ).toBe(false);
+    expect(windowsTaskMatches(registered.replace("PT5M", "PT10M"), paths, env)).toBe(false);
+    expect(windowsTaskMatches(registered.replace("C:\\tm", "D:\\other"), paths, env)).toBe(false);
+    expect(windowsTaskMatches("", paths, env)).toBe(false);
+  });
+
+  it("decodes task XML in UTF-16 or UTF-8, and nothing it cannot be sure of", () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-16"?><Task><WorkingDirectory>C:\\Users\\Zoë</WorkingDirectory></Task>';
+    expect(decodeWindowsCommandOutput(encodeWindowsTaskXml(xml))).toBe(xml);
+    expect(decodeWindowsCommandOutput(Buffer.from(xml, "utf16le"))).toBe(xml);
+    expect(decodeWindowsCommandOutput(Buffer.from(xml, "utf8"))).toBe(xml);
+    // What schtasks /Query /XML wrote to a pipe on the win11 VM: code page 437, "ë" as 0x89.
+    expect(
+      decodeWindowsCommandOutput(
+        Buffer.from([...Buffer.from("<W>C:\\Users\\Zo"), 0x89, ...Buffer.from("</W>")]),
+      ),
+    ).toBeNull();
+  });
+
+  // #116's Service e2e: the deferred template migration of a service under
+  // D:\\a\\_temp\\tmx-e2e\\Zoë\\tm refused itself as "another config dir's".
+  it("owns a task whose config dir has non-ASCII characters, in any Unicode form or case", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-task-file-"));
+    try {
+      const configDir = "D:\\a\\_temp\\tmx-e2e\\Zo\u00EB\\tm";
+      const paths = servicePaths({
+        env: { SystemRoot: "C:\\Windows", TOKENMAXXING_CONFIG_DIR: configDir },
+        home: "C:\\Users\\Zo\u00EB",
+        platform: "win32",
+      })!;
+      const registered = renderWindowsTaskXml(paths, { SystemRoot: "C:\\Windows" });
+      const owner = (
+        task: ReturnType<typeof registeredTask> | { _tag: "unreadable" },
+        of = paths,
+      ) => Effect.runPromise(serviceDefinitionOwner(of, () => Effect.succeed(task)));
+
+      expect(await owner(registeredTask(registered))).toBe("this");
+      // Decomposed "ë" (e + U+0308), as a path typed on macOS arrives, and another case.
+      expect(await owner(registeredTask(registered.normalize("NFD").toUpperCase()))).toBe("this");
+      // A definition that exists but cannot be read never blocks a repair.
+      expect(await owner({ _tag: "unreadable" })).toBe("unknown");
+      const other = servicePaths({
+        env: {
+          SystemRoot: "C:\\Windows",
+          TOKENMAXXING_CONFIG_DIR: "D:\\a\\_temp\\tmx-e2e\\Zoe\\tm",
+        },
+        home: "C:\\Users\\Zoe",
+        platform: "win32",
+      })!;
+      expect(await owner(registeredTask(registered), other)).toBe("other");
+
+      // The task file itself: UTF-16 with a BOM, which keeps "ë" intact.
+      const tasks = join(dir, "System32", "Tasks");
+      await mkdir(tasks, { recursive: true });
+      await writeFile(join(tasks, "tokenmaxxing-sync"), encodeWindowsTaskXml(registered));
+      const read = await Effect.runPromise(readRegisteredWindowsTaskXml({ SystemRoot: dir }));
+      expect(read).toEqual({ _tag: "xml", xml: registered });
     } finally {
       await rm(dir, { force: true, recursive: true });
     }
@@ -1130,6 +1288,92 @@ describe("unchanged service refresh", () => {
     };
     return { commands, runtime };
   }
+
+  // W1 (F3): every refresh and repair re-registered the task, moving its
+  // start boundary and rewriting the task file.
+  it("leaves a matching, enabled Windows task registered as it is", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-wintask-"));
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: dir },
+        home: dir,
+        platform: "win32",
+      })!;
+      const withTask = (xml: string | null) => {
+        const commands: string[] = [];
+        const runtime = {
+          readTaskXml: () => Effect.succeed(registeredTask(xml)),
+          run: (command: string, args: readonly string[]) =>
+            Effect.sync(() => {
+              commands.push(`${command} ${args[0]} ${args[2]}`);
+            }),
+        };
+        return { commands, runtime };
+      };
+
+      const unchanged = { definition: false, wrapper: false };
+      const current = withTask(renderWindowsTaskXml(paths, process.env, new Date(2020, 0, 1)));
+      await Effect.runPromise(installNativeScheduler(paths, unchanged, current.runtime));
+      // Only the pre-0.5 per-time tasks are cleaned up; the task itself is kept.
+      expect(current.commands).toEqual([
+        "schtasks /Delete tokenmaxxing-sync-0900",
+        "schtasks /Delete tokenmaxxing-sync-1300",
+        "schtasks /Delete tokenmaxxing-sync-1700",
+        "schtasks /Delete tokenmaxxing-sync-2100",
+      ]);
+
+      const missing = withTask(null);
+      await Effect.runPromise(installNativeScheduler(paths, unchanged, missing.runtime));
+      expect(missing.commands.at(-1)).toBe("schtasks /Create tokenmaxxing-sync");
+
+      const disabled = withTask(
+        renderWindowsTaskXml(paths).replace("<Settings>", "<Settings><Enabled>false</Enabled>"),
+      );
+      await Effect.runPromise(installNativeScheduler(paths, unchanged, disabled.runtime));
+      expect(disabled.commands.at(-1)).toBe("schtasks /Create tokenmaxxing-sync");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("explains an Access is denied from a task an administrator registered", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-wintask-denied-"));
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: dir },
+        home: dir,
+        platform: "win32",
+      })!;
+      const exit = await Effect.runPromiseExit(
+        installNativeScheduler(
+          paths,
+          { definition: false, wrapper: false },
+          {
+            readTaskXml: () => Effect.succeed(registeredTask(null)),
+            run: (_command: string, args: readonly string[]) =>
+              args[0] === "/Create"
+                ? Effect.fail(
+                    Object.assign(new Error("Command failed: schtasks /Create"), {
+                      stderr: "ERROR: Access is denied.\r\n",
+                    }),
+                  )
+                : Effect.void,
+          },
+        ),
+      );
+
+      expect(failureTag(exit)).toBe("WindowsTaskAccessDeniedError");
+      expect(
+        new ServiceInstallError({
+          cause: new WindowsTaskAccessDeniedError({ cause: undefined }),
+        }).message,
+      ).toContain(
+        "cause: the tokenmaxxing-sync task was registered from an administrator terminal",
+      );
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
 
   it("matches the loaded launchd job against every setting the plist renders", () => {
     expect(launchdJobMatches(launchctlPrint(), launchdPaths)).toBe(true);
@@ -1721,6 +1965,68 @@ describe("service repair helpers", () => {
         schedulerActive: true,
       }),
     ).toBe(true);
+  });
+
+  // W1: a failing run (offline, 5xx, revoked token) re-registered the scheduler
+  // through its deferred repair every 5 minutes.
+  it("does not reinstall an active, current scheduler for a failed run's deferred repair", () => {
+    expect(
+      serviceRepairNeedsSchedulerInstall({
+        deferred: true,
+        reason: "service-failure",
+        schedulerActive: true,
+      }),
+    ).toBe(false);
+    expect(
+      serviceRepairNeedsSchedulerInstall({
+        deferred: true,
+        reason: "service-failure",
+        schedulerActive: false,
+      }),
+    ).toBe(true);
+    expect(
+      serviceRepairNeedsSchedulerInstall({
+        deferred: true,
+        reason: "service-failure",
+        reloadRequired: true,
+        schedulerActive: true,
+      }),
+    ).toBe(true);
+    // A foreground repair still checks the scheduler (which leaves a current one alone).
+    expect(
+      serviceRepairNeedsSchedulerInstall({ reason: "service-failure", schedulerActive: true }),
+    ).toBe(true);
+  });
+
+  it("schedules no repair for failures a repair cannot fix", () => {
+    const request = HttpClientRequest.get("https://api.tokenmaxxing.example/me");
+    const status = (code: number) =>
+      new HttpClientError.HttpClientError({
+        reason: new HttpClientError.StatusCodeError({
+          request,
+          response: HttpClientResponse.fromWeb(request, new Response(null, { status: code })),
+        }),
+      });
+    const offline = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.TransportError({ request, cause: new Error("ECONNREFUSED") }),
+    });
+
+    for (const cause of [
+      new SyncPushError({ cause: offline }),
+      new SyncAuthValidationError({ cause: status(503) }),
+      new SyncPushError({ cause: status(429) }),
+      new SyncPushError({ cause: new ApiTimeoutError({ timeoutMs: 60_000 }) }),
+      new Cause.TimeoutError(),
+    ]) {
+      expect(isTransientServiceFailure(cause)).toBe(true);
+    }
+    for (const cause of [
+      new NotLoggedInError(),
+      new SyncAuthValidationError({ cause: status(400) }),
+      new Error("EACCES"),
+    ]) {
+      expect(isTransientServiceFailure(cause)).toBe(false);
+    }
   });
 
   it("does not allow deferred launchd repairs to reinstall the scheduler", () => {
@@ -3604,6 +3910,50 @@ describe("service runner installation", () => {
   });
 });
 
+describe("installing an unchanged runner", () => {
+  // W1: a refresh copied the runner over itself, which failed with EPERM on
+  // Windows while a sync was running it.
+  it("leaves an identical runner and pointer untouched", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-runner-same-"));
+    try {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: dir },
+        home: dir,
+        platform: "linux",
+      })!;
+      const destinationPath = join(paths.runnersDir, "0.7.0", "linux-x64", "tokenmaxxing");
+      const install = (bytes: string) =>
+        installServiceRunnerBinary({
+          destinationPath,
+          packageName: "@851-labs/tokenmaxxing-linux-x64",
+          paths,
+          platform: "linux",
+          sourceBytes: new TextEncoder().encode(bytes),
+          target: "linux-x64",
+          version: "0.7.0",
+        });
+
+      await install("#!/bin/sh\necho one\n");
+      const identity = async (path: string) => {
+        const info = await stat(path);
+        return { ino: info.ino, mtimeMs: info.mtimeMs };
+      };
+      const runner = await identity(destinationPath);
+      const pointer = await identity(paths.runnerPointerPath);
+
+      await install("#!/bin/sh\necho one\n");
+      expect(await identity(destinationPath)).toEqual(runner);
+      expect(await identity(paths.runnerPointerPath)).toEqual(pointer);
+
+      await install("#!/bin/sh\necho two\n");
+      expect(await readFile(destinationPath, "utf8")).toBe("#!/bin/sh\necho two\n");
+      expect((await stat(destinationPath)).mode & 0o777).toBe(0o755);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+});
+
 describe("repair never moves the runner back", () => {
   // L3: an auto-updated runner (alpha.2) was "repaired" back to the global
   // CLI's own, older runner (alpha.1), which then auto-updated again.
@@ -3720,6 +4070,67 @@ describe("serviceInstallProgram", () => {
     });
     expect(written[0]?.metadata).not.toHaveProperty("autoUpdate");
     expect(state.logs).toContain("Automatic sync installed");
+  });
+
+  // W4 (F4): a task registered from an elevated shell can only be changed from one.
+  // Measured with e2e/windows/elevation-probe.ps1 on the win11 VM and on
+  // GitHub's Windows runners (see #116).
+  it("refuses elevated shells whose user normally runs with a UAC-filtered token", () => {
+    const high = "Mandatory Label\\High Mandatory Level Label S-1-16-12288";
+    const medium = "Mandatory Label\\Medium Mandatory Level Label S-1-16-8192";
+    const tmx = '"tmx-win11\\tmx","S-1-5-21-4004653193-2516152334-1041241692-1000"\r\n';
+    const runneradmin =
+      '"runnervm99s1a\\runneradmin","S-1-5-21-3162555376-3447873500-144036907-500"';
+    const policies = (entries: string) =>
+      `HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\r\n${entries}`;
+    const uacOn = policies(
+      "    ConsentPromptBehaviorAdmin    REG_DWORD    0x0\r\n    EnableLUA    REG_DWORD    0x1\r\n",
+    );
+    const check = (groups: string | null, user: string | null, policy: string | null) =>
+      windowsElevatedOverFilteredToken({ groups, policies: policy, user });
+
+    // "Run as administrator" (elevation type Full) and an admin's SSH session (Default).
+    expect(check(high, tmx, uacOn)).toBe(true);
+    // Not elevated.
+    expect(check(medium, tmx, uacOn)).toBe(false);
+    // GitHub's runners: the built-in Administrator, which UAC does not filter.
+    expect(check(high, runneradmin, uacOn)).toBe(false);
+    // ... unless FilterAdministratorToken says so.
+    expect(
+      check(
+        high,
+        runneradmin,
+        policies(
+          "    EnableLUA    REG_DWORD    0x1\r\n    FilterAdministratorToken    REG_DWORD    0x1\r\n",
+        ),
+      ),
+    ).toBe(true);
+    // UAC off: every process of an administrator is elevated.
+    expect(check(high, tmx, policies("    EnableLUA    REG_DWORD    0x0\r\n"))).toBe(false);
+    // Unreadable policy: UAC's default is on.
+    expect(check(high, tmx, null)).toBe(true);
+    expect(check(null, tmx, uacOn)).toBe(false);
+  });
+
+  it("refuses to install from an elevated Windows shell", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        token: "tmx_existing",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+    });
+    const { installed, runtime } = makeInstallRuntime();
+
+    const exit = await Effect.runPromiseExit(
+      serviceInstallProgram(
+        { force: false, refresh: false },
+        { ...runtime, isElevated: () => Effect.succeed(true), platform: "win32" },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(failureTag(exit)).toBe("ServiceElevatedError");
+    expect(installed).toEqual([]);
   });
 
   it("keeps the original installedAt on a refresh, so an unchanged service.json stays put", async () => {

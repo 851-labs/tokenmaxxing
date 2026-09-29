@@ -84,6 +84,10 @@ jobs:
       - name: Assert an interactive desktop session
         run: apps/cli/e2e/windows/session-probe.ps1 -OutDir "$env:RUNNER_TEMP\tmx-e2e\out"
 
+      # What the service install/repair elevation check sees on this runner.
+      - name: Print the token's elevation
+        run: apps/cli/e2e/windows/elevation-probe.ps1
+
       - uses: actions/setup-node@v7
         with:
           node-version: "24.18.0"
@@ -245,6 +249,11 @@ jobs:
           bun-version: 1.4.2
 
       - run: bun install --frozen-lockfile
+
+      - name: Print the token's elevation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: apps/cli/e2e/windows/elevation-probe.ps1
 
       - name: Run upgrade e2e
         run: bun apps/cli/e2e/upgrade/upgrade-e2e.ts

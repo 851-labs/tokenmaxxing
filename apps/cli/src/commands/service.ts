@@ -20,7 +20,8 @@ import { basename, delimiter, dirname, isAbsolute, join, win32 } from "node:path
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 
-import { Data, Effect, Option } from "effect";
+import { Cause, Data, Effect, Option } from "effect";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { Command, Flag } from "effect/unstable/cli";
 import type {
   ServiceAutoUpdateManager,
@@ -31,6 +32,7 @@ import type {
   ServiceRepairStatus,
   UsageSource,
 } from "@tokenmaxxing/api-contract";
+import { InternalServerError, ServiceUnavailable } from "@tokenmaxxing/api-contract";
 
 import {
   type DistTags,
@@ -42,7 +44,11 @@ import {
   parseSemVer,
   resolveUpdate,
 } from "../cli-version";
-import { USAGE_UPLOAD_TIMEOUT_MS } from "../api-failure";
+import {
+  ApiTimeoutError,
+  rateLimitRetryAfterSeconds,
+  USAGE_UPLOAD_TIMEOUT_MS,
+} from "../api-failure";
 import { booleanFlag } from "../flags";
 import { ClockService, ConfigService, ConsoleService } from "../services";
 import { getConfigPath } from "../services/config";
@@ -480,8 +486,9 @@ class ServiceUpdateLockedError extends Data.TaggedError("ServiceUpdateLockedErro
 class ServiceInstallError extends Data.TaggedError("ServiceInstallError")<{
   readonly cause: unknown;
 }> {
-  override message =
-    "error: failed to install tokenmaxxing service\nhint: rerun with --verbose or install manually from the generated files";
+  override get message() {
+    return `error: failed to install tokenmaxxing service${causeLine(this.cause)}\nhint: rerun with --verbose or install manually from the generated files`;
+  }
 }
 
 class ServiceUninstallError extends Data.TaggedError("ServiceUninstallError")<{
@@ -507,6 +514,89 @@ class ServiceRepairError extends Data.TaggedError("ServiceRepairError")<{
 }> {
   override get message() {
     return `error: failed to repair tokenmaxxing service${causeLine(this.cause)}\nhint: rerun tokenmaxxing service doctor --verbose`;
+  }
+}
+
+/**
+ * `service install`/`repair` from an elevated ("Run as administrator") shell:
+ * the task it registers then belongs to the elevated token, and every later
+ * refresh or repair from a normal terminal fails with "Access is denied".
+ */
+class ServiceElevatedError extends Data.TaggedError("ServiceElevatedError")<{
+  readonly command: "install" | "repair";
+}> {
+  override get message() {
+    return `error: tokenmaxxing service ${this.command} is running as administrator\nhint: run it from a normal (non-elevated) terminal; a scheduled task registered as administrator can only be changed as administrator`;
+  }
+}
+
+/** A schtasks change refused because an elevated shell registered the task. */
+class WindowsTaskAccessDeniedError extends Data.TaggedError("WindowsTaskAccessDeniedError")<{
+  readonly cause: unknown;
+}> {
+  override get message() {
+    return `the ${windowsTaskName()} task was registered from an administrator terminal; delete it there (schtasks /Delete /TN ${windowsTaskName()} /F), then run tokenmaxxing service install from a normal terminal`;
+  }
+}
+
+/**
+ * Whether this process is elevated while the user's everyday token is a
+ * UAC-filtered one: then the task it registers can later be changed only
+ * from an elevated terminal, and every normal refresh or repair (and the
+ * hidden deferred repair) fails with "Access is denied". That is an
+ * elevated (High or System integrity) token, with UAC on, for any account
+ * but the built-in Administrator, whose token UAC leaves unfiltered unless
+ * FilterAdministratorToken is set. Measured (see e2e/windows/elevation-probe.ps1):
+ * "Run as administrator" and an administrator's SSH session are refused;
+ * GitHub's Windows runners (runneradmin is RID 500, UAC on, not filtered)
+ * are not. `whoami` and `reg` start hidden and fast; no PowerShell.
+ */
+function isElevatedWindowsProcess(): Effect.Effect<boolean, never> {
+  return Effect.all([
+    readExecutableOutput("whoami", ["/groups"]),
+    readExecutableOutput("whoami", ["/user", "/fo", "csv", "/nh"]),
+    readExecutableOutput("reg", [
+      "query",
+      "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+    ]),
+  ]).pipe(
+    Effect.map(([groups, user, policies]) =>
+      windowsElevatedOverFilteredToken({ groups, policies, user }),
+    ),
+  );
+}
+
+function windowsElevatedOverFilteredToken(input: {
+  groups: string | null;
+  policies: string | null;
+  user: string | null;
+}): boolean {
+  const elevated = input.groups !== null && /S-1-16-(?:12288|16384)\b/.test(input.groups);
+  const policy = (name: string) =>
+    new RegExp(`${name}\\s+REG_DWORD\\s+(0x[0-9a-f]+)`, "i").exec(input.policies ?? "")?.[1];
+  // UAC is on unless EnableLUA is 0; FilterAdministratorToken defaults to off.
+  const uacOn = policy("EnableLUA") === undefined || Number(policy("EnableLUA")) !== 0;
+  const builtinAdministrator = /S-1-5-21-[\d-]+-500"?\s*$/.test(input.user?.trim() ?? "");
+  const builtinAdministratorFiltered = Number(policy("FilterAdministratorToken") ?? 0) === 1;
+
+  return elevated && uacOn && !(builtinAdministrator && !builtinAdministratorFiltered);
+}
+
+class ServiceNotInstalledError extends Data.TaggedError("ServiceNotInstalledError")<{
+  readonly configDir: string;
+}> {
+  override get message() {
+    return `error: no tokenmaxxing service is installed for ${this.configDir}\nhint: run tokenmaxxing service install, or set TOKENMAXXING_CONFIG_DIR to the config dir the service was installed with`;
+  }
+}
+
+/** Repairing would re-point another config dir's scheduler definition at this one. */
+class ServiceOwnedElsewhereError extends Data.TaggedError("ServiceOwnedElsewhereError")<{
+  readonly configDir: string;
+  readonly definition: string;
+}> {
+  override get message() {
+    return `error: the installed service runs another config dir, not ${this.configDir}\ndefinition: ${this.definition}\nhint: set TOKENMAXXING_CONFIG_DIR to that service's config dir, or run tokenmaxxing service install to move the service here`;
   }
 }
 
@@ -618,6 +708,7 @@ function serviceInstallProgram(
       change: ServiceFilesChange,
     ) => Effect.Effect<void, unknown>;
     installServiceRunner?: (paths: ServicePaths) => Effect.Effect<ServiceRunnerInstall, unknown>;
+    isElevated?: () => Effect.Effect<boolean, never>;
     now?: Date;
     platform?: NodeJS.Platform;
     readMetadata?: (path: string) => Effect.Effect<ServiceMetadata | null, never>;
@@ -632,6 +723,12 @@ function serviceInstallProgram(
   return Effect.gen(function* () {
     const config = yield* Effect.service(ConfigService);
 
+    if (
+      (runtime.platform ?? process.platform) === "win32" &&
+      (yield* (runtime.isElevated ?? isElevatedWindowsProcess)())
+    ) {
+      return yield* Effect.fail(new ServiceElevatedError({ command: "install" }));
+    }
     if (!options.refresh && (yield* config.hasEnvToken())) {
       return yield* Effect.fail(new ServiceEnvTokenError());
     }
@@ -820,6 +917,9 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
   return Effect.gen(function* () {
     const env = process.env;
     const platform = process.platform;
+    if (platform === "win32" && options.deferred !== true && (yield* isElevatedWindowsProcess())) {
+      return yield* Effect.fail(new ServiceElevatedError({ command: "repair" }));
+    }
     const paths = yield* servicePathsEffect(env, undefined, platform);
     const currentState = (yield* readServiceState(paths.statePath)) ?? { version: 1 as const };
     const existingMetadata = yield* readServiceMetadata(paths.metadataPath);
@@ -850,6 +950,26 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
     }
 
     const repairResult = yield* Effect.gen(function* () {
+      // A repair from a shell (or a deferred repair) whose config dir is not
+      // the installed service's must not take the scheduler over, and one
+      // with nothing installed here must not install a service.
+      const owner = yield* serviceDefinitionOwner(paths);
+      if (owner === "other") {
+        return yield* Effect.fail(
+          new ServiceOwnedElsewhereError({
+            configDir: paths.configDir,
+            definition: paths.definitionPath ?? `Task Scheduler task ${windowsTaskName()}`,
+          }),
+        );
+      }
+      if (
+        owner === "none" &&
+        existingMetadata === null &&
+        !(yield* fileExists(paths.wrapperPath))
+      ) {
+        return yield* Effect.fail(new ServiceNotInstalledError({ configDir: paths.configDir }));
+      }
+
       const updateLock = yield* acquireServiceUpdateLock(paths.updateLockPath, new Date()).pipe(
         Effect.mapError((cause) => new ServiceRepairError({ cause })),
       );
@@ -909,6 +1029,7 @@ function repairServiceProgram(options: ServiceRepairOptions = {}) {
 
         const nativeStatus = yield* readNativeSchedulerStatus(paths);
         const needsSchedulerInstall = serviceRepairNeedsSchedulerInstall({
+          deferred: options.deferred,
           reason: repairReason,
           reloadRequired,
           schedulerActive: nativeStatus.active,
@@ -1401,7 +1522,9 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       });
       const repairReport = yield* maybeScheduleDeferredServiceRepair({
         commandPath: metadata?.commandPath,
-        reason: serviceRepairReason({ serviceFailed: true }),
+        reason: serviceRepairReason({
+          serviceFailed: !isTransientServiceFailure(authResult.cause),
+        }),
         scheduled: options.scheduled,
       });
       const finalFailedState =
@@ -1487,7 +1610,7 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       });
       const repairReport = yield* maybeScheduleDeferredServiceRepair({
         commandPath: metadata?.commandPath,
-        reason: serviceRepairReason({ serviceFailed: true }),
+        reason: serviceRepairReason({ serviceFailed: !isTransientServiceFailure(result.cause) }),
         scheduled: options.scheduled,
       });
       const finalFailedState =
@@ -1701,12 +1824,53 @@ function serviceRepairReason(input: {
   return undefined;
 }
 
+/**
+ * Whether a repair re-registers the scheduler. Not for an active scheduler on
+ * the current template after an auto-update, nor for the deferred repair after
+ * a failed run: that failure was not the scheduler's, and re-registering it
+ * (on Windows, a new task file and a schedule restarted from now) every few
+ * minutes while offline only did harm.
+ */
 function serviceRepairNeedsSchedulerInstall(input: {
+  deferred?: boolean | undefined;
   reason: ServiceRepairReason;
   reloadRequired?: boolean | undefined;
   schedulerActive: boolean;
 }): boolean {
-  return input.reloadRequired === true || input.reason !== "auto-updated" || !input.schedulerActive;
+  if (input.reloadRequired === true || !input.schedulerActive) {
+    return true;
+  }
+
+  return !(
+    input.reason === "auto-updated" ||
+    (input.reason === "service-failure" && input.deferred === true)
+  );
+}
+
+/**
+ * A failure the next scheduled run may well not hit: no network, a timeout,
+ * a 5xx or a 429. A repair cannot fix any of these, so none is scheduled.
+ */
+function isTransientServiceFailure(cause: unknown): boolean {
+  let current = cause;
+  for (let depth = 0; depth < 6 && current !== null && current !== undefined; depth += 1) {
+    if (
+      current instanceof ApiTimeoutError ||
+      Cause.isTimeoutError(current) ||
+      current instanceof InternalServerError ||
+      current instanceof ServiceUnavailable ||
+      rateLimitRetryAfterSeconds(current) !== undefined
+    ) {
+      return true;
+    }
+    if (HttpClientError.isHttpClientError(current)) {
+      const status = current.response?.status;
+      return status === undefined || status >= 500;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+
+  return false;
 }
 
 function serviceRepairCanInstallScheduler(input: {
@@ -2374,7 +2538,8 @@ async function serviceLockCanBeReplaced(
   const holderGone =
     status.pid !== undefined &&
     status.pid > 0 &&
-    (status.hostname === undefined || status.hostname === currentHostname) &&
+    (status.hostname === undefined ||
+      status.hostname.toLowerCase() === currentHostname.toLowerCase()) &&
     !(await processIsAlive(status.pid));
   if (!status.stale) {
     // A run killed by SIGKILL, the OOM killer or a power loss never released
@@ -3371,9 +3536,10 @@ function formatAutoUpdateError(cause: unknown): string {
 function runPackageManagerUpdate(
   manager: AutoUpdateManager,
   version: string,
+  options: PackageManagerUpdateOptions = {},
 ): Effect.Effect<void, PackageManagerUpdateError> {
-  const { args, command } = autoUpdateCommand(manager, version);
-  const description = autoUpdateCommandDescription(manager, version);
+  const { args, command } = autoUpdateCommand(manager, version, options);
+  const description = autoUpdateCommandDescription(manager, version, options);
 
   return Effect.tryPromise({
     try: async () => {
@@ -4147,15 +4313,30 @@ async function installServiceRunnerBinary(input: {
   version: string;
 }): Promise<void> {
   await mkdir(dirname(input.destinationPath), { recursive: true });
+  // A refresh or repair usually installs the runner that is already there.
+  // Rewriting it anyway replaced a binary a running sync had open (EPERM on
+  // Windows) and changed a file macOS Background Task Management watches.
   if (input.sourceBytes !== undefined) {
-    await writeFileAtomic(input.destinationPath, input.sourceBytes, executableMode(input.platform));
+    if (!(await fileHasBytes(input.destinationPath, input.sourceBytes))) {
+      await writeFileAtomic(
+        input.destinationPath,
+        input.sourceBytes,
+        executableMode(input.platform),
+      );
+    }
   } else if (input.sourcePath !== undefined) {
-    await copyFileAtomic(input.sourcePath, input.destinationPath, executableMode(input.platform));
+    if (!(await filesHaveSameBytes(input.sourcePath, input.destinationPath))) {
+      await copyFileAtomic(input.sourcePath, input.destinationPath, executableMode(input.platform));
+    }
   } else {
     throw new Error("missing service runner source");
   }
+  const mode = executableMode(input.platform);
+  if (mode !== undefined && ((await stat(input.destinationPath)).mode & 0o777) !== mode) {
+    await chmod(input.destinationPath, mode);
+  }
   if (input.updatePointer !== false) {
-    await writeFileAtomic(input.paths.runnerPointerPath, `${input.destinationPath}\n`);
+    await writeFileIfChanged(input.paths.runnerPointerPath, `${input.destinationPath}\n`);
   }
 }
 
@@ -4164,9 +4345,33 @@ function writeServiceRunnerPointer(
   runnerPath: string,
 ): Effect.Effect<void, unknown> {
   return Effect.tryPromise({
-    try: () => writeFileAtomic(paths.runnerPointerPath, `${runnerPath}\n`),
+    try: () => writeFileIfChanged(paths.runnerPointerPath, `${runnerPath}\n`),
     catch: (cause) => cause,
   });
+}
+
+async function fileHasBytes(path: string, bytes: Uint8Array): Promise<boolean> {
+  const info = await stat(path).catch(() => null);
+  if (info === null || !info.isFile() || info.size !== bytes.length) {
+    return false;
+  }
+
+  return Buffer.from(bytes).equals(await readFile(path));
+}
+
+async function filesHaveSameBytes(sourcePath: string, destinationPath: string): Promise<boolean> {
+  if (sourcePath === destinationPath) {
+    return true;
+  }
+  const [source, destination] = await Promise.all([
+    stat(sourcePath).catch(() => null),
+    stat(destinationPath).catch(() => null),
+  ]);
+  if (source === null || destination === null || source.size !== destination.size) {
+    return false;
+  }
+
+  return (await readFile(sourcePath)).equals(await readFile(destinationPath));
 }
 
 function executableMode(platform: NodeJS.Platform): number | undefined {
@@ -4491,13 +4696,15 @@ function legacyServiceWrapperPaths(paths: ServicePaths): string[] {
 // disk (not loaded, loaded from other settings, or systemd reporting NeedDaemonReload), so a
 // refresh that changed nothing leaves launchd and systemd alone. A deferred launchd repair
 // writes the plist without reloading it; the loaded-job comparison catches that on the next
-// foreground refresh or repair. The Windows task is always re-registered: its XML carries the
-// registration time as the trigger's start, and Task Scheduler has nothing that re-prompts.
+// foreground refresh or repair. The Windows task is re-registered only when the registered one
+// differs (windowsTaskMatches) or is disabled: its XML carries the registration time as the
+// trigger's start, so re-registering restarts the schedule.
 function installNativeScheduler(
   paths: ServicePaths,
   change: ServiceFilesChange = { definition: true, wrapper: true },
   runtime: {
     readOutput?: typeof readExecutableOutput;
+    readTaskXml?: () => Effect.Effect<RegisteredWindowsTask, never>;
     run?: typeof runExecutable;
   } = {},
 ): Effect.Effect<void, unknown> {
@@ -4539,6 +4746,17 @@ function installNativeScheduler(
   }
 
   return Effect.gen(function* () {
+    // Re-registering rewrites the task file and restarts its schedule from
+    // now (StartBoundary), so an unchanged, enabled task is left alone; a
+    // task registered from an elevated shell also cannot be replaced
+    // without one.
+    const registered = yield* (runtime.readTaskXml ?? readRegisteredWindowsTaskXml)();
+    if (registered._tag === "xml" && windowsTaskMatches(registered.xml, paths, process.env)) {
+      for (const taskName of windowsTaskNames().slice(1)) {
+        yield* run("schtasks", ["/Delete", "/TN", taskName, "/F"]).pipe(Effect.ignore);
+      }
+      return;
+    }
     for (const taskName of windowsTaskNames()) {
       yield* run("schtasks", ["/Delete", "/TN", taskName, "/F"]).pipe(Effect.ignore);
     }
@@ -4549,6 +4767,11 @@ function installNativeScheduler(
       catch: (cause) => cause,
     });
     yield* run("schtasks", windowsTaskCreateArgs(paths)).pipe(
+      Effect.mapError((cause) =>
+        /access is denied/i.test(String((cause as { stderr?: unknown })?.stderr ?? cause))
+          ? new WindowsTaskAccessDeniedError({ cause })
+          : cause,
+      ),
       Effect.ensuring(Effect.promise(() => rm(xmlPath, { force: true }).catch(() => undefined))),
     );
   });
@@ -4649,6 +4872,128 @@ function renderWindowsTaskXml(
   </Actions>\r
 </Task>\r
 `;
+}
+
+/**
+ * Whether the task `schtasks /Query /XML` printed runs what renderWindowsTaskXml
+ * would register (same action, interval, instance and battery policy, logon
+ * type) and is enabled. The start boundary is ignored: it only records when
+ * the task was registered.
+ */
+function windowsTaskMatches(
+  registeredXml: string,
+  paths: ServicePaths,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const expected = renderWindowsTaskXml(paths, env);
+  const field = (xml: string, tag: string) =>
+    [...xml.matchAll(new RegExp(`<${tag}>([^<]*)</${tag}>`, "g"))].map((match) =>
+      unescapeXml(match[1]!).trim(),
+    );
+  const same = (tag: string) =>
+    JSON.stringify(field(registeredXml, tag)) === JSON.stringify(field(expected, tag));
+
+  return (
+    !/<Enabled>\s*false\s*<\/Enabled>/i.test(registeredXml) &&
+    [
+      "Command",
+      "Arguments",
+      "WorkingDirectory",
+      "Interval",
+      "LogonType",
+      "MultipleInstancesPolicy",
+      "DisallowStartIfOnBatteries",
+      "StopIfGoingOnBatteries",
+    ].every(same)
+  );
+}
+
+/**
+ * The registered task's XML: `missing` when there is no task, `unreadable`
+ * when it exists but its XML could not be read or decoded reliably.
+ */
+type RegisteredWindowsTask =
+  | { _tag: "missing" }
+  | { _tag: "unreadable" }
+  | { _tag: "xml"; xml: string };
+
+/**
+ * Reads the task's own file (%SystemRoot%\\System32\\Tasks\\<name>, UTF-16 with a
+ * BOM, readable by the user who registered it) rather than `schtasks /Query
+ * /XML`, which writes to a pipe in the console's OEM code page: "ë" in a
+ * config dir under C:\\Users\\Zoë came back as 0x89 and never matched.
+ * schtasks is the fallback, trusted only when its bytes are valid UTF-16 or
+ * UTF-8.
+ */
+function readRegisteredWindowsTaskXml(
+  env: Record<string, string | undefined> = process.env,
+): Effect.Effect<RegisteredWindowsTask, never> {
+  const systemRoot = env["SystemRoot"] ?? env["SYSTEMROOT"] ?? "C:\\Windows";
+  const taskFile = join(systemRoot, "System32", "Tasks", windowsTaskName());
+
+  return Effect.tryPromise({
+    try: () => readFile(taskFile),
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.map((bytes): RegisteredWindowsTask => {
+      const xml = decodeWindowsCommandOutput(bytes);
+      return xml === null ? { _tag: "unreadable" } : { _tag: "xml", xml };
+    }),
+    Effect.catch((cause) =>
+      (cause as NodeJS.ErrnoException)?.code === "ENOENT"
+        ? Effect.succeed<RegisteredWindowsTask>({ _tag: "missing" })
+        : readRegisteredWindowsTaskXmlFromSchtasks(),
+    ),
+  );
+}
+
+function readRegisteredWindowsTaskXmlFromSchtasks(): Effect.Effect<RegisteredWindowsTask, never> {
+  return Effect.tryPromise({
+    try: () =>
+      execFilePromise("schtasks", ["/Query", "/TN", windowsTaskName(), "/XML"], {
+        encoding: "buffer",
+        timeout: SERVICE_COMMAND_TIMEOUT_MS,
+        windowsHide: true,
+      }),
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.map(({ stdout }): RegisteredWindowsTask => {
+      const xml = decodeWindowsCommandOutput(stdout);
+      return xml === null ? { _tag: "unreadable" } : { _tag: "xml", xml };
+    }),
+    // schtasks exits non-zero for a task that does not exist.
+    Effect.catch(() => Effect.succeed<RegisteredWindowsTask>({ _tag: "missing" })),
+  );
+}
+
+/**
+ * UTF-16 (a BOM, or the NUL high bytes of ASCII) or strictly valid UTF-8;
+ * null for anything else, such as a legacy code page.
+ */
+function decodeWindowsCommandOutput(bytes: Uint8Array): string | null {
+  const buffer = Buffer.from(bytes);
+  const utf16 =
+    (buffer[0] === 0xff && buffer[1] === 0xfe) ||
+    (buffer.length > 1 && buffer[1] === 0 && buffer[0] !== 0);
+  let text: string;
+  try {
+    text = utf16
+      ? buffer.toString("utf16le")
+      : new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    return null;
+  }
+
+  return text.replace(/^\uFEFF/, "");
+}
+
+function unescapeXml(value: string): string {
+  return value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
 }
 
 // Local wall-clock time, truncated to the minute, like schtasks' own start boundary.
@@ -5071,11 +5416,28 @@ function isSameOrChildPath(path: string, parent: string): boolean {
 function autoUpdateCommand(
   manager: AutoUpdateManager,
   version: string,
+  options: PackageManagerUpdateOptions = {},
 ): {
   args: string[];
   command: AutoUpdateManager;
 } {
   const packageSpec = `${PACKAGE_NAME}@${version}`;
+  // An npm install under a --prefix that is not npm's configured one: say it
+  // again, or npm installs a second copy into its default prefix.
+  if (manager === "npm" && options.npmPrefix !== undefined) {
+    return {
+      args: [
+        "install",
+        "-g",
+        "--prefix",
+        options.npmPrefix,
+        packageSpec,
+        "--prefer-online",
+        "--loglevel=error",
+      ],
+      command: "npm",
+    };
+  }
   switch (manager) {
     case "bun":
       return { args: ["add", "-g", packageSpec, "--no-cache", "--silent"], command: "bun" };
@@ -5091,10 +5453,73 @@ function autoUpdateCommand(
   }
 }
 
-function autoUpdateCommandDescription(manager: AutoUpdateManager, version: string): string {
-  const { command, args } = autoUpdateCommand(manager, version);
+function autoUpdateCommandDescription(
+  manager: AutoUpdateManager,
+  version: string,
+  options: PackageManagerUpdateOptions = {},
+): string {
+  const { command, args } = autoUpdateCommand(manager, version, options);
 
-  return [command, ...args].join(" ");
+  return [command, ...args].map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg)).join(" ");
+}
+
+interface PackageManagerUpdateOptions {
+  /** npm's --prefix, when the install is not under npm's configured prefix. */
+  npmPrefix?: string | undefined;
+}
+
+/**
+ * The npm prefix the detected install lives under: `<prefix>/lib/node_modules`
+ * on POSIX, `<prefix>\node_modules` (with the shims in `<prefix>`) on Windows.
+ */
+function npmPrefixOfInstall(
+  install: Pick<CommandInstall, "commandPath" | "resolvedCommandPath">,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  for (const path of [install.resolvedCommandPath, install.commandPath]) {
+    const index = path.replaceAll("\\", "/").toLowerCase().indexOf(`/node_modules/${PACKAGE_NAME}`);
+    if (index < 0) {
+      continue;
+    }
+    const beforeNodeModules = path.slice(0, index);
+    if (platform === "win32") {
+      return beforeNodeModules;
+    }
+    if (/[\\/]lib$/.test(beforeNodeModules)) {
+      return beforeNodeModules.slice(0, -"/lib".length);
+    }
+  }
+
+  // npm's Windows shims (tokenmaxxing.cmd) sit in the prefix itself.
+  return platform === "win32" ? win32.dirname(install.commandPath) : null;
+}
+
+/** `--prefix` for an npm update, or undefined when npm's configured prefix already is it. */
+function npmUpdatePrefix(
+  install: Pick<CommandInstall, "commandPath" | "resolvedCommandPath">,
+  configuredPrefix: string | null,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  const installPrefix = npmPrefixOfInstall(install, platform);
+  if (installPrefix === null || configuredPrefix === null) {
+    return undefined;
+  }
+  const normalize = (path: string) => {
+    const trimmed = path.trim().replace(/[\\/]+$/, "");
+    return platform === "win32" ? trimmed.replaceAll("/", "\\").toLowerCase() : trimmed;
+  };
+
+  return normalize(installPrefix) === normalize(configuredPrefix) ? undefined : installPrefix;
+}
+
+/** `npm config get prefix`: where `npm install -g` installs. */
+function readNpmConfiguredPrefix(): Effect.Effect<string | null, never> {
+  return readExecutableOutput("npm", ["config", "get", "prefix"]).pipe(
+    Effect.map((output) => {
+      const prefix = output?.trim();
+      return prefix === undefined || prefix === "" ? null : prefix;
+    }),
+  );
 }
 
 function readServiceMetadata(path: string): Effect.Effect<ServiceMetadata | null, never> {
@@ -5113,30 +5538,93 @@ function isServiceInstalled(paths: ServicePaths): Effect.Effect<boolean, never> 
 }
 
 /**
- * Whether the installed scheduler definition runs this config dir's wrapper.
- * The launchd plist and systemd units live under HOME, one per user, while
- * the wrapper lives in the config dir; so with TOKENMAXXING_CONFIG_DIR
- * pointing elsewhere (a second profile, a test), the definition found belongs
- * to another config dir and must not be rewritten for this one. Windows has
- * no definition file: its metadata already lives in the config dir.
+ * `unknown`: a definition exists but could not be read or decoded. Callers
+ * treat it like `this`: a broken check must never block a repair (the
+ * template migrations run through one); only a definition positively read as
+ * another config dir's is refused.
  */
-function serviceDefinitionUsesConfigDir(paths: ServicePaths): Effect.Effect<boolean, never> {
-  if (paths.definitionPath === null) {
-    return Effect.succeed(true);
-  }
-  const definitionPath = paths.definitionPath;
+type ServiceDefinitionOwner = "none" | "other" | "this" | "unknown";
 
-  return Effect.tryPromise({
-    try: () => readFile(definitionPath, "utf8"),
-    catch: (cause) => cause,
-  }).pipe(
-    Effect.map((definition) =>
-      [paths.wrapperPath, escapeXml(paths.wrapperPath), systemdExecStart(paths.wrapperPath)].some(
-        (form) => definition.includes(form),
-      ),
-    ),
-    Effect.catch(() => Effect.succeed(false)),
+/**
+ * Whose service the installed scheduler definition runs. The launchd plist,
+ * the systemd units and the Windows task are one per user, while the wrapper
+ * (and launcher) live in a config dir; so with TOKENMAXXING_CONFIG_DIR
+ * pointing elsewhere (a second profile, a test, or a shell without the
+ * variable), the definition found can belong to another config dir, and
+ * writing it for this one takes that service over. Older templates ran other
+ * files from the config dir, so any path inside it counts.
+ */
+function serviceDefinitionOwner(
+  paths: ServicePaths,
+  readTaskXml: () => Effect.Effect<RegisteredWindowsTask, never> = readRegisteredWindowsTaskXml,
+): Effect.Effect<ServiceDefinitionOwner, never> {
+  const definition: Effect.Effect<RegisteredWindowsTask, never> =
+    paths.backend === "windows-task-scheduler"
+      ? readTaskXml()
+      : paths.definitionPath === null
+        ? Effect.succeed({ _tag: "missing" })
+        : Effect.tryPromise({
+            try: () => readFile(paths.definitionPath!, "utf8"),
+            catch: (cause) => cause,
+          }).pipe(
+            Effect.map((xml): RegisteredWindowsTask => ({ _tag: "xml", xml })),
+            Effect.catch((cause) =>
+              Effect.succeed<RegisteredWindowsTask>(
+                (cause as NodeJS.ErrnoException)?.code === "ENOENT"
+                  ? { _tag: "missing" }
+                  : { _tag: "unreadable" },
+              ),
+            ),
+          );
+
+  return definition.pipe(
+    Effect.map((found): ServiceDefinitionOwner => {
+      switch (found._tag) {
+        case "missing":
+          return "none";
+        case "unreadable":
+          return "unknown";
+        case "xml":
+          return definitionMentionsConfigDir(
+            paths.backend === "windows-task-scheduler" ? unescapeXml(found.xml) : found.xml,
+            paths,
+          )
+            ? "this"
+            : "other";
+      }
+    }),
   );
+}
+
+function definitionMentionsConfigDir(text: string, paths: ServicePaths): boolean {
+  const windows = paths.backend === "windows-task-scheduler";
+  // One Unicode form on both sides (a path typed on macOS may arrive NFD),
+  // and Windows paths compare case-insensitively.
+  const normalize = (value: string) =>
+    windows ? value.normalize("NFC").toLowerCase() : value.normalize("NFC");
+  const separator = windows ? "\\" : "/";
+  const configDir = normalize(paths.configDir);
+  const dir = configDir.endsWith(separator) ? configDir : `${configDir}${separator}`;
+  const forms = [
+    dir,
+    escapeXml(dir),
+    // systemd unit quoting (systemdQuote, and the older form without %%).
+    systemdQuote(dir).slice(1, -1),
+    dir.replaceAll("\\", "\\\\").replaceAll('"', '\\"'),
+  ];
+  const haystack = normalize(text);
+
+  return (
+    forms.some((form) => haystack.includes(form)) ||
+    (windows &&
+      normalize(/<WorkingDirectory>([^<]*)<\/WorkingDirectory>/i.exec(text)?.[1]?.trim() ?? "") ===
+        configDir)
+  );
+}
+
+/** For upgrade's refresh: true unless the definition belongs to another config dir. */
+function serviceDefinitionUsesConfigDir(paths: ServicePaths): Effect.Effect<boolean, never> {
+  return serviceDefinitionOwner(paths).pipe(Effect.map((owner) => owner !== "other"));
 }
 
 // Leaves a current launcher untouched so a running wscript.exe never sees it replaced.
@@ -5268,6 +5756,9 @@ function escapeXml(value: string): string {
 
 export {
   autoUpdateCommandDescription,
+  npmPrefixOfInstall,
+  npmUpdatePrefix,
+  readNpmConfiguredPrefix,
   backendForPlatform,
   capturedServiceEnv,
   commandShimInvocation,
@@ -5285,6 +5776,9 @@ export {
   isTransientCommandShimPath,
   isWindowsNpmPrefixShim,
   launchdJobMatches,
+  windowsTaskMatches,
+  decodeWindowsCommandOutput,
+  readRegisteredWindowsTaskXml,
   isServiceInstalled,
   PackageManagerUpdateError,
   packageManagerFailureOutput,
@@ -5305,6 +5799,7 @@ export {
   refreshServiceAfterUpdate,
   installNativeScheduler,
   installServiceRunner,
+  installServiceRunnerBinary,
   installServiceRunnerForRepair,
   installServiceRunnerFromOptionalPackage,
   installServiceRunnerFromRegistryCandidates,
@@ -5316,6 +5811,9 @@ export {
   inspectServiceRunner,
   serviceLockCanBeReplaced,
   serviceRepairNeedsSchedulerInstall,
+  isTransientServiceFailure,
+  windowsElevatedOverFilteredToken,
+  WindowsTaskAccessDeniedError,
   serviceReloadRequired,
   serviceRepairReason,
   serviceRepairState,
@@ -5334,6 +5832,7 @@ export {
   serviceStateJson,
   systemdUnitsAreCurrent,
   extractServiceRunnerFromTarball,
+  serviceDefinitionOwner,
   serviceDefinitionUsesConfigDir,
   servicePathsEffect,
   servicePaths,
@@ -5356,6 +5855,9 @@ export {
   ServiceEnvTokenError,
   ServiceEphemeralCommandError,
   ServiceInstallError,
+  ServiceElevatedError,
+  ServiceNotInstalledError,
+  ServiceOwnedElsewhereError,
   ServiceRepairError,
   ServiceRunnerPackageMissingError,
   ServiceSourcesFailedError,
@@ -5367,6 +5869,7 @@ export {
 
 export type {
   AutoUpdateManager,
+  PackageManagerUpdateOptions,
   CommandInstall,
   ServiceBackend,
   ServiceCheckIn,
