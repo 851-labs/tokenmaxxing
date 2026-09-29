@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.0-alpha.3 - 2026-09-29
+
 ### Changed
 
 - `tokenmaxxing upgrade` now installs the exact version the registry reports (for example
@@ -39,7 +41,6 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 - `tokenmaxxing` now exits with 128 + the signal number when a signal stops it, for example 143
   for `SIGTERM` (it used to exit 130 for every signal). It also handles `SIGHUP`, which used to
   kill it without stopping the running ccusage process.
-
 - A ccusage run that hangs no longer keeps the service running forever. ccusage now runs in its own
   process group, and a timeout or interruption stops the whole group; before, a `node` that npx
   or bun had started kept running. The CLI also exits as soon as its work is done. On Linux, a
@@ -70,7 +71,6 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 - A failed scheduled run's log line no longer repeats the previous run's rows and `syncStatus`.
 - `service install --refresh` keeps the original `installedAt`, so an unchanged `service.json` is
   no longer rewritten.
-
 - On Windows, `service install --refresh` (run by every upgrade) and `service repair` no longer
   re-register the scheduled task when it is unchanged. Re-registering rewrote the task and
   restarted its schedule from that moment. A refresh during a sync no longer fails with `EPERM`,
