@@ -86,5 +86,31 @@ sfltool dumpbtm | grep -B4 -A10 'sh.tokenmaxxing'
 /usr/bin/log stream --predicate 'process == "backgroundtaskmanagementd" OR process == "BackgroundTaskManagementAgent"'
 ```
 
-Test with your own label and plist. `service` and `upgrade` commands act on the
-real service unless `TOKENMAXXING_CONFIG_DIR` points elsewhere.
+Test with your own label and plist, and see below before running `service` or
+`upgrade` locally.
+
+## Running the CLI against a scratch setup
+
+A local `service`, `upgrade` or `bootstrap` run acts on your real service
+unless both of its halves are isolated:
+
+- `TOKENMAXXING_CONFIG_DIR` holds the login, `service.json`, the wrapper and
+  the runners.
+- `HOME` holds the scheduler definition: `~/Library/LaunchAgents/sh.tokenmaxxing.sync.plist`
+  (launchd) or `~/.config/systemd/user/tokenmaxxing-sync.*` (systemd, or
+  under `XDG_CONFIG_HOME`). There is one per user, whatever the config dir.
+
+With only the config dir isolated, `service install` rewrites the real plist
+to run the scratch wrapper. `upgrade` checks that the installed definition
+runs this config dir's wrapper and otherwise leaves it alone ("the installed
+service uses another config dir"), but older CLIs do not. So set both, point
+the package manager at a scratch prefix (`npm_config_prefix`, `BUN_INSTALL`,
+`PNPM_HOME`), and use the API sandbox (`bun apps/api/script/sandbox-server.ts`)
+rather than production:
+
+```bash
+export HOME="$(mktemp -d)" TOKENMAXXING_CONFIG_DIR="$(mktemp -d)"
+```
+
+Windows Task Scheduler tasks are per user too (`tokenmaxxing-sync`), so on
+Windows use a throwaway VM or user.

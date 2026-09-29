@@ -87,10 +87,12 @@ Builds this checkout as `0.6.8`, `0.6.9`, `0.7.0-alpha.1`, `0.7.0-alpha.9` and
 
 | Scenario                                | Checks                                                                                                                                                                                                                                                                         |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| stable follows latest                   | `0.6.8` → `0.6.9` via `npm install -g …@latest`; then skipped (`command: null`, `targetVersion: null`).                                                                                                                                                                        |
+| stable follows latest                   | `0.6.8` → `0.6.9` via `npm install -g …@0.6.9 --prefer-online` (always an exact version); then skipped (`command: null`, `targetVersion: null`).                                                                                                                               |
 | prerelease follows its channel          | `0.7.0-alpha.1` → `0.7.0-alpha.9` by exact version; never "updates" to the lower `latest` 0.6.9; ignores the `alpha` tag moving back to `alpha.1`; moves to stable once `latest=0.7.0`; then follows `latest` only.                                                            |
-| registry unreachable                    | Nothing listens on the registry URL. A prerelease fails with `upgrade_prerelease_version_check` and does not change. A stable install still runs `@latest`, which fails in npm (`upgrade_failed`).                                                                             |
-| version check fails, packages reachable | The dist-tag endpoints answer 503. A prerelease refuses and asks npm for nothing. A stable install runs `@latest` and lands on 0.6.9 (`versionCheck: "unavailable"`, `targetVersion: null`).                                                                                   |
+| registry unreachable                    | Nothing listens on the registry URL. A prerelease fails with `upgrade_prerelease_version_check`, a stable install with `upgrade_version_check`; neither changes.                                                                                                               |
+| version check fails, packages reachable | The dist-tag endpoints answer 503. Both a prerelease and a stable install refuse and ask npm for nothing.                                                                                                                                                                      |
+| stale npm cache after a publish         | npm caches the packument before `0.7.0` exists (`max-age=300`, as registry.npmjs.org sends); then `0.7.0` is published as `latest`. Control: a plain `npm install -g …@0.7.0` fails with `ETARGET`. `upgrade` installs `0.7.0` anyway (`--prefer-online`) and verifies it.     |
+| packument lags the dist-tags            | The CLI's dist-tag check sees `0.7.0`, but npm's packument still says `latest=0.6.9` without `0.7.0`. `upgrade` fails as `upgrade_failed` and shows npm's `ETARGET`. It never installs the stale `0.6.9`, and the install stays on `0.6.8`.                                    |
 | auto-update: stable runner              | A service installed at `0.6.8`. The OS scheduler starts each run, and the runner updates itself to `0.6.9` (pointer, `service.json` and `--version` agree), then reports `not-needed`. With the registry down it reports `download-failed`, stays on `0.6.9`, and still syncs. |
 | auto-update: prerelease runner          | Installed at `0.7.0-alpha.1`: updates to `alpha.9`, is `not-needed` against the lower `latest`, stays put when the `alpha` tag moves back, reports `download-failed` with the registry down, and moves to `0.7.0` once `latest` is higher.                                     |
 
@@ -114,8 +116,13 @@ installs stuck. Both branches were then deleted.
   unreachable. The only downloads (the pinned `0.7.0-alpha.0` runner package,
   pinned pnpm/yarn) happen before the block.
 - **Isolated state.** Every scenario uses its own `TOKENMAXXING_CONFIG_DIR`,
-  npm prefix and package-manager global dirs. `upgrade` refreshes the service
-  in the config dir it resolves, so it must never see a real one.
+  npm prefix and package-manager global dirs. The scheduler definition is not
+  in the config dir but under `HOME` (the launchd plist in
+  `~/Library/LaunchAgents`, the systemd units in `~/.config/systemd/user`),
+  one per user. `upgrade` refreshes the installed service only when that
+  definition runs its config dir's wrapper, but a local run should still
+  isolate `HOME` as well; see
+  [Running the CLI against a scratch setup](../CONTRIBUTING.md#running-the-cli-against-a-scratch-setup).
 - **Refuses to run outside CI** unless you pass `--force`. The suites edit the
   hosts file, register the scheduler job and install global packages, so only
   use `--force` on a throwaway VM.

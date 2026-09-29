@@ -42,6 +42,7 @@ import {
   shouldUseClack,
   writeJson,
 } from "../output";
+import { apiFailureMessage, USAGE_UPLOAD_TIMEOUT_MS, withApiTimeout } from "../api-failure";
 import { validateCurrentLogin } from "../auth-validation";
 import { browserLoginEffect } from "./login";
 import { NotLoggedInError } from "./whoami";
@@ -49,15 +50,26 @@ import { NotLoggedInError } from "./whoami";
 class SyncPushError extends Data.TaggedError("SyncPushError")<{
   readonly cause: unknown;
 }> {
-  override message =
-    "error: failed to push usage to tokenmaxxing\nhint: check your network and run tokenmaxxing sync again";
+  override get message() {
+    return apiFailureMessage(
+      "failed to push usage to tokenmaxxing",
+      this.cause,
+      "check your network and run tokenmaxxing sync again",
+    );
+  }
 }
 
 class SyncAuthValidationError extends Data.TaggedError("SyncAuthValidationError")<{
   readonly cause: unknown;
 }> {
-  override message =
-    "error: failed to validate stored login\nhint: check your network and run tokenmaxxing login again";
+  override get message() {
+    // Not a login problem: a bad token is `Unauthorized`, handled before this.
+    return apiFailureMessage(
+      "failed to validate stored login",
+      this.cause,
+      "check your network and run tokenmaxxing sync again",
+    );
+  }
 }
 
 class UnknownSourceError extends Data.TaggedError("UnknownSourceError")<{
@@ -83,14 +95,29 @@ class InvalidSinceError extends Data.TaggedError("InvalidSinceError")<{
  * collected was pushed, and the payload/table name the degraded sources.
  */
 class SyncSourcesFailedError extends Data.TaggedError("SyncSourcesFailedError")<{
-  readonly sources: readonly UsageSource[];
+  readonly failures: readonly SyncSourceFailure[];
 }> {
   override get message() {
-    if (this.sources.length === 0) {
+    const sources = this.failures.map((failure) => failure.source);
+    if (sources.length === 0) {
       return "error: no usage synced; source collection failed\nhint: run tokenmaxxing sync again";
     }
 
-    return `error: no usage synced; ccusage failed for ${this.sources.join(", ")}\nhint: check that ccusage runs for ${this.sources.length > 1 ? "these agents" : "this agent"}, then run tokenmaxxing sync again`;
+    // Neither `bun x` nor the `npx` fallback exists: nothing else can help.
+    if (this.failures.every((failure) => failure.issue.code === "command_not_found")) {
+      return `error: no usage synced; could not run ccusage: neither bun nor npx is on PATH\nhint: install Bun (https://bun.sh) or Node.js (https://nodejs.org), then run tokenmaxxing sync again`;
+    }
+
+    // One line per distinct reason, naming the sources it hit.
+    const reasons = new Map<string, UsageSource[]>();
+    for (const { issue, source } of this.failures) {
+      reasons.set(issue.message, [...(reasons.get(issue.message) ?? []), source]);
+    }
+    return [
+      `error: no usage synced; ccusage failed for ${sources.join(", ")}`,
+      ...[...reasons].map(([reason, failed]) => `${failed.join(", ")}: ${reason}`),
+      `hint: check that ccusage runs for ${sources.length > 1 ? "these agents" : "this agent"}, then run tokenmaxxing sync again`,
+    ].join("\n");
   }
 }
 
@@ -185,6 +212,11 @@ interface SyncSourceIssue {
   report: CcusageReportKind;
 }
 
+interface SyncSourceFailure {
+  issue: SyncSourceIssue;
+  source: UsageSource;
+}
+
 /** `unchanged` and `cooldown` only come from scheduled cadence plans. */
 type SyncSkipReason = "cooldown" | "no_data" | "unchanged";
 
@@ -270,7 +302,7 @@ function syncEffect(options: SyncOptions) {
       // the summary line, after the per-source rows / JSON payload.
       if (result.status === "error") {
         return yield* Effect.fail(
-          new SyncSourcesFailedError({ sources: failedSyncSources(result.sourceResults) }),
+          new SyncSourcesFailedError({ failures: failedSyncSources(result.sourceResults) }),
         );
       }
 
@@ -550,8 +582,10 @@ function uploadUsageReportsOnce(
       },
     });
 
+  // A server that accepts the connection and never answers must not hang
+  // the command: one attempt, bounded like each scheduled attempt.
   if (uploadPolicy === undefined) {
-    return upload();
+    return withApiTimeout(upload(), USAGE_UPLOAD_TIMEOUT_MS);
   }
 
   return uploadWithRetry(upload, uploadPolicy);
@@ -567,8 +601,7 @@ function uploadWithRetry<A, E, R>(
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const result = yield* upload().pipe(
-        Effect.timeout(`${Math.max(1, policy.timeoutMs)} millis`),
+      const result = yield* withApiTimeout(upload(), policy.timeoutMs).pipe(
         Effect.match({
           onFailure: (cause) => ({ cause, _tag: "failure" as const }),
           onSuccess: (value) => ({ value, _tag: "success" as const }),
@@ -601,8 +634,10 @@ function retryBackoffMs(policy: UploadRetryPolicy, attempt: number): number {
   return Math.max(0, Math.round(base * jitter));
 }
 
-function failedSyncSources(results: readonly SyncSourceResult[]): UsageSource[] {
-  return results.flatMap((result) => (result.status === "failed" ? [result.source] : []));
+function failedSyncSources(results: readonly SyncSourceResult[]): SyncSourceFailure[] {
+  return results.flatMap((result) =>
+    result.status === "failed" ? [{ issue: result.issue, source: result.source }] : [],
+  );
 }
 
 function syncJsonPayload(result: SyncResult) {

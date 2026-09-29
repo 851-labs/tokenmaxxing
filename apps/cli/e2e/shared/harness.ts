@@ -13,6 +13,7 @@
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
+  chmodSync,
   closeSync,
   copyFileSync,
   existsSync,
@@ -356,17 +357,27 @@ function readBuild(buildJson: string): Build {
 // ------------------------------------------------------------------ environment
 
 /** Compiles the fake `bun` (and copies the fake ccusage) into `dir`; returns `dir`. */
+/**
+ * The fake `bun` scheduled runs find first on PATH. On macOS/Linux it is a
+ * shell script that execs node in place, like real `bun x`; Windows has no
+ * exec, so there it is fake-bun.ts compiled to bun.exe.
+ */
 function buildFakeBin(dir: string): string {
   mkdirSync(dir, { recursive: true });
-  const build = run("bun build --compile fake-bun", "bun", [
-    "build",
-    "--compile",
-    join(sharedDir, "fakes", "fake-bun.ts"),
-    "--outfile",
-    join(dir, `bun${exe}`),
-  ]);
-  if (build.code !== 0) {
-    throw new Error("could not compile the fake bun");
+  if (isWindows) {
+    const build = run("bun build --compile fake-bun", "bun", [
+      "build",
+      "--compile",
+      join(sharedDir, "fakes", "fake-bun.ts"),
+      "--outfile",
+      join(dir, `bun${exe}`),
+    ]);
+    if (build.code !== 0) {
+      throw new Error("could not compile the fake bun");
+    }
+  } else {
+    copyFileSync(join(sharedDir, "fakes", "fake-bun.sh"), join(dir, "bun"));
+    chmodSync(join(dir, "bun"), 0o755);
   }
   copyFileSync(join(sharedDir, "fakes", "fake-ccusage.mjs"), join(dir, "fake-ccusage.mjs"));
   return dir;
@@ -455,6 +466,12 @@ class Registry {
   async setState(state: {
     distTags?: Record<string, string | null>;
     mode?: "down" | "metadata-down" | "ok";
+    packument?: {
+      distTags: Record<string, string>;
+      hiddenVersions: string[];
+      name: string;
+    } | null;
+    packumentMaxAge?: number | null;
   }) {
     const response = await fetch(`${this.url}/-/e2e/state`, {
       body: JSON.stringify(state),

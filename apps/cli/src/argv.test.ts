@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -34,6 +34,11 @@ const FAKE_CCUSAGE = `#!/bin/sh
 echo "$*" >> "$FAKE_CALLS_LOG"
 source="$3"
 report="$4"
+if [ "$FAKE_CCUSAGE" = slow ]; then
+  # Like bun x running ccusage's node bin: exec in place, so this pid is ccusage.
+  echo $$ > "$FAKE_CALLS_LOG.pid"
+  exec sleep 30
+fi
 if [ "$FAKE_CCUSAGE" = fail ] || { [ "$FAKE_CCUSAGE" = partial ] && [ "$source" = codex ]; }; then
   echo "fake ccusage failure" >&2
   exit 1
@@ -99,13 +104,18 @@ function makeSandbox() {
 const bun = process.platform === "win32" ? "" : bunPath();
 
 interface RunCliOptions {
-  ccusage?: "empty" | "fail" | "partial";
+  /** "missing": no bun or npx on PATH at all. "slow": ccusage runs for 30 s. */
+  ccusage?: "empty" | "fail" | "missing" | "partial" | "slow";
   env?: Record<string, string>;
   serviceState?: Record<string, unknown>;
 }
 
 function runCli(args: readonly string[], options: RunCliOptions = {}) {
   const root = makeSandbox();
+  if (options.ccusage === "missing") {
+    rmSync(join(root, "bin", "bun"));
+    rmSync(join(root, "bin", "npx"));
+  }
   const configDir = join(root, "config");
   const callsLog = join(root, "calls.log");
   if (options.serviceState !== undefined) {
@@ -119,18 +129,7 @@ function runCli(args: readonly string[], options: RunCliOptions = {}) {
       {
         cwd: cliRoot,
         encoding: "utf8",
-        env: {
-          CI: "true",
-          FAKE_CALLS_LOG: callsLog,
-          FAKE_CCUSAGE: options.ccusage ?? "empty",
-          HOME: join(root, "home"),
-          NO_COLOR: "1",
-          PATH: `${join(root, "bin")}:/usr/bin:/bin`,
-          TOKENMAXXING_API_URL: "http://127.0.0.1:9",
-          TOKENMAXXING_CONFIG_DIR: configDir,
-          TOKENMAXXING_WWW_URL: "http://127.0.0.1:9",
-          ...options.env,
-        },
+        env: cliEnv(root, options),
         timeout: 30_000,
       },
       (error, stdout, stderr) => {
@@ -144,6 +143,74 @@ function runCli(args: readonly string[], options: RunCliOptions = {}) {
       },
     );
   });
+}
+
+function cliEnv(root: string, options: RunCliOptions): Record<string, string> {
+  return {
+    CI: "true",
+    FAKE_CALLS_LOG: join(root, "calls.log"),
+    FAKE_CCUSAGE: options.ccusage ?? "empty",
+    HOME: join(root, "home"),
+    NO_COLOR: "1",
+    PATH: `${join(root, "bin")}:/usr/bin:/bin`,
+    TOKENMAXXING_API_URL: "http://127.0.0.1:9",
+    TOKENMAXXING_CONFIG_DIR: join(root, "config"),
+    TOKENMAXXING_WWW_URL: "http://127.0.0.1:9",
+    ...options.env,
+  };
+}
+
+/**
+ * Starts `sync` with a ccusage that hangs, sends `signal` once ccusage is
+ * running, and reports how the CLI exited and whether ccusage outlived it.
+ */
+async function interruptSync(signal: NodeJS.Signals) {
+  const root = makeSandbox();
+  const pidFile = join(root, "calls.log.pid");
+  const child = spawn(bun, ["src/index.ts", "sync", "--dry-run", "--sources", "claude"], {
+    cwd: cliRoot,
+    env: cliEnv(root, { ccusage: "slow" }),
+    stdio: "ignore",
+  });
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) =>
+    child.on("exit", (code, exitSignal) => done({ code, signal: exitSignal })),
+  );
+  const ccusagePid = await waitFor(() =>
+    existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8").trim()) || undefined : undefined,
+  );
+  child.kill(signal);
+  const exit = await exited;
+  const ccusageAlive = await waitFor(() => (isAlive(ccusagePid) ? undefined : false), 2_000).catch(
+    () => true,
+  );
+  if (ccusageAlive) {
+    process.kill(ccusagePid, "SIGKILL");
+  }
+
+  return { ccusageAlive, ...exit };
+}
+
+async function waitFor<T>(probe: () => T | undefined, timeoutMs = 20_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = probe();
+    if (value !== undefined) {
+      return value;
+    }
+    if (Date.now() > deadline) {
+      throw new Error("timed out waiting");
+    }
+    await new Promise((done) => setTimeout(done, 25));
+  }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readServiceState(run: CliRun): Record<string, unknown> {
@@ -274,6 +341,39 @@ describe.skipIf(process.platform === "win32").concurrent("CLI argv parsing", () 
     expect(run.stdout).toMatch(/^claude +failed/m);
     expect(run.stderr).toContain("error: no usage synced; ccusage failed for claude, codex");
   });
+
+  // Only meaningful where no real bun/npx sits in /usr/bin or /bin, which stay on PATH.
+  it.skipIf(["/usr/bin/bun", "/usr/bin/npx", "/bin/bun", "/bin/npx"].some(existsSync))(
+    "says ccusage cannot run when neither bun nor npx is installed",
+    { timeout: 30_000 },
+    async () => {
+      const run = await runCli(["sync", "--dry-run", "--sources", "claude,codex"], {
+        ccusage: "missing",
+      });
+
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain(
+        "error: no usage synced; could not run ccusage: neither bun nor npx is on PATH",
+      );
+      expect(run.stderr).toContain("install Bun (https://bun.sh) or Node.js");
+    },
+  );
+
+  // FAIL-2 / FAIL-3: SIGTERM exited 130, and SIGHUP killed the CLI by default
+  // action and left the ccusage child running.
+  it.each([
+    { expected: 129, signal: "SIGHUP" as const },
+    { expected: 130, signal: "SIGINT" as const },
+    { expected: 143, signal: "SIGTERM" as const },
+  ])(
+    "exits $expected on $signal and stops the running ccusage",
+    { timeout: 30_000 },
+    async ({ expected, signal }) => {
+      const result = await interruptSync(signal);
+
+      expect(result).toEqual({ ccusageAlive: false, code: expected, signal: null });
+    },
+  );
 
   it("keeps the --json payload when every source fails", { timeout: 30_000 }, async () => {
     const run = await runCli(["sync", "--dry-run", "--json"], { ccusage: "fail" });

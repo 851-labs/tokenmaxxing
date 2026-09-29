@@ -1,9 +1,10 @@
 /**
- * Fake `bun` for the service e2e, compiled with `bun build --compile` to
- * <fakebin>/bun(.exe) and put first on PATH when the service is installed, so
+ * Fake `bun` for the Windows e2e, compiled with `bun build --compile` to
+ * <fakebin>/bun.exe and put first on PATH when the service is installed, so
  * the scheduled runner's `bun x ccusage@... <source> <daily|session> ...`
- * lands here. Like `bun x` running ccusage's node bin, it starts a node child
- * (fake-ccusage.mjs next to this exe). The child is spawned WITHOUT
+ * lands here. Windows has no exec, so it starts a node child
+ * (fake-ccusage.mjs next to this exe); macOS/Linux use fake-bun.sh, which
+ * execs node in place like real `bun x`. The child is spawned WITHOUT
  * windowsHide so it behaves like any console child: on Windows it opens a
  * window only if it has no console to inherit, which is exactly what the e2e
  * watches for.

@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { type ApiError, ApiErrors, type AuthUser, Unauthorized } from "@tokenmaxxing/api-contract";
 
+import { ME_TIMEOUT_MS, withApiTimeout } from "./api-failure";
 import {
   formatHighlight,
   humanSpinner,
@@ -32,7 +33,7 @@ function validateCurrentLogin(
       options.showSpinner === true
         ? yield* humanSpinner("Checking current login", options)
         : undefined;
-    const result = yield* client.me.me().pipe(
+    const result = yield* withApiTimeout(client.me.me(), ME_TIMEOUT_MS).pipe(
       Effect.map((me): CurrentLoginValidation => ({ _tag: "valid", user: me.user })),
       Effect.catch((cause) =>
         Effect.succeed(

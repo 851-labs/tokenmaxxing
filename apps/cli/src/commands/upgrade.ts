@@ -20,9 +20,11 @@ import {
   findTokenmaxxingCommandInstall,
   isEphemeralCommandPath,
   isServiceInstalled,
-  packageManagerSpecifier,
+  PackageManagerUpdateError,
+  readInstalledCliVersion,
   refreshServiceAfterUpdate,
   runPackageManagerUpdate,
+  serviceDefinitionUsesConfigDir,
   servicePathsEffect,
   type ServicePaths,
 } from "./service";
@@ -34,6 +36,10 @@ type ServiceRefreshResult =
     }
   | {
       _tag: "not-installed";
+    }
+  | {
+      /** The scheduler definition under HOME runs another config dir's wrapper. */
+      _tag: "other-config-dir";
     }
   | {
       _tag: "refreshed";
@@ -85,9 +91,52 @@ class UpgradeManagerError extends Data.TaggedError("UpgradeManagerError")<{
 
 class UpgradeFailedError extends Data.TaggedError("UpgradeFailedError")<{
   readonly cause: unknown;
+  readonly command: string;
 }> {
-  override message =
-    "error: failed to upgrade tokenmaxxing\nhint: try upgrading with your package manager";
+  override get message() {
+    // What the package manager printed (e.g. npm's ETARGET), so the failure
+    // is actionable without rerunning the command by hand.
+    const output =
+      this.cause instanceof PackageManagerUpdateError
+        ? this.cause.timedOut
+          ? `${this.cause.command.split(" ")[0]} did not finish in time`
+          : this.cause.output
+        : "";
+    return [
+      "error: failed to upgrade tokenmaxxing",
+      `command: ${this.command}`,
+      ...(output.length > 0 ? output.split("\n") : []),
+      "hint: a release can take a few minutes to reach every registry mirror; retry shortly, or run the command above yourself",
+    ].join("\n");
+  }
+}
+
+/**
+ * The package manager exited 0, but the `tokenmaxxing` on PATH is not the
+ * version it was asked to install (or its version could not be read).
+ */
+class UpgradeVerificationError extends Data.TaggedError("UpgradeVerificationError")<{
+  readonly command: string;
+  readonly commandPath: string;
+  readonly expectedVersion: string;
+  readonly installedVersion: string | null;
+}> {
+  override get message() {
+    const summary =
+      this.installedVersion === null
+        ? `error: could not confirm the upgrade to ${this.expectedVersion}; ${this.commandPath} --version failed`
+        : `error: upgrade did not take effect; tokenmaxxing is ${this.installedVersion}, expected ${this.expectedVersion}`;
+    return `${summary}\ncommand: ${this.command}\npath: ${this.commandPath}\nhint: run tokenmaxxing --version; if it is still old, run the command above yourself or check which -a tokenmaxxing`;
+  }
+}
+
+/** A stable install cannot upgrade without knowing the exact version to install. */
+class UpgradeVersionCheckError extends Data.TaggedError("UpgradeVersionCheckError")<{
+  readonly currentVersion: string;
+}> {
+  override get message() {
+    return `error: could not check the latest tokenmaxxing version\ncurrent: ${this.currentVersion}\nhint: upgrade installs the exact version the registry reports; retry when online`;
+  }
 }
 
 class UpgradePrereleaseVersionCheckError extends Data.TaggedError(
@@ -96,7 +145,7 @@ class UpgradePrereleaseVersionCheckError extends Data.TaggedError(
   readonly currentVersion: string;
 }> {
   override get message() {
-    return `error: could not check the latest tokenmaxxing versions\ncurrent: ${this.currentVersion}\nhint: prereleases only upgrade after a successful registry check (installing latest could downgrade); retry when online`;
+    return `error: could not check the latest tokenmaxxing versions\ncurrent: ${this.currentVersion}\nhint: upgrade installs the exact version the registry reports; retry when online`;
   }
 }
 
@@ -121,11 +170,13 @@ function upgradeProgram(
     home?: string;
     isServiceInstalled?: (paths: ServicePaths) => Effect.Effect<boolean, never>;
     platform?: NodeJS.Platform;
+    readInstalledVersion?: (commandPath: string) => Effect.Effect<string | null, never>;
     refreshService?: (options: { commandPath: string }) => Effect.Effect<void, unknown>;
     runPackageManagerUpdate?: (
       manager: AutoUpdateManager,
-      specifier: string,
+      version: string,
     ) => Effect.Effect<void, unknown>;
+    serviceUsesConfigDir?: (paths: ServicePaths) => Effect.Effect<boolean, never>;
   } = {},
   options: { json?: boolean | undefined } = {},
 ) {
@@ -170,7 +221,20 @@ function upgradeProgram(
       runtime.getDistTags ?? (() => fetchDistTags()),
     );
 
-    if (versionCheck._tag === "available" && versionCheck.target === null) {
+    // Without a registry answer there is no exact version to install, and a
+    // dist-tag is resolved from the package manager's own (possibly stale)
+    // cache, which can install an older release and still exit 0.
+    if (versionCheck._tag === "unavailable") {
+      yield* Effect.sync(() => versionSpinner.error("Could not check latest version"));
+      return yield* Effect.fail(
+        releaseChannel(currentVersion) === LATEST_DIST_TAG
+          ? new UpgradeVersionCheckError({ currentVersion })
+          : new UpgradePrereleaseVersionCheckError({ currentVersion }),
+      );
+    }
+
+    const target = versionCheck.target;
+    if (target === null) {
       yield* Effect.sync(() =>
         versionSpinner.stop(`Already up to date (${versionCheck.currentVersion})`),
       );
@@ -197,32 +261,37 @@ function upgradeProgram(
       return;
     }
 
-    // Without a registry answer a stable install still runs `@latest` (it
-    // cannot be ahead of it), but a prerelease could be ahead of `latest`.
-    if (versionCheck._tag === "unavailable" && releaseChannel(currentVersion) !== LATEST_DIST_TAG) {
-      yield* Effect.sync(() => versionSpinner.error("Could not check latest version"));
-      return yield* Effect.fail(new UpgradePrereleaseVersionCheckError({ currentVersion }));
-    }
-
-    const target = versionCheck._tag === "available" ? versionCheck.target : null;
-    const specifier = target === null ? LATEST_DIST_TAG : packageManagerSpecifier(target);
-    const command = autoUpdateCommandDescription(manager, specifier);
-    if (target !== null) {
-      yield* Effect.sync(() =>
-        versionSpinner.stop(`From ${versionCheck.currentVersion} -> ${target.version}`),
-      );
-    } else {
-      yield* Effect.sync(() =>
-        versionSpinner.stop("Could not check latest version; running upgrade anyway"),
-      );
-    }
+    const command = autoUpdateCommandDescription(manager, target.version);
+    yield* Effect.sync(() =>
+      versionSpinner.stop(`From ${versionCheck.currentVersion} -> ${target.version}`),
+    );
 
     const upgradeSpinner = yield* humanSpinner(`Running ${command}`, options);
-    yield* (runtime.runPackageManagerUpdate ?? runPackageManagerUpdate)(manager, specifier).pipe(
-      Effect.tap(() => Effect.sync(() => upgradeSpinner.stop(formatUpgradeSuccess(versionCheck)))),
+    yield* (runtime.runPackageManagerUpdate ?? runPackageManagerUpdate)(
+      manager,
+      target.version,
+    ).pipe(
       Effect.tapError(() => Effect.sync(() => upgradeSpinner.error("Upgrade failed"))),
-      Effect.mapError((cause) => new UpgradeFailedError({ cause })),
+      Effect.mapError((cause) => new UpgradeFailedError({ cause, command })),
     );
+
+    // Never report an upgrade that did not land: the package manager's exit
+    // code alone has claimed success while leaving the old version installed.
+    const installedVersion = yield* (runtime.readInstalledVersion ?? readInstalledCliVersion)(
+      install.commandPath,
+    );
+    if (installedVersion === null || !sameVersion(installedVersion, target.version)) {
+      yield* Effect.sync(() => upgradeSpinner.error("Upgrade did not take effect"));
+      return yield* Effect.fail(
+        new UpgradeVerificationError({
+          command,
+          commandPath: install.commandPath,
+          expectedVersion: target.version,
+          installedVersion,
+        }),
+      );
+    }
+    yield* Effect.sync(() => upgradeSpinner.stop(formatUpgradeSuccess(target.version)));
 
     const refreshSpinner = yield* humanSpinner("Refreshing service", options);
     const refreshResult = yield* refreshInstalledService(install, runtime);
@@ -237,15 +306,16 @@ function upgradeProgram(
         channelVersion: versionCheck.channelVersion,
         command,
         currentVersion: versionCheck.currentVersion,
-        distTag: target?.distTag ?? null,
+        distTag: target.distTag,
+        installedVersion,
         latestVersion: versionCheck.latestVersion,
         packageManager: manager,
         service: serviceRefreshJson(refreshResult),
         skipped: false,
         status: "ok",
-        targetVersion: target?.version ?? null,
+        targetVersion: target.version,
         updated: true,
-        versionCheck: versionCheck._tag === "available" ? "ok" : "unavailable",
+        versionCheck: "ok",
       });
       return;
     }
@@ -291,10 +361,13 @@ function wellFormedDistTagVersion(distTags: DistTags, distTag: string): string |
   return version !== undefined && parseSemVer(version) !== null ? version : null;
 }
 
-function formatUpgradeSuccess(versionCheck: VersionCheckResult): string {
-  return versionCheck._tag === "available" && versionCheck.target !== null
-    ? `Upgraded to v${versionCheck.target.version}`
-    : "Upgraded tokenmaxxing";
+function formatUpgradeSuccess(version: string): string {
+  return `Upgraded to v${version}`;
+}
+
+function sameVersion(left: string, right: string): boolean {
+  const normalize = (version: string) => version.trim().replace(/^v/i, "").replace(/\+.*/, "");
+  return normalize(left) === normalize(right);
 }
 
 function refreshInstalledService(
@@ -305,6 +378,7 @@ function refreshInstalledService(
     isServiceInstalled?: (paths: ServicePaths) => Effect.Effect<boolean, never>;
     platform?: NodeJS.Platform;
     refreshService?: (options: { commandPath: string }) => Effect.Effect<void, unknown>;
+    serviceUsesConfigDir?: (paths: ServicePaths) => Effect.Effect<boolean, never>;
   },
 ): Effect.Effect<ServiceRefreshResult, never> {
   return Effect.gen(function* () {
@@ -321,6 +395,15 @@ function refreshInstalledService(
     const installed = yield* (runtime.isServiceInstalled ?? isServiceInstalled)(paths);
     if (!installed) {
       return { _tag: "not-installed" as const };
+    }
+
+    // `service install --refresh` would point that definition at this
+    // config dir, taking the service over from whoever installed it.
+    const ownsService = yield* (runtime.serviceUsesConfigDir ?? serviceDefinitionUsesConfigDir)(
+      paths,
+    );
+    if (!ownsService) {
+      return { _tag: "other-config-dir" as const };
     }
 
     const result = yield* (runtime.refreshService ?? refreshServiceAfterUpdate)({
@@ -342,6 +425,8 @@ function formatServiceRefreshResult(result: ServiceRefreshResult): string {
       return "Service: refresh failed; run tokenmaxxing service install if needed";
     case "not-installed":
       return "Service: not installed";
+    case "other-config-dir":
+      return "Service: left alone; the installed service uses another config dir";
     case "refreshed":
       return "Service: refreshed";
   }
@@ -365,4 +450,6 @@ export {
   UpgradeFailedError,
   UpgradeManagerError,
   UpgradePrereleaseVersionCheckError,
+  UpgradeVerificationError,
+  UpgradeVersionCheckError,
 };

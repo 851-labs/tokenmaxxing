@@ -1,4 +1,5 @@
-import { Cause, Effect, Layer, Option } from "effect";
+import { Cause, Effect, Fiber, Layer, Option } from "effect";
+import { TestClock } from "effect/testing";
 import { Unauthorized, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -30,6 +31,7 @@ import {
   syncStatusForSources,
   SyncAuthValidationError,
   SyncPushError,
+  SyncSourcesFailedError,
   type SyncAuth,
   type SyncSourceIssue,
   uploadUsageReports,
@@ -123,7 +125,9 @@ function makeTestLayer(options: TestLayerOptions) {
             me: () =>
               options.meError === undefined
                 ? Effect.succeed({ user })
-                : Effect.fail(options.meError),
+                : options.meError === "never"
+                  ? Effect.never
+                  : Effect.fail(options.meError),
           },
           usage: {
             ingest: () =>
@@ -854,6 +858,64 @@ describe("uploadUsageReports", () => {
     expect(state.sleeps).toEqual([]);
   });
 
+  // FAIL-4: a server that accepted the connection and never answered left a
+  // foreground sync on "Uploading usage" forever.
+  it("times out a foreground upload the server never answers", async () => {
+    const { layer, state } = makeConsoleLayer();
+    const auth = makeUploadAuth(() => Effect.never);
+
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(
+          Effect.exit(
+            uploadUsageReports({
+              auth,
+              device: { name: "Mac.local", platform: "darwin" },
+              options: { json: false },
+              rawReports: [],
+            }),
+          ),
+        );
+        yield* TestClock.adjust("60 seconds");
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer()))),
+    );
+
+    const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
+    expect(Option.getOrUndefined(error)).toBeInstanceOf(SyncPushError);
+    expect((Option.getOrUndefined(error) as SyncPushError).message).toBe(
+      "error: failed to push usage to tokenmaxxing; the tokenmaxxing API did not answer within 60 s\nhint: check your network, then try again",
+    );
+    expect(state.errors).toEqual(["Failed uploading usage"]);
+  });
+
+  it("says when to retry a rate-limited upload", async () => {
+    const { layer } = makeConsoleLayer();
+    const client = await Effect.runPromise(
+      makeStubApiClient({
+        "POST /usage/ingest": {
+          body: { _tag: "RateLimited", message: "slow down" },
+          headers: { "retry-after": "60" },
+          status: 429,
+        },
+      }),
+    );
+
+    const exit = await Effect.runPromiseExit(
+      uploadUsageReports({
+        auth: { ...makeUploadAuth(() => Effect.never), client },
+        device: { name: "Mac.local", platform: "darwin" },
+        options: { json: false },
+        rawReports: [],
+      }).pipe(Effect.provide(layer)),
+    );
+
+    const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
+    expect((Option.getOrUndefined(error) as SyncPushError).message).toBe(
+      "error: failed to push usage to tokenmaxxing; the tokenmaxxing API is rate limiting requests\nhint: try again in 60 s",
+    );
+  });
+
   it("retries uploads when an upload policy is provided", async () => {
     const { layer, state } = makeConsoleLayer();
     let calls = 0;
@@ -921,6 +983,46 @@ describe("uploadUsageReports", () => {
 
     expect(state.logs).toEqual([]);
     expect(state.errors).toEqual([]);
+  });
+});
+
+describe("SyncSourcesFailedError", () => {
+  const issue = (code: SyncSourceIssue["code"], message: string): SyncSourceIssue => ({
+    code,
+    message,
+    report: "daily",
+  });
+
+  it("names the missing runner when neither bun nor npx exists", () => {
+    expect(
+      new SyncSourcesFailedError({
+        failures: [
+          { issue: issue("command_not_found", "ccusage command not found"), source: "claude" },
+          { issue: issue("command_not_found", "ccusage command not found"), source: "codex" },
+        ],
+      }).message,
+    ).toBe(
+      "error: no usage synced; could not run ccusage: neither bun nor npx is on PATH\nhint: install Bun (https://bun.sh) or Node.js (https://nodejs.org), then run tokenmaxxing sync again",
+    );
+  });
+
+  it("lists each distinct reason with the sources it hit", () => {
+    expect(
+      new SyncSourcesFailedError({
+        failures: [
+          { issue: issue("command_timed_out", "ccusage command timed out"), source: "claude" },
+          { issue: issue("command_failed", "ccusage command failed"), source: "codex" },
+          { issue: issue("command_timed_out", "ccusage command timed out"), source: "gemini" },
+        ],
+      }).message,
+    ).toBe(
+      [
+        "error: no usage synced; ccusage failed for claude, codex, gemini",
+        "claude, gemini: ccusage command timed out",
+        "codex: ccusage command failed",
+        "hint: check that ccusage runs for these agents, then run tokenmaxxing sync again",
+      ].join("\n"),
+    );
   });
 });
 
@@ -1250,6 +1352,48 @@ describe("resolveSyncAuth token clearing", () => {
     expect(state.browserUrls).toEqual([]);
     const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
     expect(Option.getOrUndefined(error)).toBeInstanceOf(SyncAuthValidationError);
+  });
+
+  it("says when to retry, not to log in again, when /me is rate limited", async () => {
+    const { layer, state } = makeTestLayer({
+      client: makeStubApiClient({
+        "GET /me": {
+          body: { _tag: "RateLimited", message: "slow down" },
+          headers: { "retry-after": "60" },
+          status: 429,
+        },
+      }),
+      initialConfig: storedConfig,
+    });
+
+    const exit = await Effect.runPromiseExit(
+      resolveSyncAuth({ json: false }).pipe(Effect.provide(layer)),
+    );
+
+    expect(state.clearedTokens).toBe(0);
+    const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
+    expect(Option.getOrUndefined(error)).toBeInstanceOf(SyncAuthValidationError);
+    expect((Option.getOrUndefined(error) as SyncAuthValidationError).message).toBe(
+      "error: failed to validate stored login; the tokenmaxxing API is rate limiting requests\nhint: try again in 60 s",
+    );
+  });
+
+  it("times out a /me call the server never answers", async () => {
+    const { layer, state } = makeTestLayer({ initialConfig: storedConfig, meError: "never" });
+
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(Effect.exit(resolveSyncAuth({ json: false })));
+        yield* TestClock.adjust("15 seconds");
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer()))),
+    );
+
+    expect(state.clearedTokens).toBe(0);
+    const error = exit._tag === "Failure" ? Cause.findErrorOption(exit.cause) : Option.none();
+    expect((Option.getOrUndefined(error) as SyncAuthValidationError).message).toBe(
+      "error: failed to validate stored login; the tokenmaxxing API did not answer within 15 s\nhint: check your network, then try again",
+    );
   });
 
   it("keeps the stored token for an error that only looks like Unauthorized", async () => {

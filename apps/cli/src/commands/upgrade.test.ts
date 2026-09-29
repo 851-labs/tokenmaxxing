@@ -1,13 +1,15 @@
-import { Effect, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ConsoleService } from "../services";
-import type { CommandInstall } from "./service";
+import { type CommandInstall, PackageManagerUpdateError } from "./service";
 import {
   formatServiceRefreshResult,
   formatUpgradeSuccess,
   refreshInstalledService,
+  UpgradeFailedError,
   upgradeProgram,
+  UpgradeVerificationError,
 } from "./upgrade";
 
 const install: CommandInstall = {
@@ -30,6 +32,12 @@ function testConsole() {
   return { layer, logs };
 }
 
+function failureOf(exit: Exit.Exit<unknown, unknown>): unknown {
+  return Exit.isFailure(exit)
+    ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+    : undefined;
+}
+
 describe("upgradeProgram", () => {
   it("upgrades through the detected package manager and skips service refresh when absent", async () => {
     const { layer, logs } = testConsole();
@@ -41,6 +49,7 @@ describe("upgradeProgram", () => {
         findCommandInstall: () => Effect.succeed(install),
         getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
         isServiceInstalled: () => Effect.succeed(false),
+        readInstalledVersion: () => Effect.succeed("0.4.4"),
         runPackageManagerUpdate: (manager) =>
           Effect.sync(() => {
             managers.push(manager);
@@ -55,7 +64,7 @@ describe("upgradeProgram", () => {
       "Using method: npm",
       "Checking latest version",
       "From 0.4.3 -> 0.4.4",
-      "Running npm install -g @851-labs/tokenmaxxing@latest --silent",
+      "Running npm install -g @851-labs/tokenmaxxing@0.4.4 --prefer-online --loglevel=error",
       "Upgraded to v0.4.4",
       "Refreshing service",
       "Service: not installed",
@@ -95,7 +104,7 @@ describe("upgradeProgram", () => {
     ]);
   });
 
-  it("falls back to running the upgrade when latest version lookup fails", async () => {
+  it("refuses to upgrade without a version check instead of installing a dist-tag", async () => {
     const { layer, logs } = testConsole();
     const managers: string[] = [];
 
@@ -112,17 +121,14 @@ describe("upgradeProgram", () => {
       }).pipe(Effect.provide(layer)),
     );
 
-    expect(exit._tag).toBe("Success");
-    expect(managers).toEqual(["npm"]);
+    expect(exit._tag).toBe("Failure");
+    expect(JSON.stringify(exit)).toContain("UpgradeVersionCheckError");
+    expect(managers).toEqual([]);
     expect(logs).toEqual([
       "Detecting install method",
       "Using method: npm",
       "Checking latest version",
-      "Could not check latest version; running upgrade anyway",
-      "Running npm install -g @851-labs/tokenmaxxing@latest --silent",
-      "Upgraded tokenmaxxing",
-      "Refreshing service",
-      "Service: not installed",
+      "Could not check latest version",
     ]);
   });
 
@@ -177,6 +183,7 @@ describe("upgradeProgram", () => {
           findCommandInstall: () => Effect.succeed(install),
           getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
           isServiceInstalled: () => Effect.succeed(false),
+          readInstalledVersion: () => Effect.succeed("0.4.4"),
           runPackageManagerUpdate: (manager) =>
             Effect.sync(() => {
               managers.push(manager);
@@ -192,9 +199,10 @@ describe("upgradeProgram", () => {
       JSON.stringify({
         channel: "latest",
         channelVersion: "0.4.4",
-        command: "npm install -g @851-labs/tokenmaxxing@latest --silent",
+        command: "npm install -g @851-labs/tokenmaxxing@0.4.4 --prefer-online --loglevel=error",
         currentVersion: "0.4.3",
         distTag: "latest",
+        installedVersion: "0.4.4",
         latestVersion: "0.4.4",
         packageManager: "npm",
         service: { status: "not-installed" },
@@ -217,11 +225,13 @@ describe("upgradeProgram", () => {
         findCommandInstall: () => Effect.succeed(install),
         getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
         isServiceInstalled: () => Effect.succeed(true),
+        readInstalledVersion: () => Effect.succeed("0.4.4"),
         refreshService: (options) =>
           Effect.sync(() => {
             refreshes.push(options);
           }),
         runPackageManagerUpdate: () => Effect.void,
+        serviceUsesConfigDir: () => Effect.succeed(true),
       }).pipe(Effect.provide(layer)),
     );
 
@@ -240,13 +250,141 @@ describe("upgradeProgram", () => {
         findCommandInstall: () => Effect.succeed(install),
         getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
         isServiceInstalled: () => Effect.succeed(true),
+        readInstalledVersion: () => Effect.succeed("0.4.4"),
         refreshService: () => Effect.fail(new Error("refresh failed")),
         runPackageManagerUpdate: () => Effect.void,
+        serviceUsesConfigDir: () => Effect.succeed(true),
       }).pipe(Effect.provide(layer)),
     );
 
     expect(exit._tag).toBe("Success");
     expect(logs).toContain("Service: refresh failed; run tokenmaxxing service install if needed");
+  });
+
+  // FAIL-6 / FAIL-1: npm installed a stale `latest` (or bun did nothing),
+  // exited 0, and the old CLI reported "Upgraded" with updated: true.
+  it("fails instead of reporting success when the package manager leaves the old version", async () => {
+    const { layer, logs } = testConsole();
+
+    const exit = await Effect.runPromiseExit(
+      upgradeProgram(
+        {
+          currentVersion: "0.6.0",
+          findCommandInstall: () => Effect.succeed(install),
+          getDistTags: () => Effect.succeed({ alpha: "0.7.0-alpha.2", latest: "0.7.0" }),
+          isServiceInstalled: () => Effect.succeed(false),
+          readInstalledVersion: () => Effect.succeed("0.6.0"),
+          runPackageManagerUpdate: () => Effect.void,
+        },
+        { json: true },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(logs).toEqual([]);
+    const error = failureOf(exit);
+    expect(error).toBeInstanceOf(UpgradeVerificationError);
+    expect((error as UpgradeVerificationError).message).toBe(
+      [
+        "error: upgrade did not take effect; tokenmaxxing is 0.6.0, expected 0.7.0",
+        "command: npm install -g @851-labs/tokenmaxxing@0.7.0 --prefer-online --loglevel=error",
+        "path: /usr/local/bin/tokenmaxxing",
+        "hint: run tokenmaxxing --version; if it is still old, run the command above yourself or check which -a tokenmaxxing",
+      ].join("\n"),
+    );
+  });
+
+  it("fails when the installed version cannot be read back", async () => {
+    const { layer, logs } = testConsole();
+    const refreshes: Array<{ commandPath: string }> = [];
+
+    const exit = await Effect.runPromiseExit(
+      upgradeProgram({
+        currentVersion: "0.6.0",
+        findCommandInstall: () => Effect.succeed(install),
+        getDistTags: () => Effect.succeed({ latest: "0.7.0" }),
+        isServiceInstalled: () => Effect.succeed(true),
+        readInstalledVersion: () => Effect.succeed(null),
+        refreshService: (options) =>
+          Effect.sync(() => {
+            refreshes.push(options);
+          }),
+        runPackageManagerUpdate: () => Effect.void,
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(failureOf(exit)).toMatchObject({
+      _tag: "UpgradeVerificationError",
+      installedVersion: null,
+    });
+    expect(refreshes).toEqual([]);
+    expect(logs.at(-1)).toBe("Upgrade did not take effect");
+  });
+
+  it("puts the package manager's error output in the failure", async () => {
+    const { layer } = testConsole();
+    const command = "npm install -g @851-labs/tokenmaxxing@0.7.0 --prefer-online --loglevel=error";
+
+    const exit = await Effect.runPromiseExit(
+      upgradeProgram({
+        currentVersion: "0.6.0",
+        findCommandInstall: () => Effect.succeed(install),
+        getDistTags: () => Effect.succeed({ latest: "0.7.0" }),
+        runPackageManagerUpdate: () =>
+          Effect.fail(
+            new PackageManagerUpdateError({
+              cause: new Error(`Command failed: ${command}`),
+              command,
+              output:
+                "npm error code ETARGET\nnpm error notarget No matching version found for @851-labs/tokenmaxxing@0.7.0.",
+              timedOut: false,
+            }),
+          ),
+      }).pipe(Effect.provide(layer)),
+    );
+
+    const error = failureOf(exit);
+    expect(error).toBeInstanceOf(UpgradeFailedError);
+    expect((error as UpgradeFailedError).message).toBe(
+      [
+        "error: failed to upgrade tokenmaxxing",
+        `command: ${command}`,
+        "npm error code ETARGET",
+        "npm error notarget No matching version found for @851-labs/tokenmaxxing@0.7.0.",
+        "hint: a release can take a few minutes to reach every registry mirror; retry shortly, or run the command above yourself",
+      ].join("\n"),
+    );
+  });
+
+  it("leaves a service installed for another config dir alone", async () => {
+    const { layer, logs } = testConsole();
+    const refreshes: Array<{ commandPath: string }> = [];
+
+    const exit = await Effect.runPromiseExit(
+      upgradeProgram(
+        {
+          currentVersion: "0.4.3",
+          findCommandInstall: () => Effect.succeed(install),
+          getDistTags: () => Effect.succeed({ latest: "0.4.4" }),
+          isServiceInstalled: () => Effect.succeed(true),
+          readInstalledVersion: () => Effect.succeed("0.4.4"),
+          refreshService: (options) =>
+            Effect.sync(() => {
+              refreshes.push(options);
+            }),
+          runPackageManagerUpdate: () => Effect.void,
+          serviceUsesConfigDir: () => Effect.succeed(false),
+        },
+        { json: true },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(exit._tag).toBe("Success");
+    expect(refreshes).toEqual([]);
+    expect(JSON.parse(logs[0]!)).toMatchObject({
+      service: { status: "other-config-dir" },
+      updated: true,
+    });
   });
 
   describe("release channels", () => {
@@ -266,6 +404,8 @@ describe("upgradeProgram", () => {
               Effect.succeed({ ...install, autoUpdateManager: input.manager ?? "npm" }),
             getDistTags: () => input.distTags,
             isServiceInstalled: () => Effect.succeed(false),
+            readInstalledVersion: () =>
+              Effect.succeed(updates.at(-1)?.specifier ?? input.currentVersion),
             runPackageManagerUpdate: (manager, specifier) =>
               Effect.sync(() => {
                 updates.push({ manager, specifier });
@@ -352,9 +492,11 @@ describe("upgradeProgram", () => {
       expect(result.json).toEqual({
         channel: "alpha",
         channelVersion: "0.7.0-alpha.10",
-        command: "npm install -g @851-labs/tokenmaxxing@0.7.0-alpha.10 --silent",
+        command:
+          "npm install -g @851-labs/tokenmaxxing@0.7.0-alpha.10 --prefer-online --loglevel=error",
         currentVersion: "0.7.0-alpha.9",
         distTag: "alpha",
+        installedVersion: "0.7.0-alpha.10",
         latestVersion: "0.6.0",
         packageManager: "npm",
         service: { status: "not-installed" },
@@ -372,13 +514,14 @@ describe("upgradeProgram", () => {
         distTags: Effect.succeed({ alpha: "0.7.0-alpha.1", latest: "0.7.0" }),
       });
 
-      expect(result.updates).toEqual([{ manager: "npm", specifier: "latest" }]);
+      expect(result.updates).toEqual([{ manager: "npm", specifier: "0.7.0" }]);
       expect(result.json).toEqual({
         channel: "alpha",
         channelVersion: "0.7.0-alpha.1",
-        command: "npm install -g @851-labs/tokenmaxxing@latest --silent",
+        command: "npm install -g @851-labs/tokenmaxxing@0.7.0 --prefer-online --loglevel=error",
         currentVersion: "0.7.0-alpha.1",
         distTag: "latest",
+        installedVersion: "0.7.0",
         latestVersion: "0.7.0",
         packageManager: "npm",
         service: { status: "not-installed" },
@@ -390,7 +533,7 @@ describe("upgradeProgram", () => {
       });
     });
 
-    it("installs prereleases with bun add since bun update cannot pin a version", async () => {
+    it("installs prereleases with bun add, bypassing bun's manifest cache", async () => {
       const result = await runUpgrade({
         currentVersion: "0.7.0-alpha.0",
         distTags: Effect.succeed({ alpha: "0.7.0-alpha.1", latest: "0.6.0" }),
@@ -399,22 +542,27 @@ describe("upgradeProgram", () => {
 
       expect(result.updates).toEqual([{ manager: "bun", specifier: "0.7.0-alpha.1" }]);
       expect(result.json).toMatchObject({
-        command: "bun add -g @851-labs/tokenmaxxing@0.7.0-alpha.1 --silent",
+        command: "bun add -g @851-labs/tokenmaxxing@0.7.0-alpha.1 --no-cache --silent",
       });
     });
 
-    it("reports the bun update command for a stable install following latest", async () => {
-      const result = await runUpgrade({
-        currentVersion: "0.6.0",
-        distTags: Effect.succeed({ latest: "0.6.1" }),
-        manager: "bun",
-      });
+    it("installs latest's exact version, never the dist-tag, for every package manager", async () => {
+      const commands = {
+        bun: "bun add -g @851-labs/tokenmaxxing@0.6.1 --no-cache --silent",
+        npm: "npm install -g @851-labs/tokenmaxxing@0.6.1 --prefer-online --loglevel=error",
+        pnpm: "pnpm add -g @851-labs/tokenmaxxing@0.6.1 --loglevel=error",
+        yarn: "yarn global add @851-labs/tokenmaxxing@0.6.1 --silent",
+      } as const;
+      for (const [manager, command] of Object.entries(commands)) {
+        const result = await runUpgrade({
+          currentVersion: "0.6.0",
+          distTags: Effect.succeed({ latest: "0.6.1" }),
+          manager: manager as keyof typeof commands,
+        });
 
-      expect(result.updates).toEqual([{ manager: "bun", specifier: "latest" }]);
-      expect(result.json).toMatchObject({
-        command: "bun update -g @851-labs/tokenmaxxing --latest --silent",
-        targetVersion: "0.6.1",
-      });
+        expect(result.updates).toEqual([{ manager, specifier: "0.6.1" }]);
+        expect(result.json).toMatchObject({ command, targetVersion: "0.6.1", updated: true });
+      }
     });
 
     it("reports no command for any package manager when nothing is installed", async () => {
@@ -428,29 +576,15 @@ describe("upgradeProgram", () => {
       expect(result.json).toMatchObject({ command: null, packageManager: "bun", skipped: true });
     });
 
-    it("runs latest for a stable install when the registry is unreachable", async () => {
+    it("refuses a stable install too when the registry is unreachable", async () => {
       const result = await runUpgrade({
         currentVersion: "0.6.0",
         distTags: Effect.fail("offline"),
       });
 
-      expect(result.exit._tag).toBe("Success");
-      expect(result.updates).toEqual([{ manager: "npm", specifier: "latest" }]);
-      expect(result.json).toEqual({
-        channel: "latest",
-        channelVersion: null,
-        command: "npm install -g @851-labs/tokenmaxxing@latest --silent",
-        currentVersion: "0.6.0",
-        distTag: null,
-        latestVersion: null,
-        packageManager: "npm",
-        service: { status: "not-installed" },
-        skipped: false,
-        status: "ok",
-        targetVersion: null,
-        updated: true,
-        versionCheck: "unavailable",
-      });
+      expect(result.exit._tag).toBe("Failure");
+      expect(result.updates).toEqual([]);
+      expect(JSON.stringify(result.exit)).toContain("UpgradeVersionCheckError");
     });
 
     it("keeps stable installs off prerelease channels", async () => {
@@ -530,6 +664,9 @@ describe("refreshInstalledService", () => {
   it("formats refresh results", () => {
     expect(formatServiceRefreshResult({ _tag: "refreshed" })).toBe("Service: refreshed");
     expect(formatServiceRefreshResult({ _tag: "not-installed" })).toBe("Service: not installed");
+    expect(formatServiceRefreshResult({ _tag: "other-config-dir" })).toBe(
+      "Service: left alone; the installed service uses another config dir",
+    );
     expect(formatServiceRefreshResult({ _tag: "failed", cause: "boom" })).toBe(
       "Service: refresh failed; run tokenmaxxing service install if needed",
     );
@@ -537,43 +674,7 @@ describe("refreshInstalledService", () => {
 });
 
 describe("formatUpgradeSuccess", () => {
-  it("includes the target version when the registry check succeeded", () => {
-    expect(
-      formatUpgradeSuccess({
-        _tag: "available",
-        channel: "latest",
-        channelVersion: "0.4.4",
-        currentVersion: "0.4.3",
-        latestVersion: "0.4.4",
-        shouldUpdate: true,
-        target: { distTag: "latest", version: "0.4.4" },
-      }),
-    ).toBe("Upgraded to v0.4.4");
-  });
-
-  it("names the installed target, not npm latest, for a prerelease upgrade", () => {
-    expect(
-      formatUpgradeSuccess({
-        _tag: "available",
-        channel: "alpha",
-        channelVersion: "0.7.0-alpha.2",
-        currentVersion: "0.7.0-alpha.1",
-        latestVersion: "0.6.0",
-        shouldUpdate: true,
-        target: { distTag: "alpha", version: "0.7.0-alpha.2" },
-      }),
-    ).toBe("Upgraded to v0.7.0-alpha.2");
-  });
-
-  it("keeps generic copy when the registry check was unavailable", () => {
-    expect(
-      formatUpgradeSuccess({
-        _tag: "unavailable",
-        channel: "latest",
-        channelVersion: null,
-        currentVersion: "0.4.3",
-        latestVersion: null,
-      }),
-    ).toBe("Upgraded tokenmaxxing");
+  it("names the installed version", () => {
+    expect(formatUpgradeSuccess("0.7.0-alpha.2")).toBe("Upgraded to v0.7.0-alpha.2");
   });
 });
