@@ -53,9 +53,14 @@ token, which the hosted runners have. Before a run starts, the watcher proves
 both sources live with a self-test window and a probe process, and before it
 stops it waits for one more probe so every start is in.
 
-A new visible window from a console-ish process or class fails the check, and
-so does a foreground change to one. Two things keep the watcher from passing
-blind:
+A new visible window or a foreground change fails the check when it belongs
+to the run's process tree: the task's action (or, for a control, the process
+the harness started) and everything it starts, from the parent pids the
+process trace records. Windows Terminal and its OpenConsole count too, since a
+console of ours lands there when it is the default terminal. Anything else is
+ignored but listed in the check with its process and parent: the
+windows-11-arm image runs `wsl.exe --update` in a console now and then. Two
+things keep the watcher from passing blind:
 
 - Each run must show the processes it is known to start: the task's action
   (the `wscript.exe` launcher, or `cmd.exe` for the legacy `.cmd` task) and

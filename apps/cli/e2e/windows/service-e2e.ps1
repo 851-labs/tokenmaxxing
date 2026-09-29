@@ -24,11 +24,11 @@ Initialize-E2E -OutDir $OutDir -Suite "service"
 
 $TaskName = "tokenmaxxing-sync"
 $BasePath = $env:PATH
-# Processes and window classes a scheduled run could show a window through.
+# Processes worth listing in check details.
 $WatchedProcesses = @("cmd", "conhost", "OpenConsole", "WindowsTerminal", "tokenmaxxing", "wscript", "cscript", "bun", "node", "timeout")
-$ConsoleClasses = @("ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "PseudoConsoleWindow", "#32770")
-# The windows-11-arm image opens its own wsl.exe console now and then.
-$ImageNoise = @("wsl")
+# Console hosts started over COM rather than by the console's client (Windows
+# Terminal as the default terminal), so a console of ours shows up under them.
+$TerminalHosts = @("WindowsTerminal", "OpenConsole")
 $WscriptPattern = '^"?[A-Za-z]:\\Windows\\System32\\wscript\.exe"? //B //NoLogo //E:VBScript ".+\\service-sync\.vbs"$'
 $CmdPattern = '^"?.+\\service-sync\.cmd"?$'
 
@@ -211,21 +211,71 @@ function Invoke-TaskRun([string]$Label, [scriptblock]$After = $null, [string[]]$
   $run
 }
 
+# The run's process tree, from the starts the watcher recorded: its roots
+# (the task's action, or the pids the harness started for a control) and
+# every descendant. Windows reuses pids within seconds, so a parent is the
+# latest process with that pid started no later than its child.
+function Get-ParentProcess($Processes, $Child) {
+  @($Processes | Where-Object { $_.pid -eq $Child.ppid -and $_.t -le $Child.t }) | Select-Object -Last 1
+}
+
+function Get-RunRoots($Run) {
+  $processes = @($Run.watch.processes)
+  if ($Run.rootPids) { return @($processes | Where-Object { $_.pid -in $Run.rootPids }) }
+  # Task Scheduler, the action's parent, was running before the watcher.
+  @($processes | Where-Object {
+      $null -eq (Get-ParentProcess $processes $_) -and (
+        ($Run.action -ne "cmd" -and $_.name -eq "wscript.exe") -or
+        ($Run.action -eq "cmd" -and $_.name -eq "cmd.exe" -and ($null -eq $_.commandLine -or $_.commandLine -match 'service-sync\.cmd')))
+    })
+}
+
+function Get-RunTree($Run) {
+  $processes = @($Run.watch.processes)
+  $tree = New-Object System.Collections.Generic.HashSet[string]
+  foreach ($root in (Get-RunRoots $Run)) { [void]$tree.Add("$($root.pid)@$($root.t)") }
+  # Starts are recorded in delivery order, parents before children.
+  foreach ($process in $processes) {
+    $parent = Get-ParentProcess $processes $process
+    if ($parent -and $tree.Contains("$($parent.pid)@$($parent.t)")) { [void]$tree.Add("$($process.pid)@$($process.t)") }
+  }
+  $tree
+}
+
+# Windows and focus changes owned by the run's process tree fail the run, and
+# so do those owned by a terminal host, where a console of ours would land.
+# Anything else (the windows-11-arm image runs `wsl.exe --update` in a console
+# now and then) is ignored but listed with its process and parent, so one of
+# ours under another name would still be noticed.
 function Get-RunWindows($Run) {
   $watch = $Run.watch
-  $windows = @($watch.newVisibleWindows | Where-Object {
-      $_.process -notin $ImageNoise -and ($WatchedProcesses -contains $_.process -or $ConsoleClasses -contains $_.class)
-    })
-  # A foreground change to one of our processes, or to a window that closed
-  # before it could be described, is a stolen focus.
-  $focus = @($watch.foregroundChanges | Where-Object {
-      $null -eq $_.window -or $null -eq $_.window.process -or $WatchedProcesses -contains $_.window.process -or $ConsoleClasses -contains $_.window.class
-    })
-  $describe = { param($w) "$($w.process)#$($w.pid) class=$($w.class) title='$($w.title)' rect=$($w.rect)" }
+  $processes = @($watch.processes)
+  $tree = Get-RunTree $Run
+  # A window's process by pid; its start may be delivered up to about a second
+  # after the window shows.
+  $owner = { param($w, $at) if ($w -and $w.pid) { @($processes | Where-Object { $_.pid -eq $w.pid -and $_.t -le $at + 2 }) | Select-Object -Last 1 } }
+  $isOurs = { param($w, $at)
+    if ($null -eq $w) { return $false }
+    if ($w.process -in $TerminalHosts) { return $true }
+    $process = & $owner $w $at
+    $null -ne $process -and $tree.Contains("$($process.pid)@$($process.t)")
+  }
+  $describe = { param($w, $at)
+    if ($null -eq $w) { return "gone" }
+    $process = & $owner $w $at
+    $parent = if ($process) { Get-ParentProcess $processes $process } else { $null }
+    $from = if (-not $process) { "running before the watch" } elseif ($parent) { "started by $($parent.name)#$($parent.pid)" } else { "started by #$($process.ppid), running before the watch" }
+    "$($w.process)#$($w.pid) ($from) class=$($w.class) title='$($w.title)' rect=$($w.rect)"
+  }
+  $windows = @($watch.newVisibleWindows | Where-Object { & $isOurs $_ $_.firstSeen })
+  $focus = @($watch.foregroundChanges | Where-Object { & $isOurs $_.window $_.t })
+  $ignoredWindows = @($watch.newVisibleWindows | Where-Object { -not (& $isOurs $_ $_.firstSeen) })
+  $ignoredFocus = @($watch.foregroundChanges | Where-Object { -not (& $isOurs $_.window $_.t) })
   [pscustomobject]@{
     windows = $windows
     focus = $focus
-    detail = "windows=[$(($windows | ForEach-Object { & $describe $_ }) -join '; ')] focus=[$(($focus | ForEach-Object { "$($_.t)s->$(if ($_.window) { & $describe $_.window } else { 'gone' })" }) -join '; ')] allNew=[$(($watch.newVisibleWindows | ForEach-Object { "$($_.process):$($_.class)" }) -join ', ')] allForeground=[$(($watch.foregroundChanges | ForEach-Object { "$($_.window.process):$($_.window.class)" }) -join ', ')]"
+    ignored = @($ignoredWindows) + @($ignoredFocus)
+    detail = "windows=[$(($windows | ForEach-Object { & $describe $_ $_.firstSeen }) -join '; ')] focus=[$(($focus | ForEach-Object { "$($_.t)s->$(& $describe $_.window $_.t)" }) -join '; ')] tree=$($tree.Count) ignored windows=[$(($ignoredWindows | ForEach-Object { & $describe $_ $_.firstSeen }) -join '; ')] ignored focus=[$(($ignoredFocus | ForEach-Object { "$($_.t)s->$(& $describe $_.window $_.t)" }) -join '; ')]"
   }
 }
 
@@ -244,17 +294,15 @@ function Format-WatchedProcesses($Processes) {
 # WMI's delivery (about a second), so the process tree decides: the action's
 # parent is Task Scheduler, which was running before the watcher started, and
 # a deferred repair is a wscript.exe started by the runner (tokenmaxxing.exe).
+# The same tree decides which windows count (Get-RunWindows).
 function Assert-WatcherSawRun([string]$Scenario, $Run) {
   $check = "watcher saw the run's processes ($($Run.label))"
   $watch = $Run.watch
   if ($null -eq $watch) { Add-Check $Scenario $check $false "window watcher wrote no summary"; return }
   $processes = @($watch.processes)
-  # Windows reuses pids within seconds: a parent is the latest process with
-  # that pid started no later than its child.
-  $parentName = { param($child) (@($processes | Where-Object { $_.pid -eq $child.ppid -and $_.t -le $child.t }) | Select-Object -Last 1).name }
   $actionName = if ($Run.action -eq "cmd") { "cmd.exe" } else { "wscript.exe" }
-  $actions = @($processes | Where-Object { $_.name -eq $actionName -and $null -eq (& $parentName $_) })
-  $repairs = @($processes | Where-Object { $_.name -eq "wscript.exe" -and (& $parentName $_) -eq "tokenmaxxing.exe" })
+  $actions = @(Get-RunRoots $Run)
+  $repairs = @($processes | Where-Object { $_.name -eq "wscript.exe" -and (Get-ParentProcess $processes $_).name -eq "tokenmaxxing.exe" })
   $missing = @()
   if ($actions.Count -eq 0) { $missing += "$actionName started by Task Scheduler" }
   foreach ($reason in $Run.repairs) {
@@ -342,7 +390,8 @@ function Invoke-WatcherControl([string]$Label, [string]$WindowStyle) {
   [pscustomobject]@{
     watch = $watch
     seen = $null -ne $seen
-    windows = if ($watch) { Get-RunWindows ([pscustomobject]@{ watch = $watch }) } else { $null }
+    # The harness started this cmd.exe, so it is the tree's root.
+    windows = if ($watch) { Get-RunWindows ([pscustomobject]@{ watch = $watch; rootPids = @($process.Id) }) } else { $null }
     detail = "processSource=$($watch.processSource) windowSource=$($watch.windowSource) ready after $($watch.readyAtSeconds)s; cmd.exe#$($process.Id) exit=$($process.ExitCode) $(if ($seen) { 'seen' } else { 'not seen' })"
   }
 }
@@ -522,6 +571,8 @@ function Invoke-LegacyUpgrade {
   $line = Get-ServiceRunLine $reloadRun
   Add-Check $scenario "upgraded runner syncs under the old task" ($reloadRun.lastResult -in @("0", "267011") -and $line -match '"status":"success"') "Last Result=$($reloadRun.lastResult); $(Format-OneLine $line 500)"
   Add-Check $scenario "run reports reloadRequired" ($line -match '"reloadRequired":true') (Format-OneLine $line 500)
+  # Still the old task, so its console shows; the watcher must see the repair.
+  Assert-WatcherSawRun $scenario $reloadRun
   # cmd.exe re-reads a running batch file, so the repair must wait for the old
   # wrapper to exit before rewriting it: exactly one clean log entry.
   $headers = ([regex]::Matches($reloadRun.logDelta, "tokenmaxxing service sync")).Count
