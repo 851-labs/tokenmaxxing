@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.0-alpha.4 - 2026-09-29
+
 ### Upgrading from 0.7.0-alpha.2 or earlier
 
 - On Windows, reinstall an `npm install -g --prefix <dir>` install once by hand:
