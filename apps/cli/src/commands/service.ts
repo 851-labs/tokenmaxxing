@@ -70,6 +70,7 @@ import {
 import {
   resolveSyncAuth,
   syncProgram,
+  sourcesWithoutLogs,
   SyncSourcesFailedError,
   type SyncAuth,
   type SyncResult,
@@ -395,14 +396,45 @@ type DoctorAuthConfig =
       _tag: "success";
     };
 
-type DoctorStatus = "info" | "ok" | "warn";
+/**
+ * FAIL: scheduled syncs cannot happen. WARN: they can, but something is off.
+ * Either makes `service doctor` exit 1. INFO is a fine state worth showing
+ * (never synced yet, a sync running right now), so it never does.
+ */
+type DoctorStatus = "fail" | "info" | "ok" | "warn";
+
+type DoctorHealth = "fail" | "ok" | "warn";
 
 type WindowsLauncherStatus = "current" | "missing" | "outdated";
 
 interface DoctorCheck {
+  /** What is good (OK), what is fine to know (INFO), or what is wrong followed by `fix`. */
   detail: string;
+  /** The command that fixes a WARN or FAIL check. OK and INFO checks never carry one. */
+  fix?: string | undefined;
   label: string;
   status: DoctorStatus;
+}
+
+/** Everything `service doctor` looks at, read before any check is judged. */
+interface ServiceDoctorFacts {
+  authConfig: DoctorAuthConfig;
+  autoUpdate: DoctorCheck;
+  definitionExists: boolean;
+  env: Record<string, string | undefined>;
+  envToken: boolean;
+  installed: boolean;
+  launcher: { path: string; status: WindowsLauncherStatus } | null;
+  lock: DoctorCheck;
+  metadata: ServiceMetadata | null;
+  metadataCommandExists: boolean;
+  nativeStatus: ServiceNativeSchedulerStatus;
+  owner: ServiceDefinitionOwner;
+  paths: ServicePaths;
+  reloadRequired: boolean;
+  runner: ServiceRunnerInspection;
+  state: ServiceState | null;
+  wrapper: string | null;
 }
 
 class ServiceUnsupportedPlatformError extends Data.TaggedError("ServiceUnsupportedPlatformError")<{
@@ -628,10 +660,47 @@ class ServiceOwnedElsewhereError extends Data.TaggedError("ServiceOwnedElsewhere
 class ServiceSourcesFailedError extends Data.TaggedError("ServiceSourcesFailedError")<{
   readonly deferred?: number | undefined;
   readonly failures: readonly { issue: SyncSourceIssue; source: UsageSource }[];
+  readonly withoutLogs?: readonly UsageSource[] | undefined;
 }> {
   override get message() {
-    return new SyncSourcesFailedError({ deferred: this.deferred, failures: this.failures }).message;
+    return new SyncSourcesFailedError({
+      deferred: this.deferred,
+      failures: this.failures,
+      withoutLogs: this.withoutLogs,
+    }).message;
   }
+}
+
+/**
+ * `service doctor` found a WARN or FAIL check: exit 1 so scripts and CI can
+ * gate on it. The checks were already printed; this is the summary line.
+ */
+class ServiceDoctorProblemsError extends Data.TaggedError("ServiceDoctorProblemsError")<{
+  readonly checks: readonly DoctorCheck[];
+}> {
+  override get message() {
+    const failures = this.checks.filter((check) => check.status === "fail");
+    const warnings = this.checks.filter((check) => check.status === "warn");
+    const found = [
+      ...(failures.length > 0 ? [doctorProblemCount(failures, "failure")] : []),
+      ...(warnings.length > 0 ? [doctorProblemCount(warnings, "warning")] : []),
+    ].join(" and ");
+    const fixes = new Set([...failures, ...warnings].map((check) => check.fix));
+    const hint =
+      fixes.size === 1 && !fixes.has(undefined)
+        ? [...fixes][0]
+        : "each FAIL and WARN check says how to fix it";
+
+    return `error: service doctor found ${found}\nhint: ${hint}`;
+  }
+
+  get jsonFields() {
+    return { health: serviceDoctorHealth(this.checks) };
+  }
+}
+
+function doctorProblemCount(checks: readonly DoctorCheck[], noun: string): string {
+  return `${checks.length} ${noun}${checks.length === 1 ? "" : "s"} (${checks.map((check) => check.label).join(", ")})`;
 }
 
 function causeLine(cause: unknown): string {
@@ -1194,9 +1263,16 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
       const launcherPath = windowsLauncherPath(paths);
       const launcherStatus =
         launcherPath === null ? null : yield* readWindowsLauncherStatus(launcherPath);
+      // Worded as `service doctor` words them.
+      const autoUpdate = yield* readServiceAutoUpdateCheck(
+        metadata,
+        installed,
+        yield* findTokenmaxxingCommandInstall().pipe(Effect.catch(() => Effect.succeed(null))),
+      );
+      const lock = yield* serviceLockCheck(paths, lockStatus);
       const status = {
         arch: state?.lastArch ?? null,
-        autoUpdate: formatServiceStatusAutoUpdate(metadata, installed),
+        autoUpdate: autoUpdate.detail,
         backend: paths.backend,
         installed,
         lastAutoUpdate: state?.lastAutoUpdate ?? null,
@@ -1273,7 +1349,7 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
           );
         }
         if (status.lastError !== undefined) {
-          console.log(`Last error: ${status.lastError}`);
+          console.log(`Last error: ${formatServiceLastError(status.lastError)}`);
         }
         if (status.lastRepairStatus !== null) {
           console.log(
@@ -1291,7 +1367,7 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
         if (status.lastRepairError !== null) {
           console.log(`Last repair error: ${status.lastRepairError}`);
         }
-        console.log(`Lock: ${status.lock}`);
+        console.log(`Lock: ${lock.detail}`);
         console.log(`Wrapper: ${status.wrapperPath}`);
         if (status.launcherPath !== null) {
           console.log(
@@ -1341,6 +1417,9 @@ function serviceRunEffect(options: ServiceRunOptions) {
       yield* writeJson(result);
     }
     if (result.status === "error") {
+      const failures = result.sources.flatMap((source) =>
+        source.status === "failed" ? [{ issue: source.issue, source: source.source }] : [],
+      );
       return yield* Effect.fail(
         new ServiceSourcesFailedError({
           deferred: result.sources.filter(
@@ -1348,9 +1427,8 @@ function serviceRunEffect(options: ServiceRunOptions) {
               source.status === "skipped" &&
               (source.reason === "runner_timed_out" || source.reason === "run_deadline"),
           ).length,
-          failures: result.sources.flatMap((source) =>
-            source.status === "failed" ? [{ issue: source.issue, source: source.source }] : [],
-          ),
+          failures,
+          withoutLogs: yield* sourcesWithoutLogs(failures.map((failure) => failure.source)),
         }),
       );
     }
@@ -1362,159 +1440,209 @@ function serviceDoctorEffect(options: { json?: boolean | undefined } = {}) {
     "Service doctor",
     options,
     Effect.gen(function* () {
-      const config = yield* Effect.service(ConfigService);
-      const console = yield* Effect.service(ConsoleService);
       const paths = yield* servicePathsEffect();
-      const now = new Date();
+      const facts = yield* readServiceDoctorFacts(paths);
+      const recentLog = yield* readLogTail(paths.logPath, 8);
 
-      const envToken = yield* config.hasEnvToken();
-      const authConfig = yield* config.readConfig().pipe(
-        Effect.match({
-          onFailure: (cause) => ({ _tag: "error" as const, cause }),
-          onSuccess: (value) => ({ _tag: "success" as const, value }),
-        }),
+      yield* reportServiceDoctor(
+        {
+          checks: serviceDoctorChecks(facts),
+          recentLog,
+          reloadRequired: facts.reloadRequired,
+          scheduler: facts.nativeStatus,
+          state: facts.state,
+        },
+        options,
       );
-      const metadata = yield* readServiceMetadata(paths.metadataPath);
-      const state = yield* readServiceState(paths.statePath);
-      const installed = yield* isServiceInstalled(paths);
-      const nativeStatus = yield* readNativeSchedulerStatus(paths);
-      const reloadRequired = serviceReloadRequired(metadata, state);
-      const wrapperExists = yield* fileExists(paths.wrapperPath);
-      const launcherPath = windowsLauncherPath(paths);
-      const launcherCheck =
+    }),
+  );
+}
+
+function readServiceDoctorFacts(paths: ServicePaths) {
+  return Effect.gen(function* () {
+    const config = yield* Effect.service(ConfigService);
+    const envToken = yield* config.hasEnvToken();
+    const authConfig: DoctorAuthConfig = yield* config.readConfig().pipe(
+      Effect.match({
+        onFailure: (cause) => ({ _tag: "error" as const, cause }),
+        onSuccess: (value) => ({ _tag: "success" as const, value }),
+      }),
+    );
+    const metadata = yield* readServiceMetadata(paths.metadataPath);
+    const state = yield* readServiceState(paths.statePath);
+    const installed = yield* isServiceInstalled(paths);
+    const launcherPath = windowsLauncherPath(paths);
+    const wrapper = yield* Effect.tryPromise(() => readFile(paths.wrapperPath, "utf8")).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
+    const currentCommand = yield* findTokenmaxxingCommandInstall().pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
+
+    return {
+      authConfig,
+      autoUpdate: yield* readServiceAutoUpdateCheck(metadata, installed, currentCommand),
+      definitionExists:
+        paths.definitionPath === null ? installed : yield* fileExists(paths.definitionPath),
+      env: process.env,
+      envToken,
+      installed,
+      launcher:
         launcherPath === null
           ? null
-          : windowsLauncherDoctorCheck(
-              launcherPath,
-              yield* readWindowsLauncherStatus(launcherPath),
-            );
-      const runner = yield* inspectServiceRunner(paths);
-      const definitionExists =
-        paths.definitionPath === null ? installed : yield* fileExists(paths.definitionPath);
-      const metadataCommandExists =
-        metadata?.commandPath === undefined ? false : yield* fileExists(metadata.commandPath);
-      const currentCommand = yield* findTokenmaxxingCommandInstall().pipe(
-        Effect.catch(() => Effect.succeed(null)),
-      );
-      const autoUpdateManager =
-        metadata === null
-          ? undefined
-          : (metadata.autoUpdateManager ?? currentCommand?.autoUpdateManager);
-      const autoUpdateManagerExists =
-        autoUpdateManager === "registry"
-          ? true
-          : autoUpdateManager === undefined || autoUpdateManager === null
-            ? false
-            : yield* commandExists(autoUpdateManager);
-      const lockStatus = yield* readServiceLockStatus(paths.lockPath, now);
-      const logTail = yield* readLogTail(paths.logPath, 8);
-      const wrapperContents = yield* Effect.tryPromise(() =>
-        readFile(paths.wrapperPath, "utf8"),
-      ).pipe(Effect.catch(() => Effect.succeed(null)));
+          : { path: launcherPath, status: yield* readWindowsLauncherStatus(launcherPath) },
+      lock: yield* serviceLockCheck(
+        paths,
+        yield* readServiceLockStatus(paths.lockPath, new Date()),
+      ),
+      metadata,
+      metadataCommandExists:
+        metadata?.commandPath === undefined ? false : yield* fileExists(metadata.commandPath),
+      nativeStatus: yield* readNativeSchedulerStatus(paths),
+      owner: yield* serviceDefinitionOwner(paths),
+      paths,
+      reloadRequired: serviceReloadRequired(metadata, state),
+      runner: yield* inspectServiceRunner(paths),
+      state,
+      wrapper,
+    } satisfies ServiceDoctorFacts;
+  });
+}
 
-      const checks = [
-        doctorCheck(
-          installed ? "ok" : "warn",
-          "scheduler",
-          installed ? `installed (${paths.backend})` : `not installed (${paths.backend})`,
-        ),
-        doctorCheck(
-          nativeStatus.active ? "ok" : "warn",
-          "active",
-          `${nativeStatus.detail}; repair with ${serviceRepairCommand()}`,
-        ),
-        doctorTemplateCheck(metadata, reloadRequired),
-        doctorCheck(
-          definitionExists ? "ok" : "warn",
-          "definition",
-          paths.definitionPath ?? "tracked by Windows Task Scheduler metadata",
-        ),
-        doctorCheck(wrapperExists ? "ok" : "warn", "wrapper", paths.wrapperPath),
-        ...(launcherCheck === null ? [] : [launcherCheck]),
-        doctorServiceEnvCheck(wrapperContents),
-        doctorRunnerCheck(runner, metadata),
-        doctorCheck(
-          metadata === null ? "warn" : "ok",
-          "metadata",
-          metadata === null
-            ? `${paths.metadataPath} missing or unreadable; auto-update is off; repair with ${serviceRepairCommand()}`
-            : paths.metadataPath,
-        ),
-        doctorCheck(
-          envToken
-            ? "warn"
-            : authConfig._tag === "success" && authConfig.value.token
-              ? "ok"
-              : "warn",
-          "auth",
-          doctorAuthDetail(envToken, authConfig),
-        ),
-        doctorCheck(
-          metadataCommandExists || (metadata?.commandPath === undefined && currentCommand !== null)
-            ? "ok"
-            : "warn",
-          "binary",
-          doctorBinaryDetail(metadata, metadataCommandExists, currentCommand),
-        ),
-        doctorCheck(
-          doctorAutoUpdateStatus(metadata, autoUpdateManagerExists),
-          "auto-update",
-          doctorAutoUpdateDetail(metadata, autoUpdateManager, autoUpdateManagerExists),
-        ),
-        doctorCheck(
-          lockStatus.locked && !lockStatus.stale ? "warn" : "ok",
-          "lock",
-          yield* doctorLockDetail(paths, lockStatus),
-        ),
-        doctorCheck(
-          state?.lastSuccessAt === undefined ? "info" : "ok",
-          "last success",
-          state?.lastSuccessAt ?? "never",
-        ),
-        doctorCheck(
-          state?.lastError === undefined ? "ok" : "warn",
-          "last error",
-          state?.lastError ?? "none",
-        ),
-        doctorCheck(
-          state?.lastRepairStatus === "failure" ? "warn" : "info",
-          "last repair",
-          state?.lastRepairStatus === undefined
-            ? "none"
-            : `${state.lastRepairStatus}${
-                state.lastRepairReason === undefined ? "" : ` (${state.lastRepairReason})`
-              }${state.lastRepairError === undefined ? "" : `; ${state.lastRepairError}`}`,
-        ),
+/**
+ * Judges what `readServiceDoctorFacts` read. With nothing installed for this
+ * config dir, the checks of the service's own files are left out: each would
+ * fail, and `service repair` cannot fix any of them.
+ */
+function serviceDoctorChecks(facts: ServiceDoctorFacts): DoctorCheck[] {
+  const { metadata, paths, state } = facts;
+  const repair = `repair with ${serviceRepairCommand()}`;
+  const notInstalled =
+    facts.owner === "other" ||
+    (facts.owner === "none" && metadata === null && facts.wrapper === null);
+
+  const serviceChecks = notInstalled
+    ? [
+        facts.owner === "other"
+          ? doctorProblem(
+              "fail",
+              "scheduler",
+              `the installed ${paths.backend} service runs another config dir, not ${paths.configDir}`,
+              "set TOKENMAXXING_CONFIG_DIR to that service's config dir",
+            )
+          : doctorProblem(
+              "fail",
+              "scheduler",
+              `not installed (${paths.backend})`,
+              "install with tokenmaxxing service install",
+            ),
+      ]
+    : [
+        facts.installed
+          ? doctorCheck("ok", "scheduler", `installed (${paths.backend})`)
+          : doctorProblem("fail", "scheduler", `not installed (${paths.backend})`, repair),
+        facts.nativeStatus.active
+          ? doctorCheck("ok", "active", facts.nativeStatus.detail)
+          : doctorProblem("fail", "active", facts.nativeStatus.detail, repair),
+        doctorTemplateCheck(metadata, facts.reloadRequired),
+        doctorDefinitionCheck(paths, facts.definitionExists),
+        facts.wrapper === null
+          ? doctorProblem("fail", "wrapper", `missing: ${paths.wrapperPath}`, repair)
+          : doctorCheck("ok", "wrapper", paths.wrapperPath),
+        ...(facts.launcher === null
+          ? []
+          : [windowsLauncherDoctorCheck(facts.launcher.path, facts.launcher.status)]),
+        doctorServiceEnvCheck(facts.wrapper, facts.env),
+        doctorRunnerCheck(facts.runner, metadata),
+        metadata === null
+          ? doctorProblem(
+              "warn",
+              "metadata",
+              `${paths.metadataPath} missing or unreadable; auto-update is off`,
+              repair,
+            )
+          : doctorCheck("ok", "metadata", paths.metadataPath),
+        doctorBinaryCheck(metadata, facts.metadataCommandExists),
+        facts.autoUpdate,
       ];
 
-      if (options.json) {
-        yield* writeJson({
-          checks,
-          recentLog: logTail,
-          reloadRequired,
-          scheduler: nativeStatus,
-          state: state === null ? null : serviceStateJson(state),
-          status: "ok",
-        });
-        return;
-      }
+  return [
+    ...serviceChecks,
+    doctorAuthCheck(facts.envToken, facts.authConfig),
+    facts.lock,
+    state?.lastSuccessAt === undefined
+      ? doctorCheck("info", "last success", "never")
+      : doctorCheck("ok", "last success", state.lastSuccessAt),
+    state?.lastError === undefined
+      ? doctorCheck("ok", "last error", "none")
+      : doctorProblem(
+          "warn",
+          "last error",
+          formatServiceLastError(state.lastError),
+          "retry with tokenmaxxing service run to see why",
+        ),
+    doctorLastRepairCheck(state),
+  ];
+}
 
+function serviceDoctorHealth(checks: readonly DoctorCheck[]): DoctorHealth {
+  if (checks.some((check) => check.status === "fail")) {
+    return "fail";
+  }
+
+  return checks.some((check) => check.status === "warn") ? "warn" : "ok";
+}
+
+/**
+ * Prints the checks (or the --json report) and fails with
+ * `ServiceDoctorProblemsError`, so the CLI exits 1, when any check is WARN or
+ * FAIL. `status` in the JSON says the doctor ran; `health` is its verdict.
+ */
+function reportServiceDoctor(
+  report: {
+    checks: readonly DoctorCheck[];
+    recentLog: readonly string[];
+    reloadRequired: boolean;
+    scheduler: ServiceNativeSchedulerStatus;
+    state: ServiceState | null;
+  },
+  options: { json?: boolean | undefined },
+) {
+  return Effect.gen(function* () {
+    const console = yield* Effect.service(ConsoleService);
+    const health = serviceDoctorHealth(report.checks);
+
+    if (options.json) {
+      yield* writeJson({
+        checks: report.checks,
+        health,
+        recentLog: report.recentLog,
+        reloadRequired: report.reloadRequired,
+        scheduler: report.scheduler,
+        state: report.state === null ? null : serviceStateJson(report.state),
+        status: "ok",
+      });
+    } else {
       yield* Effect.sync(() => {
         console.log("Service doctor");
-        for (const check of checks) {
+        for (const check of report.checks) {
           console.log(doctorLine(check));
         }
 
-        if (logTail.length > 0) {
+        if (report.recentLog.length > 0) {
           console.log("");
           console.log("Recent log:");
-          for (const line of logTail) {
+          for (const line of report.recentLog) {
             console.log(`  ${line}`);
           }
         }
       });
-    }),
-  );
+    }
+
+    if (health !== "ok") {
+      return yield* Effect.fail(new ServiceDoctorProblemsError({ checks: report.checks }));
+    }
+  });
 }
 
 function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
@@ -2259,7 +2387,7 @@ function readNativeSchedulerStatus(
       return {
         active: true,
         command: invocation.description,
-        detail: "active",
+        detail: nativeSchedulerActiveDetail(paths),
       };
     },
     catch: (cause) => cause,
@@ -2272,6 +2400,17 @@ function readNativeSchedulerStatus(
       }),
     ),
   );
+}
+
+/** What an active scheduler has, as `service status` and `service doctor` say it. */
+function nativeSchedulerActiveDetail(paths: Pick<ServicePaths, "backend">): string {
+  if (paths.backend === "launchd") {
+    return `loaded in launchd (${launchdDomain()}/${SERVICE_LABEL})`;
+  }
+
+  return paths.backend === "systemd"
+    ? `${SYSTEMD_NAME}.timer is active`
+    : `task ${windowsTaskName()} is registered`;
 }
 
 function nativeSchedulerStatusInvocation(paths: ServicePaths): {
@@ -3770,40 +3909,108 @@ function readLogTail(path: string, maxLines: number): Effect.Effect<string[], ne
   }).pipe(Effect.catch(() => Effect.succeed([])));
 }
 
-function doctorCheck(status: DoctorStatus, label: string, detail: string): DoctorCheck {
+function doctorCheck(status: "info" | "ok", label: string, detail: string): DoctorCheck {
   return { detail, label, status };
 }
 
+/** A WARN or FAIL check: what is wrong, then the one command that fixes it. */
+function doctorProblem(
+  status: "fail" | "warn",
+  label: string,
+  problem: string,
+  fix: string,
+): DoctorCheck {
+  return { detail: `${problem}; ${fix}`, fix, label, status };
+}
+
 function windowsLauncherDoctorCheck(path: string, status: WindowsLauncherStatus): DoctorCheck {
-  return status === "current"
-    ? doctorCheck("ok", "launcher", path)
-    : doctorCheck("warn", "launcher", `${path} ${status}; repair with ${serviceRepairCommand()}`);
+  if (status === "current") {
+    return doctorCheck("ok", "launcher", path);
+  }
+
+  // A missing launcher fails every run; an outdated one may still start it.
+  return doctorProblem(
+    status === "missing" ? "fail" : "warn",
+    "launcher",
+    `${path} ${status}`,
+    `repair with ${serviceRepairCommand()}`,
+  );
 }
 
 function doctorLine(check: DoctorCheck): string {
   return `${check.status.toUpperCase().padEnd(4)} ${check.label.padEnd(12)} ${check.detail}`;
 }
 
-function formatServiceStatusAutoUpdate(
+/**
+ * Auto-update as `service status` and `service doctor` both report it. The
+ * manager comes from service.json, or for installs that predate it, from how
+ * the `tokenmaxxing` on PATH was installed.
+ */
+function readServiceAutoUpdateCheck(
   metadata: ServiceMetadata | null,
-  installed = false,
-): string {
+  installed: boolean,
+  currentCommand: CommandInstall | null,
+): Effect.Effect<DoctorCheck, never> {
+  return Effect.gen(function* () {
+    const manager =
+      metadata === null
+        ? undefined
+        : (metadata.autoUpdateManager ?? currentCommand?.autoUpdateManager);
+    const managerExists =
+      manager === "registry"
+        ? true
+        : manager === undefined || manager === null
+          ? false
+          : yield* commandExists(manager);
+
+    return serviceAutoUpdateCheck(metadata, { installed, manager, managerExists });
+  });
+}
+
+function serviceAutoUpdateCheck(
+  metadata: ServiceMetadata | null,
+  input: {
+    installed: boolean;
+    manager: ServiceMetadataAutoUpdateManager | null | undefined;
+    managerExists: boolean;
+  },
+): DoctorCheck {
+  const repair = `repair with ${serviceRepairCommand()}`;
   if (metadata === null) {
     // Without service.json the runner cannot tell what to update.
-    return installed
-      ? `off (service.json missing or unreadable; repair with ${serviceRepairCommand()})`
-      : "unknown (service not installed)";
+    return input.installed
+      ? doctorProblem("warn", "auto-update", "off (service.json missing or unreadable)", repair)
+      : doctorCheck("info", "auto-update", "unknown (service not installed)");
   }
 
-  if (metadata.autoUpdateManager === "registry") {
-    return "enabled via registry";
+  const { manager } = input;
+  if (manager === "registry") {
+    return doctorCheck("ok", "auto-update", "enabled via registry runner packages");
   }
 
-  if (metadata.autoUpdateManager !== undefined && metadata.autoUpdateManager !== null) {
-    return `enabled via ${metadata.autoUpdateManager}`;
+  // Older installs update through a package manager; a repair moves them to
+  // registry runner packages.
+  if (manager === null || manager === undefined) {
+    return doctorProblem(
+      "warn",
+      "auto-update",
+      "enabled, but the package manager was not detected",
+      repair,
+    );
   }
 
-  return "enabled (package manager not detected)";
+  return input.managerExists
+    ? doctorCheck(
+        "ok",
+        "auto-update",
+        `enabled via ${manager} (${autoUpdateCommandDescription(manager, "<version>")})`,
+      )
+    : doctorProblem(
+        "warn",
+        "auto-update",
+        `enabled via ${manager}, but ${manager} is not on PATH`,
+        repair,
+      );
 }
 
 function formatInstallAutoUpdate(manager: ServiceMetadataAutoUpdateManager | null): string {
@@ -3816,22 +4023,45 @@ function formatInstallAutoUpdate(manager: ServiceMetadataAutoUpdateManager | nul
     : `enabled via ${manager} (${autoUpdateCommandDescription(manager, "<version>")})`;
 }
 
-function doctorAuthDetail(envToken: boolean, authConfig: DoctorAuthConfig): string {
+/**
+ * The stored login the service syncs with. TOKENMAXXING_API_TOKEN wins over
+ * it in this shell but never reaches the service, so it hides what the
+ * service would use.
+ */
+function doctorAuthCheck(envToken: boolean, authConfig: DoctorAuthConfig): DoctorCheck {
   if (envToken) {
-    return "TOKENMAXXING_API_TOKEN is set; service install needs stored login instead";
+    return doctorProblem(
+      "warn",
+      "auth",
+      "TOKENMAXXING_API_TOKEN is set, which hides the stored login the service uses",
+      "unset TOKENMAXXING_API_TOKEN and rerun tokenmaxxing service doctor",
+    );
   }
 
   if (authConfig._tag === "error") {
-    return `could not read config (${String(authConfig.cause)})`;
+    const message =
+      authConfig.cause instanceof Error ? authConfig.cause.message : String(authConfig.cause);
+    const lines = message.split("\n");
+    const hint = lines.find((line) => line.startsWith("hint: "))?.slice("hint: ".length);
+    return doctorProblem(
+      "fail",
+      "auth",
+      (lines[0] ?? message).replace(/^error: /, ""),
+      hint ?? "run tokenmaxxing login",
+    );
   }
 
   if (!authConfig.value.token) {
-    return "stored token missing; run tokenmaxxing login";
+    return doctorProblem("fail", "auth", "stored token missing", "run tokenmaxxing login");
   }
 
-  return authConfig.value.deviceId === undefined
-    ? "stored token present; device id will be created on next sync"
-    : "stored token and device id present";
+  return doctorCheck(
+    "ok",
+    "auth",
+    authConfig.value.deviceId === undefined
+      ? "stored token present; the next sync creates the device id"
+      : "stored token and device id present",
+  );
 }
 
 type ServiceRunnerInspection = { _tag: "ok"; path: string } | { _tag: "broken"; detail: string };
@@ -3888,8 +4118,11 @@ function serviceStatusRunnerLines(status: {
   runnerVersion: string | null;
 }): string[] {
   const lines: string[] = [];
-  if (status.newerThanCli !== null) {
-    const newer = formatServiceNewerThanCli(status.newerThanCli);
+  // Only a newer template, like doctor: a runner newer than the global CLI is
+  // what every auto-update leaves behind, and the Runner line shows it.
+  const template = status.newerThanCli?.template;
+  if (template !== undefined) {
+    const newer = formatServiceNewerThanCli({ template });
     lines.push(
       `${newer.charAt(0).toUpperCase()}${newer.slice(1)}; upgrade the CLI with tokenmaxxing upgrade`,
     );
@@ -3914,16 +4147,34 @@ function doctorTemplateCheck(
   // auto-update leaves behind.
   const template = serviceNewerThanCli(metadata)?.template;
   if (template !== undefined) {
-    return doctorCheck(
+    return doctorProblem(
       "warn",
       "template",
-      `${formatServiceNewerThanCli({ template })}; upgrade the CLI with tokenmaxxing upgrade`,
+      formatServiceNewerThanCli({ template }),
+      "upgrade the CLI with tokenmaxxing upgrade",
     );
   }
 
+  if (metadata === null) {
+    return doctorCheck("info", "template", "unknown (service.json missing or unreadable)");
+  }
+
   return reloadRequired
-    ? doctorCheck("warn", "template", `reload required; repair with ${serviceRepairCommand()}`)
-    : doctorCheck("ok", "template", `current (${metadata?.templateVersion ?? "unknown"})`);
+    ? doctorProblem("warn", "template", "reload required", `repair with ${serviceRepairCommand()}`)
+    : doctorCheck("ok", "template", `current (${metadata.templateVersion ?? "unknown"})`);
+}
+
+function doctorDefinitionCheck(paths: ServicePaths, exists: boolean): DoctorCheck {
+  // Windows keeps the task in Task Scheduler, not in a file; `active` checks it.
+  const definition = paths.definitionPath ?? `Task Scheduler task ${windowsTaskName()}`;
+  return exists
+    ? doctorCheck("ok", "definition", definition)
+    : doctorProblem(
+        "fail",
+        "definition",
+        `missing: ${definition}`,
+        `repair with ${serviceRepairCommand()}`,
+      );
 }
 
 function doctorRunnerCheck(
@@ -3931,7 +4182,7 @@ function doctorRunnerCheck(
   metadata: ServiceMetadata | null,
 ): DoctorCheck {
   if (runner._tag === "broken") {
-    return doctorCheck("warn", "runner", `${runner.detail}; repair with ${serviceRepairCommand()}`);
+    return doctorProblem("fail", "runner", runner.detail, `repair with ${serviceRepairCommand()}`);
   }
 
   return doctorCheck(
@@ -3943,89 +4194,107 @@ function doctorRunnerCheck(
   );
 }
 
-function doctorLockDetail(
+/**
+ * The run lock as `service status` and `service doctor` both report it,
+ * judged the way the next run will (`serviceLockCanBeReplaced`): a lock the
+ * next run takes over, or one held by a sync that is running, is fine to
+ * know about; one a live process has held past the stale age blocks every
+ * sync.
+ */
+function serviceLockCheck(
   paths: ServicePaths,
   status: ServiceLockStatus,
   currentHostname: string = hostname(),
-): Effect.Effect<string, never> {
-  const held = formatServiceLockStatus(status);
-  if (!status.locked || status.stale || status.pid === undefined || status.pid <= 0) {
-    return Effect.succeed(held);
-  }
-  const pid = status.pid;
-  // A pid only means something on the machine that wrote it (a config dir on
-  // a synced or network drive); the run never takes such a lock over early.
-  if (
-    status.hostname !== undefined &&
-    status.hostname.toLowerCase() !== currentHostname.toLowerCase()
-  ) {
-    return Effect.succeed(
-      `${held}; held by ${status.hostname}; if no sync is running there, remove ${paths.lockPath}`,
+): Effect.Effect<DoctorCheck, never> {
+  return Effect.promise(async () => {
+    const held = formatServiceLockStatus(status);
+    if (!status.locked) {
+      return doctorCheck("ok", "lock", held);
+    }
+
+    if (await serviceLockCanBeReplaced(status, { pidAwareStaleTakeover: true }, currentHostname)) {
+      return doctorCheck(
+        "info",
+        "lock",
+        status.pid !== undefined && status.pid > 0
+          ? `${held}; pid ${status.pid} is gone, so the next run takes it over`
+          : `${held}; the next run takes it over`,
+      );
+    }
+
+    // A pid only means something on the machine that wrote it (a config dir
+    // on a synced or network drive).
+    const foreign =
+      status.hostname !== undefined &&
+      status.hostname.toLowerCase() !== currentHostname.toLowerCase();
+    if (status.stale) {
+      return doctorProblem(
+        "warn",
+        "lock",
+        `${held}; pid ${status.pid} on ${foreign ? status.hostname : "this machine"} has held it for over ${SERVICE_LOCK_STALE_MS / 3_600_000} hours, so every run skips`,
+        `if it is not a tokenmaxxing sync, remove ${paths.lockPath}`,
+      );
+    }
+
+    return doctorCheck(
+      "info",
+      "lock",
+      foreign
+        ? `${held}; held by ${status.hostname}, where a sync may be running; runs here skip until it is released`
+        : status.pid !== undefined && status.pid > 0
+          ? `${held}; a sync is running`
+          : `${held}; runs skip until it is released`,
     );
-  }
-
-  return Effect.promise(() => processIsAlive(pid)).pipe(
-    Effect.map((alive) =>
-      alive
-        ? `${held}; if no sync is running, remove ${paths.lockPath}`
-        : `${held}; pid ${pid} is gone, so the next run takes it over`,
-    ),
-  );
+  });
 }
 
-function doctorBinaryDetail(
-  metadata: ServiceMetadata | null,
-  metadataCommandExists: boolean,
-  currentCommand: CommandInstall | null,
-): string {
-  if (metadata?.commandPath !== undefined) {
-    return metadataCommandExists
-      ? `${metadata.commandPath}${metadata.resolvedCommandPath === undefined ? "" : ` -> ${metadata.resolvedCommandPath}`}`
-      : `missing at installed path: ${metadata.commandPath}`;
-  }
-
-  if (currentCommand !== null) {
-    return `${currentCommand.commandPath} -> ${currentCommand.resolvedCommandPath}`;
-  }
-
-  return "tokenmaxxing not found on PATH";
-}
-
-function doctorAutoUpdateDetail(
-  metadata: ServiceMetadata | null,
-  autoUpdateManager: ServiceMetadataAutoUpdateManager | null | undefined,
-  managerExists: boolean,
-): string {
+/**
+ * The command the service runs for its deferred repairs and to refresh
+ * itself after an auto-update: the runner, or the global CLI on older installs.
+ */
+function doctorBinaryCheck(metadata: ServiceMetadata | null, exists: boolean): DoctorCheck {
   if (metadata === null) {
-    return "checked when service is installed";
+    return doctorCheck("info", "binary", "unknown (service.json missing or unreadable)");
   }
 
-  if (autoUpdateManager === "registry") {
-    return "enabled via registry runner packages";
-  }
-
-  if (autoUpdateManager === null || autoUpdateManager === undefined) {
-    return "enabled but package manager was not detected";
-  }
-
-  return managerExists
-    ? `enabled via ${autoUpdateManager} (${autoUpdateCommandDescription(autoUpdateManager, "<version>")})`
-    : `enabled via ${autoUpdateManager}, but ${autoUpdateManager} is not on PATH`;
+  return exists
+    ? doctorCheck(
+        "ok",
+        "binary",
+        `${metadata.commandPath}${metadata.resolvedCommandPath === undefined ? "" : ` -> ${metadata.resolvedCommandPath}`}`,
+      )
+    : doctorProblem(
+        "warn",
+        "binary",
+        `missing: ${metadata.commandPath}`,
+        `repair with ${serviceRepairCommand()}`,
+      );
 }
 
-function doctorAutoUpdateStatus(
-  metadata: ServiceMetadata | null,
-  managerExists: boolean,
-): DoctorStatus {
-  if (metadata === null) {
-    return "info";
+/**
+ * A failed run stores `String(cause)`, which for a CLI error is its whole
+ * message ("SyncAuthValidationError: error: …\nhint: …"). Status and doctor
+ * show its first line; `service run` shows the rest.
+ */
+function formatServiceLastError(error: string): string {
+  const first = error.split(/\r?\n/).find((line) => line.trim() !== "") ?? error;
+  return first
+    .trim()
+    .replace(/^[A-Z][A-Za-z]*Error: /, "")
+    .replace(/^error: /, "");
+}
+
+function doctorLastRepairCheck(state: ServiceState | null): DoctorCheck {
+  if (state?.lastRepairStatus === undefined) {
+    return doctorCheck("info", "last repair", "none");
   }
 
-  if (metadata.autoUpdateManager === "registry") {
-    return "ok";
-  }
-
-  return managerExists ? "ok" : "warn";
+  const repair = `${state.lastRepairStatus}${
+    state.lastRepairReason === undefined ? "" : ` (${state.lastRepairReason})`
+  }${state.lastRepairError === undefined ? "" : `; ${state.lastRepairError}`}`;
+  return state.lastRepairStatus === "failure"
+    ? doctorProblem("warn", "last repair", repair, `repair with ${serviceRepairCommand()}`)
+    : doctorCheck("info", "last repair", repair);
 }
 
 function serviceRunCommandArgs(): string {
@@ -5492,7 +5761,7 @@ function doctorServiceEnvCheck(
         `${key} is ${service ?? "unset"} for the service but ${current ?? "unset"} here`,
     )
     .join("; ");
-  return doctorCheck("warn", "source roots", `${changes}; repair with ${serviceRepairCommand()}`);
+  return doctorProblem("warn", "source roots", changes, `repair with ${serviceRepairCommand()}`);
 }
 
 function isEphemeralCommandPath(path: string): boolean {
@@ -6067,8 +6336,13 @@ export {
   detectAutoUpdateManager,
   findCommandOnPath,
   findTokenmaxxingCommandInstall,
+  formatServiceLastError,
   formatServiceLockStatus,
-  formatServiceStatusAutoUpdate,
+  readServiceAutoUpdateCheck,
+  reportServiceDoctor,
+  serviceAutoUpdateCheck,
+  serviceDoctorChecks,
+  serviceDoctorHealth,
   isEphemeralCommandPath,
   isTransientCommandShimPath,
   isWindowsNpmPrefixShim,
@@ -6117,7 +6391,7 @@ export {
   serviceRepairReasons,
   serviceRepairState,
   serviceNewerThanCli,
-  doctorLockDetail,
+  serviceLockCheck,
   doctorTemplateCheck,
   serviceStatusRunnerLines,
   serviceRunnerPackageName,
@@ -6155,6 +6429,7 @@ export {
   windowsTaskCreateArgs,
   writeServiceFiles,
   ServiceCommandNotFoundError,
+  ServiceDoctorProblemsError,
   ServiceEnvTokenError,
   ServiceEphemeralCommandError,
   ServiceInstallError,
@@ -6172,12 +6447,15 @@ export {
 };
 
 export type {
+  DoctorCheck,
   InstalledWindowsSpelling,
   AutoUpdateManager,
   PackageManagerUpdateOptions,
   CommandInstall,
   ServiceBackend,
   ServiceCheckIn,
+  ServiceDoctorFacts,
+  ServiceLockStatus,
   ServiceFilesChange,
   ServiceInstallOptions,
   ServiceMetadata,

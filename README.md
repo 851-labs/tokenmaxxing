@@ -91,7 +91,7 @@ tokenmaxxing sync --sources claude,codex  # Only sync selected agents
 
 tokenmaxxing service install              # Sync automatically every 5 minutes
 tokenmaxxing service status               # Show service health and the last run
-tokenmaxxing service doctor               # Inspect auth, scheduler, locks, and logs
+tokenmaxxing service doctor               # Check auth, scheduler, locks, and logs (exit 1 on a problem)
 
 tokenmaxxing whoami                        # Show the signed-in account
 tokenmaxxing upgrade                       # Upgrade the CLI and refresh the service
