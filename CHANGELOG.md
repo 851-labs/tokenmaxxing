@@ -28,6 +28,13 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 - When ccusage fails for every agent (for example `node` missing from the service's `PATH`), the
   error names only the agents with logs on this machine and counts the rest ("ccusage failed for
   claude, codex and 16 agents without logs") instead of listing all 18.
+- On Windows, `tokenmaxxing upgrade` of an npm install no longer leaves a ~78 MB copy of the
+  previous version behind in `node_modules\@851-labs\.tokenmaxxing-<hash>`. npm moves the old
+  package aside and then can't delete the exe that is running the upgrade, so it only logs a
+  warning. The next `tokenmaxxing upgrade` or scheduled service run now removes that copy. It only
+  removes dirs with npm's staging name next to an installed `@851-labs/tokenmaxxing`, and never
+  the installed package itself. There was only ever one such copy per npm prefix, because npm
+  reuses the name. Copies left by earlier upgrades are removed too.
 
 ## 0.7.0-alpha.4 - 2026-09-29
 

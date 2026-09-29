@@ -18,7 +18,7 @@
  *
  *   bun apps/cli/e2e/upgrade/upgrade-e2e.ts [--root <dir>] [--out <dir>] [--force]
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -344,6 +344,36 @@ function skipped(
   };
 }
 
+/** Where `npm install -g` puts the CLI's scope dir under the install's prefix. */
+function npmScopeDir(install: Install): string {
+  return isWindows
+    ? join(install.prefix, "node_modules", "@851-labs")
+    : join(install.prefix, "lib", "node_modules", "@851-labs");
+}
+
+/**
+ * npm's staging copies of the package (`.tokenmaxxing-<hash>`). On Windows
+ * npm cannot delete the one holding the exe that ran `upgrade`, so it stays
+ * until the next run removes it.
+ */
+function stagingDirs(install: Install): string[] {
+  try {
+    return readdirSync(npmScopeDir(install)).filter((name) => name.startsWith(".tokenmaxxing"));
+  } catch {
+    return [];
+  }
+}
+
+function assertNoStagingDirs(name: string, install: Install, afterUpgrade: string[]) {
+  const left = stagingDirs(install);
+  check(
+    name,
+    "no npm staging copy of the old version is left once the next upgrade ran",
+    left.length === 0,
+    `right after the upgrade: ${afterUpgrade.join(", ") || "none"}; after the next run: ${left.join(", ") || "none"}`,
+  );
+}
+
 // ------------------------------------------------------------------ upgrade --json
 async function stableFollowsLatest() {
   const name = "upgrade: stable follows latest";
@@ -370,6 +400,7 @@ async function stableFollowsLatest() {
     },
     STABLE_LATEST,
   );
+  const afterUpgrade = stagingDirs(install);
   assertUpgrade(
     name,
     "up to date: skipped, command null",
@@ -377,6 +408,7 @@ async function stableFollowsLatest() {
     skipped(STABLE_LATEST, "latest", STABLE_LATEST, STABLE_LATEST),
     STABLE_LATEST,
   );
+  assertNoStagingDirs(name, install, afterUpgrade);
 }
 
 async function prereleaseFollowsChannel() {
@@ -447,6 +479,7 @@ async function prereleaseFollowsChannel() {
     },
     STABLE_NEXT,
   );
+  const afterUpgrade = stagingDirs(install);
   assertUpgrade(
     name,
     "stable now: follows latest only",
@@ -454,6 +487,7 @@ async function prereleaseFollowsChannel() {
     skipped(STABLE_NEXT, "latest", STABLE_NEXT, STABLE_NEXT),
     STABLE_NEXT,
   );
+  assertNoStagingDirs(name, install, afterUpgrade);
 }
 
 async function registryUnreachable() {
@@ -744,6 +778,11 @@ async function serviceStable() {
     },
     STABLE_LATEST,
   );
+  // What npm leaves after an upgrade run from the CLI on Windows; the next
+  // scheduled run removes it there, and leaves it alone elsewhere.
+  const staging = join(npmScopeDir(installed.install), ".tokenmaxxing-e2eStag1");
+  mkdirSync(join(staging, "bin"), { recursive: true });
+  writeFileSync(join(staging, "bin", "tokenmaxxing.exe"), "old exe");
   await assertAutoUpdateRun(
     name,
     profile,
@@ -756,6 +795,18 @@ async function serviceStable() {
     },
     STABLE_LATEST,
   );
+  const livePackage = existsSync(
+    join(npmScopeDir(installed.install), "tokenmaxxing", "package.json"),
+  );
+  check(
+    name,
+    isWindows
+      ? "the scheduled run removed npm's staging copy of the CLI, not the live package"
+      : "the scheduled run left the npm prefix alone",
+    existsSync(staging) !== isWindows && livePackage,
+    `${staging} ${existsSync(staging) ? "exists" : "is gone"}; live package ${livePackage ? "kept" : "MISSING"}`,
+  );
+  rmSync(staging, { force: true, recursive: true });
   await distTags({}, "down");
   await assertAutoUpdateRun(
     name,

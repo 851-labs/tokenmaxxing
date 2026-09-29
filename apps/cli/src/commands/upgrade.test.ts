@@ -106,6 +106,45 @@ describe("upgradeProgram", () => {
     ]);
   });
 
+  it("removes what npm left of the last upgrade first, even when up to date", async () => {
+    const { layer } = testConsole();
+    const windowsInstall: CommandInstall = {
+      autoUpdateManager: "npm",
+      commandPath: "C:\\Users\\tmx\\AppData\\Roaming\\npm\\tokenmaxxing.cmd",
+      resolvedCommandPath: "C:\\Users\\tmx\\AppData\\Roaming\\npm\\tokenmaxxing.cmd",
+    };
+    const events: string[] = [];
+    const cleanups: Array<{ paths: readonly string[]; platform: NodeJS.Platform }> = [];
+
+    const exit = await Effect.runPromiseExit(
+      upgradeProgram({
+        currentVersion: "0.4.3",
+        findCommandInstall: () => Effect.succeed(windowsInstall),
+        getDistTags: () =>
+          Effect.sync(() => {
+            events.push("version check");
+            return { latest: "0.4.3" };
+          }),
+        platform: "win32",
+        removeNpmStagingDirs: (paths, platform) =>
+          Effect.sync(() => {
+            events.push("cleanup");
+            cleanups.push({ paths, platform });
+            return { failed: [], inUse: [], removed: [] };
+          }),
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(exit._tag).toBe("Success");
+    expect(events).toEqual(["cleanup", "version check"]);
+    expect(cleanups).toEqual([
+      {
+        paths: [windowsInstall.commandPath, windowsInstall.resolvedCommandPath, process.execPath],
+        platform: "win32",
+      },
+    ]);
+  });
+
   it("refuses to upgrade without a version check instead of installing a dist-tag", async () => {
     const { layer, logs } = testConsole();
     const managers: string[] = [];
