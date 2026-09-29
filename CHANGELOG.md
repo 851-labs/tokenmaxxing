@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.0-alpha.5 - 2026-09-29
+
 ### Changed
 
 - `tokenmaxxing service doctor` now exits 1 when any check is `WARN` or `FAIL`, and 0 when every
