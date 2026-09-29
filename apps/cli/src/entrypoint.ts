@@ -56,12 +56,14 @@ function normalizeRootVersionArgv(argv: readonly string[]) {
 // by default action, without interrupting the run, and orphans the ccusage
 // child it was waiting on.
 const INTERRUPT_SIGNALS = ["SIGHUP", "SIGINT", "SIGTERM"] as const;
+const EXIT_FLUSH_TIMEOUT_MS = 5_000;
 
 /**
  * `NodeRuntime.runMain`, but interrupting on SIGHUP as well as SIGINT and
- * SIGTERM, and exiting 128 + the signal number for the signal that
- * interrupted the run (Effect's default teardown maps every interrupt to 130,
- * so SIGTERM looked like Ctrl+C to supervisors).
+ * SIGTERM, exiting 128 + the signal number for the signal that interrupted
+ * the run (Effect's default teardown maps every interrupt to 130, so SIGTERM
+ * looked like Ctrl+C to supervisors), and always exiting explicitly (see
+ * exitAfterFlush) instead of waiting for the event loop to drain.
  */
 const runMain = Runtime.makeRunMain(({ fiber, teardown }) => {
   let received: NodeJS.Signals | undefined;
@@ -78,14 +80,30 @@ const runMain = Runtime.makeRunMain(({ fiber, teardown }) => {
       process.removeListener(signal, onSignal);
     }
     teardown(exit, (code) => {
-      if (received !== undefined) {
-        process.exit(signalExitCode(exit, code, received));
-      } else if (code !== 0) {
-        process.exit(code);
-      }
+      exitAfterFlush(received === undefined ? code : signalExitCode(exit, code, received));
     });
   });
 });
+
+/**
+ * Exits as soon as the run is over, once stdout and stderr have drained,
+ * even on success: anything still holding the event loop open (a process
+ * that outlived its parent and kept our stdio pipe, a keep-alive socket)
+ * must not keep a finished command, or a oneshot scheduled run, alive.
+ */
+function exitAfterFlush(code: number): void {
+  let pending = 2;
+  const done = () => {
+    pending -= 1;
+    if (pending === 0) {
+      process.exit(code);
+    }
+  };
+  process.stdout.write("", done);
+  process.stderr.write("", done);
+  // A reader that never drains the pipe must not hold the exit either.
+  setTimeout(() => process.exit(code), EXIT_FLUSH_TIMEOUT_MS).unref();
+}
 
 /** 128 + N for a run that a signal interrupted; otherwise the teardown's code. */
 function signalExitCode(

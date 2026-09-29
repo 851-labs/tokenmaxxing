@@ -16,7 +16,7 @@ import {
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { arch, homedir, hostname } from "node:os";
-import { basename, delimiter, dirname, join, win32 } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, win32 } from "node:path";
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 
@@ -29,12 +29,14 @@ import type {
   ServiceCheckInStatus,
   ServiceRepairReason,
   ServiceRepairStatus,
+  UsageSource,
 } from "@tokenmaxxing/api-contract";
 
 import {
   type DistTags,
   fetchDistTags,
   followedDistTags,
+  isNewerVersion,
   NPM_REGISTRY_ENV,
   npmRegistryPackageUrl,
   parseSemVer,
@@ -62,6 +64,7 @@ import {
 import {
   resolveSyncAuth,
   syncProgram,
+  SyncSourcesFailedError,
   type SyncAuth,
   type SyncResult,
   type SyncSkipReason,
@@ -76,7 +79,15 @@ const gunzipPromise = promisify(gunzip);
 const require = createRequire(import.meta.url);
 
 const SERVICE_LABEL = "sh.tokenmaxxing.sync";
-const SERVICE_TEMPLATE_VERSION = 6;
+// 7: TimeoutStartSec on the systemd unit, and a wrapper PATH re-captured with
+// #113's filter (alpha.0/.1 wrappers baked in a per-shell fnm directory that
+// is gone after a reboot). The bump makes each runner's deferred reload
+// repair rewrite them once.
+const SERVICE_TEMPLATE_VERSION = 7;
+// A scheduled run's worst case is a few ccusage timeouts plus three upload
+// attempts; systemd stops one that is still going after this, so a wedged
+// run cannot keep the oneshot unit "activating" and the timer from firing.
+const SYSTEMD_RUN_TIMEOUT = "30min";
 const SYSTEMD_NAME = "tokenmaxxing-sync";
 const WINDOWS_TASK_NAME = "tokenmaxxing-sync";
 const POSIX_WRAPPER_NAME = "tokenmaxxing.sh";
@@ -174,6 +185,8 @@ interface ServiceFilesChange {
 
 interface ServiceLock {
   acquiredAt: string;
+  /** The machine whose `pid` this is; locks written before 0.7.0 have none. */
+  hostname?: string | undefined;
   ownerId: string;
   pid: number;
   version: 1;
@@ -197,6 +210,7 @@ type ServiceLockStatus =
   | {
       acquiredAt?: string;
       ageMs?: number;
+      hostname?: string | undefined;
       locked: true;
       pid?: number;
       stale: boolean;
@@ -480,15 +494,42 @@ class ServiceUninstallError extends Data.TaggedError("ServiceUninstallError")<{
 class ServiceRunError extends Data.TaggedError("ServiceRunError")<{
   readonly cause: unknown;
 }> {
-  override message =
-    "error: tokenmaxxing service run failed\nhint: inspect the service log for details";
+  // The cause goes in the message: a scheduled run's only output is the
+  // service log, and "service run failed" alone (say, for a read-only config
+  // dir) left nothing to act on.
+  override get message() {
+    return `error: tokenmaxxing service run failed${causeLine(this.cause)}\nhint: inspect the service log for details`;
+  }
 }
 
 class ServiceRepairError extends Data.TaggedError("ServiceRepairError")<{
   readonly cause: unknown;
 }> {
-  override message =
-    "error: failed to repair tokenmaxxing service\nhint: rerun tokenmaxxing service doctor --verbose";
+  override get message() {
+    return `error: failed to repair tokenmaxxing service${causeLine(this.cause)}\nhint: rerun tokenmaxxing service doctor --verbose`;
+  }
+}
+
+/**
+ * "every source failed" for a scheduled run: exit non-zero so systemd,
+ * launchd and Task Scheduler record a failure instead of a successful run.
+ */
+class ServiceSourcesFailedError extends Data.TaggedError("ServiceSourcesFailedError")<{
+  readonly failures: readonly { issue: SyncSourceIssue; source: UsageSource }[];
+}> {
+  override get message() {
+    return new SyncSourcesFailedError({ failures: this.failures }).message;
+  }
+}
+
+function causeLine(cause: unknown): string {
+  const text =
+    cause instanceof Error ? cause.message : typeof cause === "string" ? cause : undefined;
+  const first = text
+    ?.split("\n")
+    .find((line) => line.trim() !== "")
+    ?.trim();
+  return first === undefined ? "" : `\ncause: ${first.replace(/^error: /, "")}`;
 }
 
 const installCommand = Command.make(
@@ -579,6 +620,7 @@ function serviceInstallProgram(
     installServiceRunner?: (paths: ServicePaths) => Effect.Effect<ServiceRunnerInstall, unknown>;
     now?: Date;
     platform?: NodeJS.Platform;
+    readMetadata?: (path: string) => Effect.Effect<ServiceMetadata | null, never>;
     writeFiles?: (
       paths: ServicePaths,
       wrapper: string,
@@ -630,7 +672,18 @@ function serviceInstallProgram(
       const runnerSpinner = yield* humanSpinner("Installing service runner", options);
       const installedRunner = yield* (
         runtime.installServiceRunner ??
-        ((servicePaths) => installServiceRunner(servicePaths, { updatePointer: false }))
+        ((servicePaths) =>
+          keepNewerCurrentRunner(
+            servicePaths,
+            packageJson.version,
+            readCurrentServiceRunnerInstall,
+          ).pipe(
+            Effect.flatMap((current) =>
+              current !== null
+                ? Effect.succeed(current)
+                : installServiceRunner(servicePaths, { updatePointer: false }),
+            ),
+          ))
       )(paths).pipe(
         Effect.tap((value) =>
           Effect.sync(() =>
@@ -649,11 +702,16 @@ function serviceInstallProgram(
         platform,
         runnerPointerPath: paths.runnerPointerPath,
       });
+      // A refresh keeps the original install time, so an unchanged service.json
+      // is not rewritten on every upgrade.
+      const existingMetadata = yield* (runtime.readMetadata ?? readServiceMetadata)(
+        paths.metadataPath,
+      );
       const metadata: ServiceMetadata = {
         autoUpdateManager: "registry",
         backend: paths.backend,
         commandPath: installedRunner.path,
-        installedAt: (runtime.now ?? new Date()).toISOString(),
+        installedAt: existingMetadata?.installedAt ?? (runtime.now ?? new Date()).toISOString(),
         runnerPackage: installedRunner.packageName,
         runnerPath: installedRunner.path,
         runnerTarget: installedRunner.target,
@@ -964,7 +1022,7 @@ function serviceStatusEffect(options: { json?: boolean | undefined } = {}) {
         launcherPath === null ? null : yield* readWindowsLauncherStatus(launcherPath);
       const status = {
         arch: state?.lastArch ?? null,
-        autoUpdate: formatServiceStatusAutoUpdate(metadata),
+        autoUpdate: formatServiceStatusAutoUpdate(metadata, installed),
         backend: paths.backend,
         installed,
         lastAutoUpdate: state?.lastAutoUpdate ?? null,
@@ -1108,6 +1166,15 @@ function serviceRunEffect(options: ServiceRunOptions) {
     if (options.json && !options.scheduled) {
       yield* writeJson(result);
     }
+    if (result.status === "error") {
+      return yield* Effect.fail(
+        new ServiceSourcesFailedError({
+          failures: result.sources.flatMap((source) =>
+            source.status === "failed" ? [{ issue: source.issue, source: source.source }] : [],
+          ),
+        }),
+      );
+    }
   });
 }
 
@@ -1142,7 +1209,7 @@ function serviceDoctorEffect(options: { json?: boolean | undefined } = {}) {
               launcherPath,
               yield* readWindowsLauncherStatus(launcherPath),
             );
-      const runnerPointerExists = yield* fileExists(paths.runnerPointerPath);
+      const runner = yield* inspectServiceRunner(paths);
       const definitionExists =
         paths.definitionPath === null ? installed : yield* fileExists(paths.definitionPath);
       const metadataCommandExists =
@@ -1192,14 +1259,14 @@ function serviceDoctorEffect(options: { json?: boolean | undefined } = {}) {
         doctorCheck(wrapperExists ? "ok" : "warn", "wrapper", paths.wrapperPath),
         ...(launcherCheck === null ? [] : [launcherCheck]),
         doctorServiceEnvCheck(wrapperContents),
+        doctorRunnerCheck(runner, metadata),
         doctorCheck(
-          runnerPointerExists ? "ok" : "warn",
-          "runner",
-          metadata?.runnerTarget === undefined
-            ? paths.runnerPointerPath
-            : `${metadata.runnerVersion ?? "unknown"} (${metadata.runnerTarget})`,
+          metadata === null ? "warn" : "ok",
+          "metadata",
+          metadata === null
+            ? `${paths.metadataPath} missing or unreadable; auto-update is off; repair with ${serviceRepairCommand()}`
+            : paths.metadataPath,
         ),
-        doctorCheck(metadata === null ? "warn" : "ok", "metadata", paths.metadataPath),
         doctorCheck(
           envToken
             ? "warn"
@@ -1210,7 +1277,9 @@ function serviceDoctorEffect(options: { json?: boolean | undefined } = {}) {
           doctorAuthDetail(envToken, authConfig),
         ),
         doctorCheck(
-          metadataCommandExists ? "ok" : currentCommand === null ? "warn" : "ok",
+          metadataCommandExists || (metadata?.commandPath === undefined && currentCommand !== null)
+            ? "ok"
+            : "warn",
           "binary",
           doctorBinaryDetail(metadata, metadataCommandExists, currentCommand),
         ),
@@ -1222,7 +1291,7 @@ function serviceDoctorEffect(options: { json?: boolean | undefined } = {}) {
         doctorCheck(
           lockStatus.locked && !lockStatus.stale ? "warn" : "ok",
           "lock",
-          formatServiceLockStatus(lockStatus),
+          yield* doctorLockDetail(paths, lockStatus),
         ),
         doctorCheck(
           state?.lastSuccessAt === undefined ? "info" : "ok",
@@ -1341,7 +1410,7 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       yield* writeScheduledServiceLog(
         console,
         options,
-        serviceRunLogLine(finalFailedState, "failure"),
+        serviceRunLogLine(finalFailedState, "failure", { hasResults: false }),
       );
       return yield* Effect.fail(new ServiceRunError({ cause: authResult.cause }));
     }
@@ -1427,7 +1496,7 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       yield* writeScheduledServiceLog(
         console,
         options,
-        serviceRunLogLine(finalFailedState, "failure"),
+        serviceRunLogLine(finalFailedState, "failure", { hasResults: false }),
       );
       yield* writeServiceCheckIn(auth, {
         ...baseCheckIn,
@@ -2085,7 +2154,16 @@ function serviceSourcesForState(result: SyncResult): ServiceSourceState[] {
   });
 }
 
-function serviceRunLogLine(state: ServiceState, status: "failure" | "success") {
+/**
+ * One `service_run` log line. `hasResults: false` (a run that failed before
+ * syncing) leaves out rows, upserted, syncStatus and sources: the state
+ * still holds the previous run's, which read as this run's results.
+ */
+function serviceRunLogLine(
+  state: ServiceState,
+  status: "failure" | "success",
+  { hasResults = true }: { hasResults?: boolean } = {},
+) {
   return {
     arch: state.lastArch,
     autoUpdate: state.lastAutoUpdate,
@@ -2095,14 +2173,14 @@ function serviceRunLogLine(state: ServiceState, status: "failure" | "success") {
     event: "service_run",
     reloadRequired: state.reloadRequired,
     ...serviceRepairLogFields(state),
-    rows: state.lastRows,
+    rows: hasResults ? state.lastRows : undefined,
     schedulerActive: state.lastSchedulerActive,
     since: state.lastSince,
-    sources: state.lastSources,
-    syncStatus: state.lastSyncStatus,
+    sources: hasResults ? state.lastSources : undefined,
+    syncStatus: hasResults ? state.lastSyncStatus : undefined,
     status,
     timestamp: new Date().toISOString(),
-    upserted: state.lastUpserted,
+    upserted: hasResults ? state.lastUpserted : undefined,
     version: state.lastCliVersion,
   };
 }
@@ -2288,9 +2366,21 @@ async function acquireServiceLockFile(
 async function serviceLockCanBeReplaced(
   status: ServiceLockStatus,
   options: { pidAwareStaleTakeover: boolean },
+  currentHostname: string = hostname(),
 ): Promise<boolean> {
-  if (!status.locked || !status.stale) {
+  if (!status.locked) {
     return false;
+  }
+  const holderGone =
+    status.pid !== undefined &&
+    status.pid > 0 &&
+    (status.hostname === undefined || status.hostname === currentHostname) &&
+    !(await processIsAlive(status.pid));
+  if (!status.stale) {
+    // A run killed by SIGKILL, the OOM killer or a power loss never released
+    // its lock, which blocked every sync until it went stale 2 h later. Its
+    // pid only means something on the machine that wrote it.
+    return options.pidAwareStaleTakeover && holderGone;
   }
   if (!options.pidAwareStaleTakeover || status.pid === undefined || status.pid <= 0) {
     return true;
@@ -2369,6 +2459,7 @@ async function readServiceLockFile(path: string): Promise<ServiceLock | null> {
 function serviceLockJson(now: Date): ServiceLock {
   return {
     acquiredAt: now.toISOString(),
+    hostname: hostname(),
     ownerId: `${process.pid}:${now.toISOString()}:${randomUUID()}`,
     pid: process.pid,
     version: 1,
@@ -2384,6 +2475,7 @@ function serviceLockStatus(lock: ServiceLock, now: Date): ServiceLockStatus {
   if (Number.isNaN(acquiredAt)) {
     return {
       acquiredAt: lock.acquiredAt || undefined,
+      hostname: lock.hostname,
       locked: true,
       pid: lock.pid || undefined,
       stale: true,
@@ -2395,6 +2487,7 @@ function serviceLockStatus(lock: ServiceLock, now: Date): ServiceLockStatus {
   return {
     acquiredAt: lock.acquiredAt,
     ageMs,
+    hostname: lock.hostname,
     locked: true,
     pid: lock.pid,
     stale: ageMs >= SERVICE_LOCK_STALE_MS,
@@ -3381,9 +3474,15 @@ function doctorLine(check: DoctorCheck): string {
   return `${check.status.toUpperCase().padEnd(4)} ${check.label.padEnd(12)} ${check.detail}`;
 }
 
-function formatServiceStatusAutoUpdate(metadata: ServiceMetadata | null): string {
+function formatServiceStatusAutoUpdate(
+  metadata: ServiceMetadata | null,
+  installed = false,
+): string {
   if (metadata === null) {
-    return "unknown (service not installed)";
+    // Without service.json the runner cannot tell what to update.
+    return installed
+      ? `off (service.json missing or unreadable; repair with ${serviceRepairCommand()})`
+      : "unknown (service not installed)";
   }
 
   if (metadata.autoUpdateManager === "registry") {
@@ -3423,6 +3522,88 @@ function doctorAuthDetail(envToken: boolean, authConfig: DoctorAuthConfig): stri
   return authConfig.value.deviceId === undefined
     ? "stored token present; device id will be created on next sync"
     : "stored token and device id present";
+}
+
+type ServiceRunnerInspection = { _tag: "ok"; path: string } | { _tag: "broken"; detail: string };
+
+/**
+ * What the wrapper would find: the pointer file names an existing, non-empty,
+ * executable runner. The wrapper exits 127 for a missing one, and `sh` runs a
+ * 0-byte one as an empty script that exits 0, so a sync never happens.
+ */
+function inspectServiceRunner(paths: ServicePaths): Effect.Effect<ServiceRunnerInspection, never> {
+  return Effect.promise(async (): Promise<ServiceRunnerInspection> => {
+    let pointer: string;
+    try {
+      pointer = (await readFile(paths.runnerPointerPath, "utf8")).trim();
+    } catch {
+      return { _tag: "broken", detail: `pointer missing: ${paths.runnerPointerPath}` };
+    }
+    if (pointer === "" || pointer.includes("\n") || !isAbsolute(pointer)) {
+      return { _tag: "broken", detail: `pointer is not a runner path: ${paths.runnerPointerPath}` };
+    }
+
+    try {
+      const info = await stat(pointer);
+      if (!info.isFile()) {
+        return { _tag: "broken", detail: `runner is not a file: ${pointer}` };
+      }
+      if (info.size === 0) {
+        return { _tag: "broken", detail: `runner is empty (0 bytes): ${pointer}` };
+      }
+      if (process.platform !== "win32") {
+        await access(pointer, constants.X_OK).catch(() => {
+          throw new Error("not executable");
+        });
+      }
+    } catch (cause) {
+      return {
+        _tag: "broken",
+        detail:
+          (cause as Error).message === "not executable"
+            ? `runner is not executable: ${pointer}`
+            : `runner missing: ${pointer}`,
+      };
+    }
+
+    return { _tag: "ok", path: pointer };
+  });
+}
+
+function doctorRunnerCheck(
+  runner: ServiceRunnerInspection,
+  metadata: ServiceMetadata | null,
+): DoctorCheck {
+  if (runner._tag === "broken") {
+    return doctorCheck("warn", "runner", `${runner.detail}; repair with ${serviceRepairCommand()}`);
+  }
+
+  return doctorCheck(
+    "ok",
+    "runner",
+    metadata?.runnerTarget === undefined
+      ? runner.path
+      : `${metadata.runnerVersion ?? "unknown"} (${metadata.runnerTarget})`,
+  );
+}
+
+function doctorLockDetail(
+  paths: ServicePaths,
+  status: ServiceLockStatus,
+): Effect.Effect<string, never> {
+  const held = formatServiceLockStatus(status);
+  if (!status.locked || status.stale || status.pid === undefined || status.pid <= 0) {
+    return Effect.succeed(held);
+  }
+  const pid = status.pid;
+
+  return Effect.promise(() => processIsAlive(pid)).pipe(
+    Effect.map((alive) =>
+      alive
+        ? `${held}; if no sync is running, remove ${paths.lockPath}`
+        : `${held}; pid ${pid} is gone, so the next run takes it over`,
+    ),
+  );
 }
 
 function doctorBinaryDetail(
@@ -3795,7 +3976,41 @@ function installServiceRunner(
   );
 }
 
+/**
+ * The runner a repair (or install) should use. The service's own runner
+ * wins when it is newer than this CLI: a global CLI that npm never updated
+ * would otherwise "repair" an auto-updated runner back to its own, older
+ * version (and the runner would then auto-update again).
+ */
+function keepNewerCurrentRunner(
+  paths: ServicePaths,
+  ownVersion: string,
+  readCurrent: (paths: ServicePaths) => Effect.Effect<ServiceRunnerInstall, unknown>,
+): Effect.Effect<ServiceRunnerInstall | null, never> {
+  return readCurrent(paths).pipe(
+    Effect.map((current) => (isNewerVersion(ownVersion, current.version) ? current : null)),
+    Effect.catch(() => Effect.succeed(null)),
+  );
+}
+
 function installServiceRunnerForRepair(
+  paths: ServicePaths,
+  options: Parameters<typeof installServiceRunner>[1] & {
+    readCurrentRunner?: (paths: ServicePaths) => Effect.Effect<ServiceRunnerInstall, unknown>;
+  } = {},
+): Effect.Effect<ServiceRunnerInstall, unknown> {
+  return keepNewerCurrentRunner(
+    paths,
+    options.runnerVersion ?? packageJson.version,
+    options.readCurrentRunner ?? readCurrentServiceRunnerInstall,
+  ).pipe(
+    Effect.flatMap((current) =>
+      current !== null ? Effect.succeed(current) : installOwnServiceRunnerForRepair(paths, options),
+    ),
+  );
+}
+
+function installOwnServiceRunnerForRepair(
   paths: ServicePaths,
   options: Parameters<typeof installServiceRunner>[1] = {},
 ): Effect.Effect<ServiceRunnerInstall, unknown> {
@@ -4151,6 +4366,7 @@ Description=tokenmaxxing automatic usage sync
 [Service]
 Type=oneshot
 ExecStart=${systemdExecStart(paths.wrapperPath)}
+TimeoutStartSec=${SYSTEMD_RUN_TIMEOUT}
 `;
 }
 
@@ -5096,6 +5312,8 @@ export {
   scheduleDeferredServiceRepair,
   scheduleDescription,
   serviceRepairCanInstallScheduler,
+  acquireServiceRunLock,
+  inspectServiceRunner,
   serviceLockCanBeReplaced,
   serviceRepairNeedsSchedulerInstall,
   serviceReloadRequired,
@@ -5140,6 +5358,7 @@ export {
   ServiceInstallError,
   ServiceRepairError,
   ServiceRunnerPackageMissingError,
+  ServiceSourcesFailedError,
   ServiceRunnerUpdateError,
   ServiceRunError,
   ServiceUninstallError,

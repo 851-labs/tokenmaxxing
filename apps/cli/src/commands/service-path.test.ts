@@ -111,6 +111,35 @@ describe("stableServicePath", () => {
     expect(darwinPath([`${multishells}/999_1/bin`, "/usr/bin"])).toBe("/usr/bin");
   });
 
+  // L4: alpha.0/.1 wrappers baked in /run/user/<uid>/fnm_multishells/<id>,
+  // which a reboot removes. The deferred repair re-captures PATH from that
+  // wrapper's environment, so the dead entry must still map to fnm's node.
+  it("maps an fnm per-shell directory that is gone to fnm's default alias", () => {
+    const linux = (env: Record<string, string>, aliases: string[]) =>
+      stableServicePath("/run/user/1000/fnm_multishells/42_1/bin:/usr/bin", {
+        env,
+        exists: (dir) => aliases.includes(dir),
+        platform: "linux",
+        readLink: (dir) => {
+          throw Object.assign(new Error(`ENOENT: ${dir}`), { code: "ENOENT" });
+        },
+      });
+
+    expect(linux({ HOME: "/home/alex" }, ["/home/alex/.local/share/fnm/aliases/default"])).toBe(
+      "/home/alex/.local/share/fnm/aliases/default/bin:/usr/bin",
+    );
+    expect(
+      linux({ FNM_DIR: "/opt/fnm", HOME: "/home/alex" }, [
+        "/opt/fnm/aliases/default",
+        "/home/alex/.local/share/fnm/aliases/default",
+      ]),
+    ).toBe("/opt/fnm/aliases/default/bin:/usr/bin");
+    expect(linux({ HOME: "/home/alex" }, ["/home/alex/.fnm/aliases/default"])).toBe(
+      "/home/alex/.fnm/aliases/default/bin:/usr/bin",
+    );
+    expect(linux({ HOME: "/home/alex" }, [])).toBe("/usr/bin");
+  });
+
   it("resolves Linux fnm per-shell directories under XDG_RUNTIME_DIR", () => {
     const path = stableServicePath("/run/user/1000/fnm_multishells/42_1/bin:/usr/bin", {
       env: {},

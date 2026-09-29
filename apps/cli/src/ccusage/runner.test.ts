@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -280,5 +281,76 @@ describe("runCcusageDailyReport", () => {
 
     expect(error.code).toBe("invalid_report");
     expect(error.report).toBe("daily");
+  });
+});
+
+describe.skipIf(process.platform === "win32")("the real ccusage command runner", () => {
+  async function fakeBun(script: string) {
+    const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-runner-"));
+    await writeFile(join(dir, "bun"), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+    return dir;
+  }
+
+  function isAlive(pid: number) {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // S3c/S3d: npx (and a bun that does not exec in place) runs ccusage's node
+  // as a child. A timeout used to kill only the direct child; the grandchild
+  // kept the stdio pipes open and the CLI never exited.
+  it("kills what ccusage started when it times out", async () => {
+    const dir = await fakeBun(`sleep 30 &\necho $! > "$(dirname "$0")/grandchild.pid"\nwait`);
+    try {
+      const error = await ccusageErrorFor(
+        execCcusage(["codex", "daily"], "codex", "daily", {
+          env: { PATH: `${dir}:/usr/bin:/bin` },
+          timeoutMs: 500,
+        }),
+      );
+
+      expect(error.code).toBe("command_timed_out");
+      const grandchild = Number(readFileSync(join(dir, "grandchild.pid"), "utf8"));
+      await vi.waitFor(() => expect(isAlive(grandchild)).toBe(false), { timeout: 3_000 });
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps the end of ccusage's stderr on failure", async () => {
+    const dir = await fakeBun(
+      `echo "noise" >&2\necho "/usr/bin/env: 'node': No such file or directory" >&2\nexit 127`,
+    );
+    try {
+      const error = await ccusageErrorFor(
+        execCcusage(["codex", "daily"], "codex", "daily", {
+          env: { PATH: `${dir}:/usr/bin:/bin` },
+        }),
+      );
+
+      expect(error.code).toBe("command_failed");
+      expect(error.stderr).toBe("noise\n/usr/bin/env: 'node': No such file or directory");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("returns stdout on success", async () => {
+    const dir = await fakeBun(`echo '{"daily":[]}'`);
+    try {
+      await expect(
+        Effect.runPromise(
+          execCcusage(["codex", "daily"], "codex", "daily", {
+            env: { PATH: `${dir}:/usr/bin:/bin` },
+          }),
+        ),
+      ).resolves.toBe('{"daily":[]}\n');
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
   });
 });

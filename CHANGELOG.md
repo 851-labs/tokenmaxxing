@@ -40,6 +40,37 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   for `SIGTERM` (it used to exit 130 for every signal). It also handles `SIGHUP`, which used to
   kill it without stopping the running ccusage process.
 
+- A ccusage run that hangs no longer keeps the service running forever. ccusage now runs in its own
+  process group, and a timeout or interruption stops the whole group; before, a `node` that npx
+  or bun had started kept running. The CLI also exits as soon as its work is done. On Linux, a
+  scheduled run's unit then finishes (it stayed "activating" and blocked the timer). The systemd
+  unit also gets `TimeoutStartSec=30min` as a backstop.
+- A run killed by `SIGKILL`, the OOM killer or a power loss no longer blocks automatic sync for 2
+  hours. The next run takes over a lock whose process is gone. `service doctor` says whether a held
+  lock's process is still running, and how to clear it.
+- `tokenmaxxing service repair` or `service install` from an older global CLI no longer moves an
+  auto-updated service runner back to the CLI's own, older version.
+- A scheduled run in which every agent's ccusage failed now exits non-zero, so systemd, launchd
+  and Task Scheduler record a failure. The log and `sync --json` include the end of ccusage's
+  stderr (for example `/usr/bin/env: 'node': No such file or directory`).
+- On Linux, automatic sync keeps working after a reboot for services installed from an fnm shell
+  by 0.7.0-alpha.0 or alpha.1. Their script ran node from a per-shell fnm directory under
+  `/run/user`, which a reboot deletes. The service template moves to version 7, so each service
+  rewrites its script once, now pointing at fnm's default alias. On macOS this shows
+  "“tokenmaxxing.sh” can run in the background" one more time.
+- `service doctor` now reports a broken service runner (a missing, empty or non-executable runner,
+  or a pointer file that doesn't name one) instead of "OK", and says when `service.json` is missing
+  (auto-update is off until `service repair`). `service status` no longer says "service not
+  installed" in that case.
+- `service run` and `service repair` failures now name their cause (for example a read-only config
+  dir), in the terminal and in the service log. Before, `service repair` printed "unexpected CLI
+  failure".
+- Scheduled uploads that get HTTP 429 now wait for the time in `Retry-After`. When that is more
+  than a minute they stop retrying and leave it to the next run.
+- A failed scheduled run's log line no longer repeats the previous run's rows and `syncStatus`.
+- `service install --refresh` keeps the original `installedAt`, so an unchanged `service.json` is
+  no longer rewritten.
+
 ## 0.7.0-alpha.2 - 2026-09-28
 
 ### Added
