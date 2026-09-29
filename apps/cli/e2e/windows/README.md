@@ -38,14 +38,33 @@ scheduled runs get fixed ccusage output (`../shared/fakes/`):
 
 | Scenario       | Checks                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| window watcher | The watcher sees a hidden `cmd.exe` that lives for milliseconds (and no window for it), and a visible one together with its console window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | core           | Install registers the task: `/XML`, a `wscript.exe //B` Command, the launcher in Arguments, the config dir as WorkingDirectory, an interactive token. The `.vbs` is ASCII with CRLF. A scheduled run gives Last Result 0, a `service.log` entry, a check-in and ingest, and rows stored in the sandbox. A missing runner pointer or runner gives 127, and a missing wrapper or launcher gives a nonzero result. `doctor` exits 0 with no WARN or FAIL check on the healthy install. `status --json` and `doctor` report the launcher as missing (FAIL, exit 1) or outdated (WARN), and `service repair` restores it. A lock left by a dead process (`taskkill /F`, a crash) is taken over by the next run, and `doctor` says so (INFO, exit 0). The service-failure repair (revoked token) and the reload-required repair (template mismatch) both run hidden. Uninstall removes the task, `.vbs` and `.cmd`. |
 | path cases     | Install, run, the reload-required repair, another run and uninstall, under `Tm (Work)`, `Tm & Co's`, `Zoë` and `Zoë O'Neil (Work) & Co 100%`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | legacy upgrade | Installs the pinned release `0.7.0-alpha.0` (template 5, whose task runs the `.cmd` directly), then swaps in this build's runner the way an auto-update does. The next scheduled run's hidden repair re-registers the task through `wscript` without rewriting the running wrapper, and the following run shows no window. `service repair` migrates a second legacy install directly.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-Every task run is recorded by `window-watch.ps1`. A new visible window from a
-console-ish process or class fails the check, and so does a foreground change
-to one. The legacy task's console is a positive control: if the watcher misses
-it, the "no window" checks would be blind, so that check fails too.
+Every task run is recorded by `window-watch.ps1`. It polls nothing:
+process starts come from WMI's `Win32_ProcessStartTrace` (the kernel's process
+trace, so no start is missed however short the process lives), and windows and
+focus from `SetWinEventHook` (`EVENT_OBJECT_SHOW`, `EVENT_OBJECT_UNCLOAKED`,
+`EVENT_SYSTEM_FOREGROUND`), described in the callback before they can close
+(`lib/watch-events.ps1`, inline C#). The process trace needs an administrator
+token, which the hosted runners have. Before a run starts, the watcher proves
+both sources live with a self-test window and a probe process, and before it
+stops it waits for one more probe so every start is in.
+
+A new visible window from a console-ish process or class fails the check, and
+so does a foreground change to one. Two things keep the watcher from passing
+blind:
+
+- Each run must show the processes it is known to start: the task's action
+  (the `wscript.exe` launcher, or `cmd.exe` for the legacy `.cmd` task) and
+  every deferred repair it spawns (a `wscript.exe` started by the runner),
+  however briefly they lived. WMI hands process starts over in batches about a
+  second apart, so a command line is only there for a process still running
+  by then; the check goes by the process tree, not the command line.
+- Positive controls: the window watcher scenario's visible `cmd.exe`, and the
+  legacy task's console, must both be caught.
 
 Nothing reaches production. The hosts file sends `api.tokenmaxxing.sh`,
 `tokenmaxxing.sh`, `www.tokenmaxxing.sh` and `registry.npmjs.org` to `0.0.0.0`
