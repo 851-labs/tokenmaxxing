@@ -94,7 +94,9 @@ const SERVICE_LABEL = "sh.tokenmaxxing.sync";
 // #113's filter (alpha.0/.1 wrappers baked in a per-shell fnm directory that
 // is gone after a reboot). The bump makes each runner's deferred reload
 // repair rewrite them once.
-const SERVICE_TEMPLATE_VERSION = 7;
+// 8: the Windows wrapper falls back to a side log when another run holds
+// service.log, instead of exiting without running or logging anything.
+const SERVICE_TEMPLATE_VERSION = 8;
 // A scheduled run's worst case is the jitter, an auto-update, sources up to
 // SERVICE_SOURCE_DEADLINE_MS plus the one still running (its daily and session
 // timeouts), and three upload attempts: about 20 minutes. systemd stops one
@@ -137,6 +139,8 @@ const SERVICE_PACKAGE_UPDATE_TIMEOUT_MS = 4 * 60 * 1000;
 const SERVICE_VERSION_TIMEOUT_MS = 30 * 1000;
 const SERVICE_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const SERVICE_LOG_ROTATIONS = 3;
+// Side logs a Windows run falls back to while another run holds service.log.
+const WINDOWS_OVERLAP_LOG_SLOTS = 4;
 const USAGE_REPLACEMENT_BACKFILL_VERSION = 1;
 // Scheduled runs normally only re-send days since the last success, so usage
 // that changes for an already-synced day (a ccusage upgrade that starts
@@ -1426,9 +1430,11 @@ function serviceRunEffect(options: ServiceRunOptions) {
           reason: "locked",
           status: "skipped",
         });
-      } else if (!options.scheduled) {
+      } else {
+        // A scheduled skip still leaves a line in the service log, so an
+        // overlapping run is not mistaken for one that never started.
         yield* Effect.sync(() => {
-          console.log(message);
+          console.log(options.scheduled ? JSON.stringify(serviceLockedLogLine(message)) : message);
         });
       }
       if (options.scheduled) {
@@ -2728,6 +2734,18 @@ function serviceRunLogLine(
     timestamp: new Date().toISOString(),
     upserted: hasResults ? state.lastUpserted : undefined,
     version: state.lastCliVersion,
+  };
+}
+
+/** The `service_run` log line of a scheduled run that found another run holding the lock. */
+function serviceLockedLogLine(message: string, now = new Date()) {
+  return {
+    event: "service_run",
+    message,
+    reason: "locked",
+    status: "skipped",
+    timestamp: now.toISOString(),
+    version: packageJson.version,
   };
 }
 
@@ -5038,8 +5056,22 @@ rotate_tokenmaxxing_log ${quotedLogPath} || true`;
 // The wrapper never embeds its own directory: cmd.exe decodes batch files in the console code
 // page, so the log and runner pointer are addressed through %~dp0 instead. chcp 65001 makes the
 // rest of the file (captured environment, runner pointer) decode as UTF-8. Paths are only ever
-// expanded inside quotes and outside parenthesized blocks, where & ( ) would otherwise break the
-// line.
+// expanded inside quotes, where & ( ) cannot break the line, and never inside a multi-line block.
+//
+// cmd opens a >> target without write sharing and keeps it open until the command ends, so a
+// run holds service.log for as long as it syncs, and an overlapping run cannot open it ("The
+// process cannot access the file"). cmd then skips the command without changing ERRORLEVEL, so
+// that run used to exit 0 without running or logging anything. :sync sets a marker as its first
+// step, which tells a run that never started apart from one that failed; a run whose log is held
+// moves on to the next side log (service-overlap-N.log), and with every one of them held runs
+// with the console it has. The 2>nul around the call only hides cmd's own message.
+//
+// Task Scheduler never overlaps the task itself (MultipleInstancesPolicy IgnoreNew): a trigger or
+// schtasks /Run while an instance runs is ignored, and re-registering the task (/Create /F, as a
+// repair does) keeps tracking that instance. But the instance it tracks is wscript.exe: ending the
+// task (schtasks /End, End in Task Scheduler, StopIfGoingOnBatteries) stops only the launcher,
+// the task reads Ready, and the next run overlaps the cmd and runner still going. So does a manual
+// run of the wrapper or launcher. (Measured on Windows 11 25H2.)
 function renderWindowsWrapper({
   env,
   logPath,
@@ -5052,27 +5084,45 @@ function renderWindowsWrapper({
   const sets = Object.entries(env)
     .map(([key, value]) => `set "${key}=${escapeCmdSetValue(value)}"`)
     .join("\r\n");
+  const logName = win32.basename(logPath);
+  const overlapLogName = `${win32.parse(logName).name}-overlap-%TOKENMAXXING_LOG_SLOT%.log`;
 
   return `@echo off\r
 "%SystemRoot%\\System32\\chcp.com" 65001 >nul\r
 setlocal\r
 ${sets}\r
-set "TOKENMAXXING_LOG=%~dp0${win32.basename(logPath)}"\r
-${renderWindowsLogRotation()}\r
->> "%TOKENMAXXING_LOG%" echo [%DATE% %TIME%] tokenmaxxing service sync\r
+set "TOKENMAXXING_SERVICE_DIR=%~dp0"\r
+set "TOKENMAXXING_LOG=%~dp0${logName}"\r
+set "TOKENMAXXING_LOG_SLOT=0"\r
+:open_log\r
+call :rotate_log\r
+set "TOKENMAXXING_LOG_OPENED="\r
+(call :sync >> "%TOKENMAXXING_LOG%" 2>&1) 2>nul\r
+if defined TOKENMAXXING_LOG_OPENED exit /b %ERRORLEVEL%\r
+set /a TOKENMAXXING_LOG_SLOT+=1\r
+if %TOKENMAXXING_LOG_SLOT% GTR ${WINDOWS_OVERLAP_LOG_SLOTS} goto no_log\r
+set "TOKENMAXXING_LOG=%TOKENMAXXING_SERVICE_DIR%${overlapLogName}"\r
+goto open_log\r
+:no_log\r
+call :sync\r
+exit /b %ERRORLEVEL%\r
+:sync\r
+set "TOKENMAXXING_LOG_OPENED=1"\r
+echo [%DATE% %TIME%] tokenmaxxing service sync\r
+if not %TOKENMAXXING_LOG_SLOT%==0 echo ${logName} is in use by another run\r
 set "TOKENMAXXING_SERVICE_RUNNER="\r
-set /p TOKENMAXXING_SERVICE_RUNNER=<"%~dp0${win32.basename(runnerPointerPath)}"\r
+set /p TOKENMAXXING_SERVICE_RUNNER=<"%TOKENMAXXING_SERVICE_DIR%${win32.basename(runnerPointerPath)}"\r
 if not defined TOKENMAXXING_SERVICE_RUNNER goto runner_pointer_empty\r
 if not exist "%TOKENMAXXING_SERVICE_RUNNER%" goto runner_missing\r
-"%TOKENMAXXING_SERVICE_RUNNER%" ${serviceRunCommandArgs()} >> "%TOKENMAXXING_LOG%" 2>&1\r
+"%TOKENMAXXING_SERVICE_RUNNER%" ${serviceRunCommandArgs()}\r
 exit /b %ERRORLEVEL%\r
 :runner_pointer_empty\r
->> "%TOKENMAXXING_LOG%" echo tokenmaxxing service runner pointer is empty\r
+echo tokenmaxxing service runner pointer is empty\r
 exit /b 127\r
 :runner_missing\r
->> "%TOKENMAXXING_LOG%" echo tokenmaxxing service runner missing: "%TOKENMAXXING_SERVICE_RUNNER%"\r
+echo tokenmaxxing service runner missing: "%TOKENMAXXING_SERVICE_RUNNER%"\r
 exit /b 127\r
-`;
+${renderWindowsLogRotation()}`;
 }
 
 // schtasks can only register interactive tasks, so a task that starts the .cmd wrapper directly
@@ -5106,19 +5156,24 @@ WScript.Quit exitCode\r
 `;
 }
 
+// Rotates whichever log TOKENMAXXING_LOG names. The log moves aside first: while another run
+// holds it the move fails and nothing else shifts, so a held log never costs a rotation.
 function renderWindowsLogRotation(): string {
-  const moves = Array.from({ length: SERVICE_LOG_ROTATIONS - 1 }, (_, index) => {
+  const shifts = Array.from({ length: SERVICE_LOG_ROTATIONS - 1 }, (_, index) => {
     const rotation = SERVICE_LOG_ROTATIONS - index;
     const previousRotation = rotation - 1;
 
-    return `  if exist "%TOKENMAXXING_LOG%.${previousRotation}" move /y "%TOKENMAXXING_LOG%.${previousRotation}" "%TOKENMAXXING_LOG%.${rotation}" >nul 2>nul`;
-  }).join("\r\n");
+    return `if exist "%TOKENMAXXING_LOG%.${previousRotation}" move /y "%TOKENMAXXING_LOG%.${previousRotation}" "%TOKENMAXXING_LOG%.${rotation}" >nul 2>nul\r\n`;
+  }).join("");
 
-  return `if exist "%TOKENMAXXING_LOG%" for %%A in ("%TOKENMAXXING_LOG%") do if %%~zA GEQ ${SERVICE_LOG_MAX_BYTES} (\r
-  if exist "%TOKENMAXXING_LOG%.${SERVICE_LOG_ROTATIONS}" del /f /q "%TOKENMAXXING_LOG%.${SERVICE_LOG_ROTATIONS}" >nul 2>nul\r
-${moves}\r
-  move /y "%TOKENMAXXING_LOG%" "%TOKENMAXXING_LOG%.1" >nul 2>nul\r
-)`;
+  return `:rotate_log\r
+if not exist "%TOKENMAXXING_LOG%" exit /b 0\r
+for %%A in ("%TOKENMAXXING_LOG%") do if %%~zA LSS ${SERVICE_LOG_MAX_BYTES} exit /b 0\r
+move /y "%TOKENMAXXING_LOG%" "%TOKENMAXXING_LOG%.0" >nul 2>nul || exit /b 0\r
+if exist "%TOKENMAXXING_LOG%.${SERVICE_LOG_ROTATIONS}" del /f /q "%TOKENMAXXING_LOG%.${SERVICE_LOG_ROTATIONS}" >nul 2>nul\r
+${shifts}move /y "%TOKENMAXXING_LOG%.0" "%TOKENMAXXING_LOG%.1" >nul 2>nul\r
+exit /b 0\r
+`;
 }
 
 function renderLaunchdPlist(paths: ServicePaths): string {
@@ -6525,6 +6580,7 @@ export {
   servicePaths,
   serviceRunFailureState,
   serviceAuthFailureError,
+  serviceLockedLogLine,
   serviceRunLogLine,
   writeServiceCheckIn,
   serviceRunSuccessState,

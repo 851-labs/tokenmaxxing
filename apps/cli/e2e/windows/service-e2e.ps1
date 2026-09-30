@@ -4,6 +4,8 @@
 #
 #   core            install -> task + launcher -> scheduled run (no window) ->
 #                   error paths -> status/doctor/repair -> deferred repairs -> uninstall
+#   overlapping     a held service.log -> side log, no rotation; three runs at once ->
+#                   one sync, a log entry each, no window; doctor stays clean
 #   path cases      install -> run -> reload-required deferred repair -> run -> uninstall,
 #                   under config paths with (), &, ', %, spaces and non-ASCII
 #   legacy upgrade  a release from before the hidden launcher (template 5, task runs the
@@ -519,6 +521,107 @@ function Invoke-Core {
   Assert-Uninstall $scenario
 }
 
+function Get-LogSize([string]$Path) { if (Test-Path -LiteralPath $Path) { (Get-Item -LiteralPath $Path).Length } else { 0 } }
+
+# What a log gained since it was $Before bytes long.
+function Read-LogFrom([string]$Path, [long]$Before = 0) {
+  if (-not (Test-Path -LiteralPath $Path)) { return "" }
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  if ($bytes.Length -le $Before) { return "" }
+  [System.Text.Encoding]::UTF8.GetString($bytes, [int]$Before, $bytes.Length - [int]$Before)
+}
+
+# Waits until a schtasks /Run that started after $Before has finished.
+function Wait-TaskFinished($Before, [int]$Seconds = 180) {
+  $task = $Before
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  while ((Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 300
+    $task = Get-Task
+    if ($task["Status"] -eq "Running") { continue }
+    # 267009 = SCHED_S_TASK_RUNNING
+    if ($task["Last Run Time"] -ne $Before["Last Run Time"] -and $task["Last Result"] -ne "267009") { break }
+  }
+  $task
+}
+
+# Runs that overlap. Task Scheduler never starts the task while an instance
+# runs (MultipleInstancesPolicy IgnoreNew), but the wrapper run by hand, or a
+# run left going after the task was ended, overlaps it. cmd holds service.log
+# for a whole run, so an overlapping run logs to service-overlap-N.log.
+function Invoke-Overlap {
+  $scenario = "overlapping runs"
+  New-Profile (Join-Path $Root "cfg-overlap")
+  if (-not (Install-Service $scenario)) { return }
+  $logPath = Config-File "service.log"
+  $sideLog = Config-File "service-overlap-1.log"
+
+  # (1) Another process holds an oversized service.log the way cmd's >> does
+  # (write access, read sharing only). The run logs to the first side log and
+  # leaves the rotations alone.
+  $file = [System.IO.File]::Create($logPath)
+  $file.SetLength(5MB + 1)
+  $file.Dispose()
+  Set-Content -LiteralPath "$logPath.1" -Value "rotation 1" -Encoding ascii
+  $hold = [System.IO.File]::Open($logPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+  $run = Invoke-TaskRun "overlap-held-log" { $hold.Dispose(); Read-LogFrom $sideLog }
+  $hold.Dispose()
+  $line = ($run.after -split "\r?\n" | Where-Object { $_ -match '"event":"service_run"' } | Select-Object -Last 1)
+  Add-Check $scenario "Last Result 0 with service.log held" ($run.lastResult -eq "0") "Last Result=$($run.lastResult)"
+  Add-Check $scenario "the run logs to service-overlap-1.log" ($run.after -match "tokenmaxxing service sync" -and $run.after -match "service\.log is in use by another run" -and $line -match '"status":"success"') (Format-OneLine $run.after 900)
+  $rotations = @(1..3 | ForEach-Object { if (Test-Path -LiteralPath "$logPath.$_") { "$_=$((Get-Content -LiteralPath "$logPath.$_" -Raw).Trim())" } })
+  Add-Check $scenario "a held log is neither written nor rotated" ((Get-LogSize $logPath) -eq 5MB + 1 -and ($rotations -join ",") -eq "1=rotation 1") "service.log bytes=$(Get-LogSize $logPath) rotations=[$($rotations -join ', ')]"
+  Assert-NoWindow $scenario $run
+  Get-ChildItem -LiteralPath $env:TOKENMAXXING_CONFIG_DIR -Filter "service*.log*" | Remove-Item -Force
+
+  # (2) Three runs at once: the task, a second schtasks /Run while it runs,
+  # and two runs of the launcher by hand. Exactly one syncs; every run that
+  # started leaves a log entry.
+  Update-AgentLogs
+  $requestsBefore = (Get-Requests).Count
+  $before = Get-Task
+  $watcher = Start-Watcher "overlap-concurrent"
+  $runOut = (schtasks /Run /TN $TaskName 2>&1 | Out-String).Trim()
+  $locked = Wait-Until { Test-Path -LiteralPath (Config-File "service.lock") } 30
+  $againOut = (schtasks /Run /TN $TaskName 2>&1 | Out-String).Trim()
+  $wscript = Join-Path $env:SystemRoot "System32\wscript.exe"
+  $manual = @(1..2 | ForEach-Object {
+      Start-Process -FilePath $wscript -ArgumentList "//B //NoLogo //E:VBScript `"$(Config-File 'service-sync.vbs')`"" -PassThru
+    })
+  $manualCodes = @($manual | ForEach-Object { if ($_.WaitForExit(180000)) { $_.ExitCode } else { "timeout" } })
+  $task = Wait-TaskFinished $before
+  Start-Sleep -Seconds 2
+  # Every root is a wscript.exe the watcher saw start: the task's and the two
+  # the harness started.
+  $concurrent = [pscustomobject]@{ label = "overlap-concurrent"; action = "wscript"; repairs = @(); watch = (Stop-Watcher $watcher) }
+  Write-E2ELog "concurrent runs: schtasks /Run ($runOut), lock seen=$locked, second /Run ($againOut), manual exits=[$($manualCodes -join ', ')]"
+
+  $logs = [ordered]@{}
+  Get-ChildItem -LiteralPath $env:TOKENMAXXING_CONFIG_DIR -Filter "service*.log" | Sort-Object Name | ForEach-Object { $logs[$_.Name] = Read-LogFrom $_.FullName }
+  $all = ($logs.Values -join "`n")
+  Set-Content -LiteralPath (Join-Path $OutDir "overlap-concurrent-service-logs.txt") -Value (($logs.Keys | ForEach-Object { "==== $_`n$($logs[$_])" }) -join "`n") -Encoding utf8
+  $headers = ([regex]::Matches($all, "tokenmaxxing service sync")).Count
+  $events = @($all -split "\r?\n" | Where-Object { $_ -match '"event":"service_run"' })
+  $synced = @($events | Where-Object { $_ -match '"status":"success"' }).Count
+  $skipped = @($events | Where-Object { $_ -match '"status":"skipped"' -and $_ -match '"reason":"locked"' }).Count
+  $perLog = ($logs.Keys | ForEach-Object { "$_ headers=$(([regex]::Matches($logs[$_], 'tokenmaxxing service sync')).Count)" }) -join "; "
+  Add-Check $scenario "the task and both runs by hand exit 0" ($task["Last Result"] -eq "0" -and ($manualCodes -join ",") -eq "0,0") "Last Result=$($task['Last Result']) manual=[$($manualCodes -join ', ')]"
+  # IgnoreNew: the second schtasks /Run starts no instance, so three entries, not four.
+  Add-Check $scenario "every run leaves one log entry; the second schtasks /Run starts none" ($headers -eq 3 -and $events.Count -eq 3) "headers=$headers service_run=$($events.Count); $perLog"
+  Add-Check $scenario "exactly one run syncs; the others log a locked skip" ($synced -eq 1 -and $skipped -eq 2) "success=$synced skipped=$skipped; $(Format-OneLine ($events -join ' || ') 900)"
+  $ingests = @(Get-Requests | Select-Object -Skip $requestsBefore | Where-Object { $_.path -eq "/usage/ingest" -and $_.status -eq 200 }).Count
+  Add-Check $scenario "the sandbox got the one sync's ingest" ($ingests -ge 1) "ingests=$ingests"
+  Add-Check $scenario "the lock is released" (-not (Test-Path -LiteralPath (Config-File "service.lock"))) "lock left: $(if (Test-Path -LiteralPath (Config-File 'service.lock')) { Get-Content -LiteralPath (Config-File 'service.lock') -Raw } else { 'none' })"
+  Assert-NoWindow $scenario $concurrent
+  $roots = @(Get-RunRoots $concurrent).Count
+  Add-Check $scenario "the watcher saw all three launchers" ($roots -eq 3) "wscript roots=$roots; $(Format-WatchedProcesses $concurrent.watch.processes)"
+
+  $doctor = Tmx @("service", "doctor")
+  $problems = @($doctor.out -split "\r?\n" | Where-Object { $_ -match '^\s*(WARN|FAIL)\s' })
+  Add-Check $scenario "doctor: exit 0 with no WARN or FAIL check" ($doctor.code -eq 0 -and $problems.Count -eq 0) "exit $($doctor.code): $(Format-OneLine ($problems -join ' | ') 600)"
+  Assert-Uninstall $scenario
+}
+
 function Invoke-PathCase([string]$Scenario, [string]$ConfigDir) {
   $label = Get-ScenarioLabel $Scenario
   New-Profile $ConfigDir
@@ -614,6 +717,7 @@ schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null
 
 Invoke-Scenario "window watcher" { Invoke-WatcherControls }
 Invoke-Scenario "core" { Invoke-Core }
+Invoke-Scenario "overlapping runs" { Invoke-Overlap }
 
 # Trimmed from the original harness: plain spaces and "Zoë (Work)" are
 # covered by the cases below.

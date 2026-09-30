@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { afterAll, describe, expect, it } from "vite-plus/test";
@@ -277,6 +277,39 @@ describe.skipIf(process.platform === "win32").concurrent("CLI argv parsing", () 
       // Reaching the handler is what matters: it records the (logged-out) attempt.
       expect(run.stdout).toContain('"event":"service_run"');
       expect(existsSync(join(run.configDir, "service-state.json"))).toBe(true);
+    },
+  );
+
+  // The Windows wrapper logs whatever the runner prints; a skip that printed
+  // nothing looked like a run that never started.
+  it(
+    "logs a scheduled run that finds another run holding the lock",
+    { timeout: 30_000 },
+    async () => {
+      const lockedAt = new Date().toISOString();
+      const run = await runCli(["service", "run", "--scheduled"], {
+        setup: (root) =>
+          writeFileSync(
+            join(root, "config", "service.lock"),
+            JSON.stringify({
+              acquiredAt: lockedAt,
+              hostname: hostname(),
+              ownerId: "other-run",
+              pid: process.pid,
+              version: 1,
+            }),
+          ),
+      });
+
+      expectParsed(run);
+      expect(run.status).toBe(0);
+      expect(JSON.parse(run.stdout.trim())).toMatchObject({
+        event: "service_run",
+        message: `Sync skipped; service run is already in progress (since ${lockedAt}, pid ${process.pid})`,
+        reason: "locked",
+        status: "skipped",
+      });
+      expect(existsSync(join(run.configDir, "service-state.json"))).toBe(false);
     },
   );
 

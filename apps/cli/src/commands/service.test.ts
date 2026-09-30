@@ -903,10 +903,6 @@ printf 'HERMES_HOME=%s\\n' "\${HERMES_HOME-unset}"
     expect(wrapper).not.toContain("npm install");
     expect(wrapper).not.toContain("pnpm add");
     expect(wrapper).not.toContain("yarn global");
-    expect(wrapper).toContain("if %%~zA GEQ 5242880");
-    expect(wrapper).toContain('"%TOKENMAXXING_LOG%.3"');
-    expect(wrapper).toContain('move /y "%TOKENMAXXING_LOG%.1" "%TOKENMAXXING_LOG%.2"');
-    expect(wrapper).toContain('move /y "%TOKENMAXXING_LOG%" "%TOKENMAXXING_LOG%.1"');
     expect(wrapper).toContain("set /p TOKENMAXXING_SERVICE_RUNNER=<");
     expect(wrapper).toContain("service run --scheduled");
     expect(wrapper).toContain('set "CLAUDE_CONFIG_DIR=D:\\Claude Logs, extra"\r\n');
@@ -928,26 +924,102 @@ printf 'HERMES_HOME=%s\\n' "\${HERMES_HOME-unset}"
     expect(wrapper).not.toContain(configDir);
     expect(wrapper).not.toContain("Zo");
     expect(lines[1]).toBe('"%SystemRoot%\\System32\\chcp.com" 65001 >nul');
+    expect(lines).toContain('set "TOKENMAXXING_SERVICE_DIR=%~dp0"');
     expect(lines).toContain('set "TOKENMAXXING_LOG=%~dp0service.log"');
-    expect(lines).toContain('set /p TOKENMAXXING_SERVICE_RUNNER=<"%~dp0service-runner-current"');
+    expect(lines).toContain(
+      'set /p TOKENMAXXING_SERVICE_RUNNER=<"%TOKENMAXXING_SERVICE_DIR%service-runner-current"',
+    );
     // A literal percent sign must not start a variable expansion.
     expect(lines).toContain('set "PATH=C:\\Program Files (x86)\\Tools;C:\\100%%\\bin"');
     // The runner path may contain & ( ): expand it only inside quotes, never inside a block.
     expect(lines).toContain("if not defined TOKENMAXXING_SERVICE_RUNNER goto runner_pointer_empty");
     expect(lines).toContain('if not exist "%TOKENMAXXING_SERVICE_RUNNER%" goto runner_missing');
+    expect(lines).toContain('"%TOKENMAXXING_SERVICE_RUNNER%" service run --scheduled');
     expect(lines).toContain(
-      '"%TOKENMAXXING_SERVICE_RUNNER%" service run --scheduled >> "%TOKENMAXXING_LOG%" 2>&1',
-    );
-    expect(lines).toContain(
-      '>> "%TOKENMAXXING_LOG%" echo tokenmaxxing service runner missing: "%TOKENMAXXING_SERVICE_RUNNER%"',
+      'echo tokenmaxxing service runner missing: "%TOKENMAXXING_SERVICE_RUNNER%"',
     );
     for (const line of lines) {
-      expect(line.replaceAll(/"[^"]*"/g, '""')).not.toContain("%TOKENMAXXING_SERVICE_RUNNER%");
+      expect(line.replaceAll(/"[^"]*"/g, '""')).not.toMatch(
+        /%TOKENMAXXING_(SERVICE_RUNNER|LOG|SERVICE_DIR)%/,
+      );
     }
-    const blockStart = lines.findIndex((line) => line.endsWith("("));
-    const blockEnd = lines.indexOf(")");
-    expect(lines.filter((line) => line.endsWith("(")).length).toBe(1);
-    expect(lines.slice(blockStart, blockEnd).join("\n")).not.toContain("SERVICE_RUNNER");
+    // No parenthesized blocks at all: every path expansion is a line of its own.
+    expect(lines.filter((line) => line.endsWith("(") || line.trim() === ")")).toEqual([]);
+  });
+
+  describe("when another run holds service.log", () => {
+    const wrapper = renderServiceWrapper({
+      env: { PATH: "C:\\Windows\\System32" },
+      logPath: "C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing\\service.log",
+      platform: "win32",
+      runnerPointerPath: "C:\\Users\\alex\\AppData\\Roaming\\tokenmaxxing\\service-runner-current",
+    });
+    const lines = wrapper.split("\r\n");
+    const label = (name: string) => lines.indexOf(`:${name}`);
+
+    // cmd skips a command whose >> target is held without changing ERRORLEVEL,
+    // so the overlapping run exited 0 without a trace (Windows battle test 5f).
+    it("tells a run that never started from one that failed", () => {
+      const redirect = lines.indexOf('(call :sync >> "%TOKENMAXXING_LOG%" 2>&1) 2>nul');
+
+      expect(redirect).toBeGreaterThan(label("open_log"));
+      expect(lines[redirect - 1]).toBe('set "TOKENMAXXING_LOG_OPENED="');
+      expect(lines[redirect + 1]).toBe("if defined TOKENMAXXING_LOG_OPENED exit /b %ERRORLEVEL%");
+      // The marker is :sync's first step, before anything that can fail.
+      expect(lines[label("sync") + 1]).toBe('set "TOKENMAXXING_LOG_OPENED=1"');
+    });
+
+    it("falls back to side logs, then to the console", () => {
+      const fallback = lines.slice(
+        lines.indexOf("if defined TOKENMAXXING_LOG_OPENED exit /b %ERRORLEVEL%") + 1,
+        label("no_log"),
+      );
+
+      expect(fallback).toEqual([
+        "set /a TOKENMAXXING_LOG_SLOT+=1",
+        "if %TOKENMAXXING_LOG_SLOT% GTR 4 goto no_log",
+        'set "TOKENMAXXING_LOG=%TOKENMAXXING_SERVICE_DIR%service-overlap-%TOKENMAXXING_LOG_SLOT%.log"',
+        "goto open_log",
+      ]);
+      expect(lines.slice(label("no_log"), label("sync"))).toEqual([
+        ":no_log",
+        "call :sync",
+        "exit /b %ERRORLEVEL%",
+      ]);
+      expect(lines).toContain(
+        "if not %TOKENMAXXING_LOG_SLOT%==0 echo service.log is in use by another run",
+      );
+    });
+
+    it("rotates whichever log it opens, and a held log not at all", () => {
+      expect(lines[label("open_log") + 1]).toBe("call :rotate_log");
+      expect(lines.slice(label("rotate_log"))).toEqual([
+        ":rotate_log",
+        'if not exist "%TOKENMAXXING_LOG%" exit /b 0',
+        'for %%A in ("%TOKENMAXXING_LOG%") do if %%~zA LSS 5242880 exit /b 0',
+        // Moving the log aside first fails while it is held, before any
+        // rotation has shifted.
+        'move /y "%TOKENMAXXING_LOG%" "%TOKENMAXXING_LOG%.0" >nul 2>nul || exit /b 0',
+        'if exist "%TOKENMAXXING_LOG%.3" del /f /q "%TOKENMAXXING_LOG%.3" >nul 2>nul',
+        'if exist "%TOKENMAXXING_LOG%.2" move /y "%TOKENMAXXING_LOG%.2" "%TOKENMAXXING_LOG%.3" >nul 2>nul',
+        'if exist "%TOKENMAXXING_LOG%.1" move /y "%TOKENMAXXING_LOG%.1" "%TOKENMAXXING_LOG%.2" >nul 2>nul',
+        'move /y "%TOKENMAXXING_LOG%.0" "%TOKENMAXXING_LOG%.1" >nul 2>nul',
+        "exit /b 0",
+        "",
+      ]);
+    });
+
+    it("never falls through into a subroutine", () => {
+      for (const name of [
+        "no_log",
+        "sync",
+        "runner_pointer_empty",
+        "runner_missing",
+        "rotate_log",
+      ]) {
+        expect(lines[label(name) - 1]).toMatch(/^(exit \/b|goto) /);
+      }
+    });
   });
 });
 
@@ -1028,7 +1100,7 @@ describe("unchanged service refresh", () => {
     commandPath: "/Users/alex/.config/tokenmaxxing/service-runners/0.7.0/tokenmaxxing",
     installedAt: "2026-09-28T09:00:00.000Z",
     schedule: "syncs every 5 minutes",
-    templateVersion: 7,
+    templateVersion: 8,
     version: 1,
   };
   const wrapper = "#!/bin/sh\nexport PATH='/usr/bin:/bin'\n";
@@ -1691,7 +1763,7 @@ describe("Windows hidden launcher", () => {
         commandPath: join(paths.runnersDir, "tokenmaxxing.exe"),
         installedAt: "2026-06-16T09:00:00.000Z",
         schedule: "syncs every 5 minutes",
-        templateVersion: 7,
+        templateVersion: 8,
         version: 1,
       };
 
@@ -1781,10 +1853,10 @@ describe("Windows hidden launcher", () => {
     };
 
     expect(serviceReloadRequired(metadata)).toBe(true);
-    expect(serviceReloadRequired({ ...metadata, templateVersion: 6 })).toBe(true);
-    expect(serviceReloadRequired({ ...metadata, templateVersion: 7 })).toBe(false);
-    // A newer runner wrote a newer template: not this CLI's to reload.
+    expect(serviceReloadRequired({ ...metadata, templateVersion: 7 })).toBe(true);
     expect(serviceReloadRequired({ ...metadata, templateVersion: 8 })).toBe(false);
+    // A newer runner wrote a newer template: not this CLI's to reload.
+    expect(serviceReloadRequired({ ...metadata, templateVersion: 9 })).toBe(false);
     expect(
       serviceRepairNeedsSchedulerInstall({
         reason: serviceRepairReason({ reloadRequired: true, schedulerActive: true })!,
@@ -4405,7 +4477,7 @@ describe("serviceInstallProgram", () => {
       installedAt: "2026-06-16T12:00:00.000Z",
       runnerTarget: "darwin-arm64",
       runnerVersion: "0.4.17",
-      templateVersion: 7,
+      templateVersion: 8,
     });
     expect(written[0]?.metadata).not.toHaveProperty("autoUpdate");
     expect(state.logs).toContain("Automatic sync installed");
@@ -4486,7 +4558,7 @@ describe("serviceInstallProgram", () => {
         commandPath: "/tmp/old-runner",
         installedAt: "2026-06-01T08:00:00.000Z",
         schedule: "syncs every 5 minutes",
-        templateVersion: 7,
+        templateVersion: 8,
         version: 1,
       },
     });
@@ -4899,7 +4971,7 @@ describe("a service newer than this CLI", () => {
     runnerTarget: "darwin-arm64",
     runnerVersion: "0.7.0",
     schedule: "syncs every 5 minutes",
-    templateVersion: 7,
+    templateVersion: 8,
     version: 1,
   };
 
@@ -4911,27 +4983,27 @@ describe("a service newer than this CLI", () => {
       template: undefined,
     });
     const newer = serviceNewerThanCli(
-      { ...metadata, runnerVersion: "0.8.0", templateVersion: 8 },
+      { ...metadata, runnerVersion: "0.8.0", templateVersion: 9 },
       "0.7.0",
     );
     expect(newer).toEqual({
       runner: { cli: "0.7.0", installed: "0.8.0" },
-      template: { cli: 7, installed: 8 },
+      template: { cli: 8, installed: 9 },
     });
     expect(new ServiceNewerThanCliError({ command: "repair", newer: newer! }).message).toBe(
-      "error: the service is newer than this CLI (template 8 vs 7, runner 0.8.0 vs 0.7.0)\nhint: upgrade the CLI with tokenmaxxing upgrade, then run tokenmaxxing service repair again if it is still needed",
+      "error: the service is newer than this CLI (template 9 vs 8, runner 0.8.0 vs 0.7.0)\nhint: upgrade the CLI with tokenmaxxing upgrade, then run tokenmaxxing service repair again if it is still needed",
     );
   });
 
   it("doctor says to upgrade the CLI, not to reload", () => {
-    expect(doctorTemplateCheck({ ...metadata, templateVersion: 8 }, false)).toEqual({
+    expect(doctorTemplateCheck({ ...metadata, templateVersion: 9 }, false)).toEqual({
       detail:
-        "the service is newer than this CLI (template 8 vs 7); upgrade the CLI with tokenmaxxing upgrade",
+        "the service is newer than this CLI (template 9 vs 8); upgrade the CLI with tokenmaxxing upgrade",
       fix: "upgrade the CLI with tokenmaxxing upgrade",
       label: "template",
       status: "warn",
     });
-    expect(doctorTemplateCheck({ ...metadata, templateVersion: 6 }, true)).toEqual({
+    expect(doctorTemplateCheck({ ...metadata, templateVersion: 7 }, true)).toEqual({
       detail: "reload required; repair with tokenmaxxing service repair",
       fix: "repair with tokenmaxxing service repair",
       label: "template",
@@ -5092,7 +5164,7 @@ describe("service doctor", () => {
       runnerTarget: "target",
       runnerVersion: "0.7.0",
       schedule: "syncs every 5 minutes",
-      templateVersion: 7,
+      templateVersion: 8,
       version: 1,
     };
     const launcherPath = windowsLauncherPath(paths);
