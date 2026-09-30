@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.1-alpha.0 - 2026-09-29
+
 ### Fixed
 
 - Linux: the deferred service repair (after an update, or when the timer is inactive) runs when the
