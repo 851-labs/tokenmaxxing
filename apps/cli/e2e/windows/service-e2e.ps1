@@ -10,6 +10,11 @@
 #                   under config paths with (), &, ', %, spaces and non-ASCII
 #   legacy upgrade  a release from before the hidden launcher (template 5, task runs the
 #                   .cmd directly) upgraded by runner auto-update, and by `service repair`
+#   uninstall from the runner
+#                   install and uninstall run by the service runner exe itself: the task
+#                   goes, the running runner is deleted by a hidden cleanup once it exits
+#
+# -Only <scenario>,... runs just those scenarios (for a local VM run).
 param(
   [Parameter(Mandatory)] [string]$Root,
   [Parameter(Mandatory)] [string]$OutDir,
@@ -18,7 +23,8 @@ param(
   [Parameter(Mandatory)] [string]$Api,
   [Parameter(Mandatory)] [int]$TemplateVersion,
   [Parameter(Mandatory)] [string]$RunnerExe,
-  [string]$LegacyBin = ""
+  [string]$LegacyBin = "",
+  [string[]]$Only = @()
 )
 $ErrorActionPreference = "Continue"
 . (Join-Path $PSScriptRoot "lib\common.ps1")
@@ -150,6 +156,8 @@ function Get-Requests { @((Invoke-RestMethod -Uri "$Api/__sandbox/requests").req
 function Start-Watcher([string]$Label) {
   $stop = Join-Path $OutDir "$Label.stop"
   $ready = Join-Path $OutDir "$Label.ready"
+  # Left by an earlier run into the same out dir, they would end this watch at once.
+  Remove-Item -LiteralPath $stop, $ready -ErrorAction SilentlyContinue
   $process = Start-Process -FilePath "pwsh" -WindowStyle Hidden -PassThru -ArgumentList `
     "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\window-watch.ps1`" -OutDir `"$OutDir`" -Label `"$Label`" -StopFile `"$stop`""
   Wait-Until { Test-Path -LiteralPath $ready } 45 | Out-Null
@@ -702,8 +710,67 @@ function Invoke-LegacyUpgrade {
   Assert-Uninstall $scenario
 }
 
+# `service install` and `uninstall` run by the service runner exe itself, as a
+# user who found it in the config dir would. Windows never deletes the image of
+# a running process, so uninstall retires the runners dir aside and a hidden
+# wscript.exe deletes it once the exe exits.
+function Invoke-UninstallFromRunner {
+  $scenario = "uninstall from the runner"
+  New-Profile (Join-Path $Root "cfg-uninstall-runner")
+  if (-not (Install-Service $scenario)) { return }
+  $runner = (Get-Content -LiteralPath (Config-File "service-runner-current") -Raw).Trim()
+
+  # A reinstall from the runner keeps the running exe: it is already the current runner.
+  $reinstall = Invoke-Logged "runner: service install --json" { & $runner service install --json }
+  $pointer = (Get-Content -LiteralPath (Config-File "service-runner-current") -Raw).Trim()
+  Add-Check $scenario "service install from the runner over its own service" ($reinstall.code -eq 0 -and $pointer -eq $runner) "exit $($reinstall.code) runner=$pointer; $(Format-OneLine $reinstall.out)"
+
+  # Started through Start-Process so its pid roots the process tree the
+  # watcher attributes windows to, as for the watcher's own controls.
+  $label = "uninstall-from-runner"
+  $watcher = Start-Watcher $label
+  $stdout = Join-Path $OutDir "$label.stdout.txt"
+  $stderr = Join-Path $OutDir "$label.stderr.txt"
+  $uninstallProcess = Start-Process -FilePath $runner -ArgumentList "service uninstall --json" -NoNewWindow -PassThru `
+    -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+  $null = $uninstallProcess.Handle # keeps ExitCode readable after the exit
+  $uninstallProcess.WaitForExit()
+  $uninstallOut = "$(Get-Content -LiteralPath $stdout -Raw)$(Get-Content -LiteralPath $stderr -Raw)".Trim()
+  Write-E2ELog "---- runner: service uninstall --json (exit $($uninstallProcess.ExitCode))`n$uninstallOut"
+  $json = ConvertFrom-CliJson $uninstallOut
+  Add-Check $scenario "service uninstall from the runner" ($uninstallProcess.ExitCode -eq 0 -and $json.status -eq "ok") "exit $($uninstallProcess.ExitCode): $(Format-OneLine $uninstallOut)"
+  $pending = @($json.pendingRemoval)
+  Add-Check $scenario "the running runner is retired aside" ($pending.Count -eq 1 -and $pending[0] -match '\\service-runners\.retired-[0-9a-f]{8}$' -and -not (Test-Path -LiteralPath (Config-File "service-runners"))) "pendingRemoval=$($pending -join ', ')"
+  $task = Get-Task
+  Add-Check $scenario "task removed" ($task._exit -ne 0) (Format-OneLine $task._raw 200)
+
+  $status = ConvertFrom-CliJson (Tmx @("service", "status", "--json")).out
+  Add-Check $scenario "status: not installed, no runner issue" ($status.installed -eq $false -and $null -eq $status.runnerIssue -and $null -eq $status.runnerPath) "installed=$($status.installed) runnerIssue=$($status.runnerIssue) runnerPath=$($status.runnerPath)"
+  $doctor = Tmx @("service", "doctor")
+  $problems = @($doctor.out -split "\r?\n" | Where-Object { $_ -match '^\s*(WARN|FAIL)\s' })
+  Add-Check $scenario "doctor: not installed is its only problem" ($problems.Count -eq 1 -and $problems[0] -match '^\s*FAIL\s+scheduler\s+not installed') "exit $($doctor.code): $(Format-OneLine ($problems -join ' | ') 600)"
+
+  $cleaned = Wait-Until { @(Get-ChildItem -LiteralPath $env:TOKENMAXXING_CONFIG_DIR -Force -Filter "service-runners*").Count -eq 0 } 30
+  $left = @(Get-ChildItem -LiteralPath $env:TOKENMAXXING_CONFIG_DIR -Force | ForEach-Object Name)
+  Add-Check $scenario "no runner files left after a short wait" $cleaned "config dir: $($left -join ', ')"
+  $extra = @($left | Where-Object { $_ -notmatch '^(config\.json|service\.log(\.\d+)?)$' })
+  Add-Check $scenario "only config.json and the service log remain" ($extra.Count -eq 0) "left: $($left -join ', ')"
+  $watch = Stop-Watcher $watcher
+  if ($null -eq $watch) { Add-Check $scenario "no window or focus change ($label)" $false "window watcher wrote no summary"; return }
+  $processes = @($watch.processes)
+  # The cleanup is a wscript.exe the runner started; its command line is read
+  # only if WMI delivered the start while it still ran, which its 1 s wait allows.
+  $cleanup = @($processes | Where-Object { $_.name -eq "wscript.exe" -and (Get-ParentProcess $processes $_).pid -eq $uninstallProcess.Id })
+  $cleanupScript = @($cleanup | Where-Object { $null -eq $_.commandLine -or $_.commandLine -match 'service-runners\.retired-[0-9a-f]{8}\.vbs"?$' })
+  Add-Check $scenario "cleanup ran through a wscript.exe started by the runner" ((Test-WatcherLive $watch) -and $cleanupScript.Count -gt 0) "processSource=$($watch.processSource) windowSource=$($watch.windowSource) runner=#$($uninstallProcess.Id) seen=[$(Format-WatchedProcesses $processes)]"
+  $seen = Get-RunWindows ([pscustomobject]@{ watch = $watch; rootPids = @($uninstallProcess.Id) })
+  Add-Check $scenario "no window or focus change ($label)" ($seen.windows.Count -eq 0 -and $seen.focus.Count -eq 0) $seen.detail
+}
+
 # A scenario that throws records a FAIL and the next scenario still runs.
+# With -Only, a scenario not listed is skipped.
 function Invoke-Scenario([string]$Name, [scriptblock]$Body) {
+  if ($Only.Count -gt 0 -and $Name -notin $Only) { return }
   try { & $Body } catch {
     Add-Check $Name "scenario ran to completion" $false "$($_.Exception.Message) $(Format-OneLine $_.InvocationInfo.PositionMessage 300)"
   }
@@ -735,9 +802,11 @@ foreach ($case in $pathCases.Keys) {
 
 if ($LegacyBin) {
   Invoke-Scenario "legacy upgrade" { Invoke-LegacyUpgrade }
-} else {
+} elseif ($Only.Count -eq 0 -or "legacy upgrade" -in $Only) {
   Add-Check "legacy upgrade" "legacy release available" $false "no -LegacyBin"
 }
+Use-Cli $TmxBin
+Invoke-Scenario "uninstall from the runner" { Invoke-UninstallFromRunner }
 schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null
 # run-service-e2e.ps1 fails the job if this marker is missing.
 Add-Check "service" "all scenarios ran" $true "$((Get-Content -LiteralPath $script:E2EResults).Count) checks recorded"

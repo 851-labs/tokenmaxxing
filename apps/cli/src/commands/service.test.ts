@@ -55,6 +55,7 @@ import {
   isEphemeralCommandPath,
   isTransientCommandShimPath,
   isWindowsNpmPrefixShim,
+  keepNewerCurrentRunner,
   launchdJobMatches,
   legacyServiceWrapperPaths,
   PackageManagerUpdateError,
@@ -4376,6 +4377,44 @@ describe("repair never moves the runner back", () => {
 
     // No optional package or registry release in this test: it tried to install.
     expect(failureTag(exit)).toBe("ServiceRunnerPackageMissingError");
+  });
+});
+
+describe("keepNewerCurrentRunner", () => {
+  const paths = servicePaths({
+    env: { TOKENMAXXING_CONFIG_DIR: "C:\\Users\\Zoë\\.config\\tokenmaxxing" },
+    home: "C:\\Users\\Zoë",
+    platform: "win32",
+  })!;
+  const current = {
+    packageName: serviceRunnerPackageName("windows-arm64"),
+    path: "C:\\Users\\Zoë\\.config\\tokenmaxxing\\service-runners\\0.7.0\\windows-arm64\\tokenmaxxing.exe",
+    target: "windows-arm64" as const,
+    version: "0.7.0",
+  };
+  const keep = (ownVersion: string, runningPath: string) =>
+    Effect.runPromise(
+      keepNewerCurrentRunner(
+        paths,
+        ownVersion,
+        () => Effect.succeed(current),
+        runningPath,
+        "win32",
+      ),
+    );
+
+  it("keeps the current runner when it is the exe running this command", async () => {
+    // A runner sits in no npm package: installing "its own" runner would download itself again.
+    expect(await keep("0.7.0", current.path.toUpperCase())).toEqual(current);
+  });
+
+  it("installs this CLI's runner from any other exe at the same version", async () => {
+    expect(
+      await keep(
+        "0.7.0",
+        "C:\\Users\\Zoë\\AppData\\Roaming\\npm\\node_modules\\@851-labs\\tokenmaxxing\\bin\\tokenmaxxing.exe",
+      ),
+    ).toBeNull();
   });
 });
 

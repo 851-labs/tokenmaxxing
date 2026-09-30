@@ -83,6 +83,12 @@ import {
   type UploadRetryPolicy,
 } from "./sync";
 import { removeNpmStagingDirs } from "./npm-staging";
+import {
+  removeRetiredServiceRunners,
+  removeServiceRunnersDir,
+  type RunnersRemoval,
+  windowsScriptHostPath,
+} from "./service-runner-removal";
 import { defaultServicePath, stableServicePath } from "./service-path";
 
 const execFilePromise = promisify(execFile);
@@ -563,8 +569,9 @@ class ServiceInstallError extends Data.TaggedError("ServiceInstallError")<{
 class ServiceUninstallError extends Data.TaggedError("ServiceUninstallError")<{
   readonly cause: unknown;
 }> {
-  override message =
-    "error: failed to uninstall tokenmaxxing service\nhint: rerun with --verbose and remove the scheduler entry manually";
+  override get message() {
+    return `error: failed to uninstall tokenmaxxing service${causeLine(this.cause)}\nhint: rerun with --verbose and remove the scheduler entry manually`;
+  }
 }
 
 class ServiceRunError extends Data.TaggedError("ServiceRunError")<{
@@ -907,6 +914,7 @@ function serviceInstallProgram(
 
     const runner = yield* Effect.gen(function* () {
       const runnerSpinner = yield* humanSpinner("Installing service runner", options);
+      yield* removeRetiredServiceRunners(paths.runnersDir, platform);
       const installedRunner = yield* (
         runtime.installServiceRunner ??
         ((servicePaths) =>
@@ -1027,20 +1035,27 @@ function serviceUninstallEffect(options: { json?: boolean | undefined } = {}) {
         Effect.mapError((cause) => new ServiceUninstallError({ cause })),
       );
       const filesSpinner = yield* humanSpinner("Removing service files", options);
-      yield* removeServiceFiles(paths).pipe(
+      yield* removeRetiredServiceRunners(paths.runnersDir);
+      const runners = yield* removeServiceFiles(paths).pipe(
         Effect.tap(() => Effect.sync(() => filesSpinner.stop("Service files removed"))),
         Effect.tapError(() =>
           Effect.sync(() => filesSpinner.error("Failed removing service files")),
         ),
         Effect.mapError((cause) => new ServiceUninstallError({ cause })),
       );
+      // The runner running this uninstall (or a scheduled sync) cannot be
+      // deleted until it exits; the service itself is already gone.
+      const pendingRemoval = runners._tag === "retired" ? [runners.path] : [];
 
       if (options.json) {
-        yield* writeJson({ removed: true, status: "ok" });
+        yield* writeJson({ pendingRemoval, removed: true, status: "ok" });
         return;
       }
 
       yield* humanLog("success", "Automatic sync uninstalled", options);
+      for (const path of pendingRemoval) {
+        yield* humanLog("info", `Runner still running; removed once it exits: ${path}`, options);
+      }
       yield* humanLog("info", "Auth and synced usage were left untouched", options);
     }),
   );
@@ -1705,6 +1720,7 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
         : incrementalSince;
     const metadata = yield* readServiceMetadata(paths.metadataPath);
     yield* removeCliNpmStagingDirs(metadata);
+    yield* removeRetiredServiceRunners(paths.runnersDir);
     const nativeStatus = yield* readNativeSchedulerStatus(paths);
     const reloadRequired = serviceReloadRequired(metadata, currentState);
     const baseCheckIn = {
@@ -4444,14 +4460,6 @@ function windowsTaskXmlPath(paths: ServicePaths): string {
   return join(paths.configDir, WINDOWS_TASK_XML_NAME);
 }
 
-// Task Scheduler runs actions from its native (64-bit on x64/arm64) host, so %SystemRoot%\System32
-// is always the native wscript.exe there, even if this CLI runs under WOW64 file-system redirection.
-function windowsScriptHostPath(env: Record<string, string | undefined> = process.env): string {
-  const systemRoot = env["SystemRoot"] ?? env["SYSTEMROOT"] ?? "C:\\Windows";
-
-  return `${systemRoot.replace(/[\\/]+$/, "")}\\System32\\wscript.exe`;
-}
-
 function renderLaunchdStartInterval(): string {
   return String(SERVICE_INTERVAL_SECONDS);
 }
@@ -4743,17 +4751,33 @@ function installServiceRunner(
  * The runner a repair (or install) should use. The service's own runner
  * wins when it is newer than this CLI: a global CLI that npm never updated
  * would otherwise "repair" an auto-updated runner back to its own, older
- * version (and the runner would then auto-update again).
+ * version (and the runner would then auto-update again). It also wins when it
+ * is the exe running this command: a runner sits in no npm package, so it
+ * would otherwise download itself again, and fail without the registry.
  */
 function keepNewerCurrentRunner(
   paths: ServicePaths,
   ownVersion: string,
   readCurrent: (paths: ServicePaths) => Effect.Effect<ServiceRunnerInstall, unknown>,
+  runningPath: string = process.execPath,
+  platform: NodeJS.Platform = process.platform,
 ): Effect.Effect<ServiceRunnerInstall | null, never> {
   return readCurrent(paths).pipe(
-    Effect.map((current) => (isNewerVersion(ownVersion, current.version) ? current : null)),
+    Effect.map((current) =>
+      isNewerVersion(ownVersion, current.version) ||
+      isSameExecutablePath(current.path, runningPath, platform)
+        ? current
+        : null,
+    ),
     Effect.catch(() => Effect.succeed(null)),
   );
+}
+
+function isSameExecutablePath(a: string, b: string, platform: NodeJS.Platform): boolean {
+  if (platform === "win32") {
+    return win32.resolve(a).toLowerCase() === win32.resolve(b).toLowerCase();
+  }
+  return realpathSyncOrOriginal(a) === realpathSyncOrOriginal(b);
 }
 
 function installServiceRunnerForRepair(
@@ -5286,7 +5310,16 @@ function writeServiceFiles(
   });
 }
 
-function removeServiceFiles(paths: ServicePaths): Effect.Effect<void, unknown> {
+/**
+ * Removes every service file. The runners dir goes last: on Windows a runner
+ * that is still running (the one running this uninstall, or a scheduled sync)
+ * leaves it retired aside for a hidden cleanup, and a failure there still
+ * leaves nothing else behind.
+ */
+function removeServiceFiles(
+  paths: ServicePaths,
+  platform: NodeJS.Platform = process.platform,
+): Effect.Effect<RunnersRemoval, unknown> {
   return Effect.tryPromise({
     try: async () => {
       await rm(paths.wrapperPath, { force: true });
@@ -5300,7 +5333,6 @@ function removeServiceFiles(paths: ServicePaths): Effect.Effect<void, unknown> {
       }
       await rm(paths.metadataPath, { force: true });
       await rm(paths.runnerPointerPath, { force: true });
-      await rm(paths.runnersDir, { force: true, recursive: true });
       await rm(paths.statePath, { force: true });
       await rm(serviceSourceCadencePath(paths), { force: true });
       await rm(paths.lockPath, { force: true });
@@ -5313,7 +5345,7 @@ function removeServiceFiles(paths: ServicePaths): Effect.Effect<void, unknown> {
       }
     },
     catch: (cause) => cause,
-  });
+  }).pipe(Effect.andThen(removeServiceRunnersDir(paths.runnersDir, platform)));
 }
 
 function legacyServiceWrapperPaths(paths: ServicePaths): string[] {
@@ -6511,6 +6543,7 @@ export {
   isEphemeralCommandPath,
   isTransientCommandShimPath,
   isWindowsNpmPrefixShim,
+  keepNewerCurrentRunner,
   launchdJobMatches,
   windowsTaskMatches,
   withInstalledWindowsSpelling,
