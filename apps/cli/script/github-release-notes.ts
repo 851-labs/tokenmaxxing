@@ -92,7 +92,7 @@ function sortVersions(versions: readonly string[]): string[] {
 }
 
 function releaseTitle(version: string): string {
-  return `tokenmaxxing v${version}`;
+  return `v${version}`;
 }
 
 function npmVersionUrl(version: string): string {

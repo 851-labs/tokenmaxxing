@@ -131,7 +131,7 @@ describe("github release versions", () => {
 
 describe("github release notes", () => {
   it("titles releases consistently", () => {
-    expect(releaseTitle("0.7.0")).toBe("tokenmaxxing v0.7.0");
+    expect(releaseTitle("0.7.0")).toBe("v0.7.0");
   });
 
   it("appends the install command and npm link to the changelog notes", () => {
