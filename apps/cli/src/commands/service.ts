@@ -862,14 +862,17 @@ function serviceInstallProgram(
       return yield* Effect.fail(new ServiceEnvTokenError());
     }
 
-    if (!options.refresh) {
-      yield* resolveSyncAuth({ json: options.json === true });
-    }
-
+    // Before the login check: a config dir the service can't use (Windows can't
+    // even create one with a tab in it) must say so, not ask to log in.
     const env = runtime.env ?? process.env;
     const platform = runtime.platform ?? process.platform;
     const shellPaths = yield* servicePathsEffect(env, runtime.home, platform);
     yield* ensureServiceConfigDirSupported(shellPaths);
+
+    if (!options.refresh) {
+      yield* resolveSyncAuth({ json: options.json === true });
+    }
+
     const { env: serviceEnv, paths } = withInstalledWindowsSpelling(
       shellPaths,
       capturedServiceEnv(env, platform),
