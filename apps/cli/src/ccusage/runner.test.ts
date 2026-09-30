@@ -20,6 +20,15 @@ const codex: CcusageSource = { source: "codex", subcommand: "codex" };
 const hermes: CcusageSource = { source: "hermes", subcommand: "hermes" };
 const pi: CcusageSource = { source: "pi", subcommand: "pi" };
 
+function missingBun(source: string) {
+  return new CcusageRunError({
+    cause: Object.assign(new Error("bun not found"), { code: "ENOENT" }),
+    code: "command_not_found",
+    report: "daily",
+    source,
+  });
+}
+
 async function ccusageErrorFor<A>(effect: Effect.Effect<A, CcusageRunError>) {
   const exit = await Effect.runPromiseExit(effect);
   expect(exit._tag).toBe("Failure");
@@ -99,11 +108,28 @@ describe("ccusage commands", () => {
 });
 
 describe("ccusageCommandInvocations", () => {
-  it("selects the Windows npm command shim", () => {
-    expect(ccusageCommandInvocations(["codex", "daily"], "win32")).toEqual([
-      { args: ["x", "ccusage@^20.0.22", "codex", "daily"], command: "bun" },
-      { args: ["-y", "ccusage@^20.0.22", "codex", "daily"], command: "npx.cmd" },
+  // Bun 1.4 (0.7.0's runtime) throws EINVAL for a .cmd started without a shell, which killed
+  // every scheduled run on Windows without bun right after its started check-in.
+  it("runs the Windows npm command shim through cmd.exe, quoting its arguments but not its name", () => {
+    expect(
+      ccusageCommandInvocations(["codex", "daily", "--since", "20260910"], "win32", {
+        ComSpec: "C:\\WINDOWS\\system32\\cmd.exe",
+      }),
+    ).toEqual([
+      { args: ["x", "ccusage@^20.0.22", "codex", "daily", "--since", "20260910"], command: "bun" },
+      {
+        args: [
+          "/d",
+          "/s",
+          "/c",
+          '"npx.cmd "-y" "ccusage@^20.0.22" "codex" "daily" "--since" "20260910""',
+        ],
+        command: "C:\\WINDOWS\\system32\\cmd.exe",
+        shim: "npx.cmd",
+        windowsVerbatimArguments: true,
+      },
     ]);
+    expect(ccusageCommandInvocations(["codex", "daily"], "win32", {})[1].command).toBe("cmd.exe");
   });
 
   it("keeps the POSIX npm fallback", () => {
@@ -128,38 +154,66 @@ describe("execCcusage", () => {
       "bun",
       ["x", "ccusage@^20.0.22", "codex", "daily"],
       process.env,
+      {
+        windowsVerbatimArguments: false,
+      },
     );
   });
 
-  it("falls back to npx.cmd when Bun is missing on Windows", async () => {
-    const missingBun = new CcusageRunError({
-      cause: Object.assign(new Error("bun not found"), { code: "ENOENT" }),
-      code: "command_not_found",
-      report: "daily",
-      source: "codex",
-    });
-    const run = vi
-      .fn()
-      .mockReturnValueOnce(Effect.fail(missingBun))
-      .mockReturnValueOnce(Effect.succeed('{"daily":[]}'));
+  it("falls back to npx.cmd through cmd.exe when Bun is missing on Windows", async () => {
+    const npmDir = await mkdtemp(join(tmpdir(), "tokenmaxxing-runner-npm-"));
+    try {
+      await writeFile(join(npmDir, "npx.cmd"), "@echo off\r\n");
+      // Windows spells the key Path; a copied environment keeps that case.
+      const env = { Path: `C:\\WINDOWS\\system32;"${npmDir}"` };
+      const run = vi
+        .fn()
+        .mockReturnValueOnce(Effect.fail(missingBun("codex")))
+        .mockReturnValueOnce(Effect.succeed('{"daily":[]}'));
 
-    await expect(
-      Effect.runPromise(
-        execCcusage(["codex", "daily"], "codex", "daily", { platform: "win32", run }),
-      ),
-    ).resolves.toBe('{"daily":[]}');
-    expect(run).toHaveBeenNthCalledWith(
-      1,
-      "bun",
-      ["x", "ccusage@^20.0.22", "codex", "daily"],
-      process.env,
-    );
-    expect(run).toHaveBeenNthCalledWith(
-      2,
-      "npx.cmd",
-      ["-y", "ccusage@^20.0.22", "codex", "daily"],
-      process.env,
-    );
+      await expect(
+        Effect.runPromise(
+          execCcusage(["codex", "daily"], "codex", "daily", { env, platform: "win32", run }),
+        ),
+      ).resolves.toBe('{"daily":[]}');
+      expect(run).toHaveBeenNthCalledWith(
+        1,
+        "bun",
+        ["x", "ccusage@^20.0.22", "codex", "daily"],
+        env,
+        { windowsVerbatimArguments: false },
+      );
+      expect(run).toHaveBeenNthCalledWith(
+        2,
+        expect.stringMatching(/cmd\.exe$/i),
+        ["/d", "/s", "/c", '"npx.cmd "-y" "ccusage@^20.0.22" "codex" "daily""'],
+        env,
+        { windowsVerbatimArguments: true },
+      );
+    } finally {
+      await rm(npmDir, { force: true, recursive: true });
+    }
+  });
+
+  it("reports ccusage as not found when neither bun nor npx.cmd is on the Windows PATH", async () => {
+    const emptyDir = await mkdtemp(join(tmpdir(), "tokenmaxxing-runner-empty-"));
+    try {
+      const run = vi.fn(() => Effect.fail(missingBun("codex")));
+
+      const error = await ccusageErrorFor(
+        execCcusage(["codex", "daily"], "codex", "daily", {
+          env: { PATH: emptyDir },
+          platform: "win32",
+          run,
+        }),
+      );
+
+      expect(error.code).toBe("command_not_found");
+      // cmd.exe itself would start fine and only then fail to find npx.cmd.
+      expect(run).toHaveBeenCalledOnce();
+    } finally {
+      await rm(emptyDir, { force: true, recursive: true });
+    }
   });
 
   it("does not mask a Bun execution failure with the npm fallback", async () => {
@@ -203,15 +257,9 @@ describe("execCcusage", () => {
       await writeFile(join(hermesRoot, "state.db"), "default");
       await writeFile(join(profile, "state.db"), "work");
       const realRoot = await realpath(hermesRoot);
-      const missingBun = new CcusageRunError({
-        cause: Object.assign(new Error("bun not found"), { code: "ENOENT" }),
-        code: "command_not_found",
-        report: "daily",
-        source: "hermes",
-      });
       const run = vi
         .fn()
-        .mockReturnValueOnce(Effect.fail(missingBun))
+        .mockReturnValueOnce(Effect.fail(missingBun("hermes")))
         .mockReturnValueOnce(Effect.succeed('{"daily":[]}'));
 
       await Effect.runPromise(
@@ -227,8 +275,12 @@ describe("execCcusage", () => {
         HOME: home,
         PATH: "/usr/bin",
       };
-      expect(run).toHaveBeenNthCalledWith(1, "bun", expect.any(Array), expectedEnv);
-      expect(run).toHaveBeenNthCalledWith(2, "npx", expect.any(Array), expectedEnv);
+      expect(run).toHaveBeenNthCalledWith(1, "bun", expect.any(Array), expectedEnv, {
+        windowsVerbatimArguments: false,
+      });
+      expect(run).toHaveBeenNthCalledWith(2, "npx", expect.any(Array), expectedEnv, {
+        windowsVerbatimArguments: false,
+      });
     } finally {
       await rm(home, { force: true, recursive: true });
     }
@@ -246,7 +298,9 @@ describe("execCcusage", () => {
       execCcusage(["hermes", "daily"], "hermes", "daily", { env, platform: "linux", run }),
     );
 
-    expect(run).toHaveBeenCalledWith("bun", expect.any(Array), env);
+    expect(run).toHaveBeenCalledWith("bun", expect.any(Array), env, {
+      windowsVerbatimArguments: false,
+    });
   });
 });
 
@@ -334,6 +388,23 @@ describe.skipIf(process.platform === "win32")("the real ccusage command runner",
 
       expect(error.code).toBe("command_failed");
       expect(error.stderr).toBe("noise\n/usr/bin/env: 'node': No such file or directory");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("fails the source, instead of dying, when spawn throws", async () => {
+    const dir = await fakeBun(`echo '{"daily":[]}'`);
+    try {
+      // Node's spawn throws synchronously for a NUL in the environment, as it (and Bun 1.4) does
+      // with EINVAL for a Windows .cmd started without a shell.
+      const error = await ccusageErrorFor(
+        execCcusage(["codex", "daily"], "codex", "daily", {
+          env: { BROKEN: "a\0b", PATH: `${dir}:/usr/bin:/bin` },
+        }),
+      );
+
+      expect(error.code).toBe("command_failed");
     } finally {
       await rm(dir, { force: true, recursive: true });
     }
