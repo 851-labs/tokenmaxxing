@@ -4773,6 +4773,31 @@ describe("serviceInstallProgram", () => {
     }
   });
 
+  it("refuses a config dir with a control character before asking to log in", async () => {
+    // Windows can't create such a dir, so it never holds a login; the refusal
+    // must come first, not "not logged in".
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+    });
+    const { installed, runtime, written } = makeInstallRuntime({
+      env: { TOKENMAXXING_CONFIG_DIR: "/home/alex/tab\there/tm" },
+    });
+
+    const exit = await Effect.runPromiseExit(
+      serviceInstallProgram(
+        { force: false, json: true, refresh: false },
+        { ...runtime, platform: "linux" },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(failureTag(exit)).toBe("ServiceConfigDirUnsupportedError");
+    expect(written).toEqual([]);
+    expect(installed).toEqual([]);
+  });
+
   it("does not install while a service repair or runner update lock is active", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tokenmaxxing-install-lock-"));
 
