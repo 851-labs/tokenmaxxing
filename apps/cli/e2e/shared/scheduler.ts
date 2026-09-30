@@ -174,6 +174,12 @@ async function triggerScheduledRun(timeoutMs = 180_000): Promise<SchedulerRun> {
   }
 
   if (backend === "systemd") {
+    // The suites start the unit far more often than its timer does: with the
+    // runs their deferred repairs start (about 2 s later) and the one that
+    // enabling the timer starts, a scenario passes systemd's default start
+    // limit (5 starts in 10 s), and systemd refuses the next start. This start
+    // is the harness's own, so it clears the limit first.
+    systemctl(["reset-failed", `${SYSTEMD_UNIT}.service`], true);
     // A oneshot service's `start` returns once the run has finished.
     const start = systemctl(["start", `${SYSTEMD_UNIT}.service`]);
     const show = systemdShow(`${SYSTEMD_UNIT}.service`, [
@@ -181,8 +187,10 @@ async function triggerScheduledRun(timeoutMs = 180_000): Promise<SchedulerRun> {
       "ExecMainStatus",
       "ActiveState",
     ]);
-    // A unit that fails to load never runs; its ExecMainStatus is stale.
-    const ran = start.code === 0 || show.Result !== "success";
+    // A unit that fails to load, or that hit its start limit, never runs; its
+    // ExecMainStatus is stale.
+    const ran =
+      start.code === 0 || (show.Result !== "success" && show.Result !== "start-limit-hit");
     return {
       detail: `systemctl start exit ${start.code}; Result=${show.Result} ExecMainStatus=${show.ExecMainStatus} ActiveState=${show.ActiveState}${ran ? "" : `; ${oneLine(start.out, 200)}`}`,
       exitCode: ran ? (show.ExecMainStatus ?? null) : `systemctl start exit ${start.code}`,
