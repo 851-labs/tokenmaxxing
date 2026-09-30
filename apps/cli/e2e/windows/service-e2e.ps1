@@ -24,11 +24,11 @@ Initialize-E2E -OutDir $OutDir -Suite "service"
 
 $TaskName = "tokenmaxxing-sync"
 $BasePath = $env:PATH
-# Processes and window classes a scheduled run could show a window through.
+# Processes worth listing in check details.
 $WatchedProcesses = @("cmd", "conhost", "OpenConsole", "WindowsTerminal", "tokenmaxxing", "wscript", "cscript", "bun", "node", "timeout")
-$ConsoleClasses = @("ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "PseudoConsoleWindow", "#32770")
-# The windows-11-arm image opens its own wsl.exe console now and then.
-$ImageNoise = @("wsl")
+# Console hosts started over COM rather than by the console's client (Windows
+# Terminal as the default terminal), so a console of ours shows up under them.
+$TerminalHosts = @("WindowsTerminal", "OpenConsole")
 $WscriptPattern = '^"?[A-Za-z]:\\Windows\\System32\\wscript\.exe"? //B //NoLogo //E:VBScript ".+\\service-sync\.vbs"$'
 $CmdPattern = '^"?.+\\service-sync\.cmd"?$'
 
@@ -143,19 +143,34 @@ function Assert-Launcher([string]$Scenario) {
 
 function Get-Requests { @((Invoke-RestMethod -Uri "$Api/__sandbox/requests").requests) }
 
+# Starts window-watch.ps1 hidden and waits until it has proved its event
+# sources live; Stop-Watcher returns its summary (or $null).
+function Start-Watcher([string]$Label) {
+  $stop = Join-Path $OutDir "$Label.stop"
+  $ready = Join-Path $OutDir "$Label.ready"
+  $process = Start-Process -FilePath "pwsh" -WindowStyle Hidden -PassThru -ArgumentList `
+    "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\window-watch.ps1`" -OutDir `"$OutDir`" -Label `"$Label`" -StopFile `"$stop`""
+  Wait-Until { Test-Path -LiteralPath $ready } 45 | Out-Null
+  [pscustomobject]@{ process = $process; stop = $stop; summary = (Join-Path $OutDir "$Label-summary.json") }
+}
+
+function Stop-Watcher($Watcher) {
+  New-Item -ItemType File -Force -Path $Watcher.stop | Out-Null
+  if (-not $Watcher.process.WaitForExit(30000)) { $Watcher.process.Kill() }
+  if (Test-Path -LiteralPath $Watcher.summary) { Get-Content -LiteralPath $Watcher.summary -Raw | ConvertFrom-Json -Depth 10 } else { $null }
+}
+
 # Runs the task once under a window watcher and waits for it to finish.
 # -After runs, with the watcher still up, once the task is back to Ready.
-function Invoke-TaskRun([string]$Label, [scriptblock]$After = $null) {
+# -Repairs names the deferred repairs the run is expected to spawn; the
+# watcher must see each of them (Assert-WatcherSawRun).
+function Invoke-TaskRun([string]$Label, [scriptblock]$After = $null, [string[]]$Repairs = @()) {
   $logPath = Config-File "service.log"
   $logBefore = if (Test-Path -LiteralPath $logPath) { (Get-Item -LiteralPath $logPath).Length } else { 0 }
   $requestsBefore = (Get-Requests).Count
   Update-AgentLogs
   $before = Get-Task
-  $stop = Join-Path $OutDir "$Label.stop"
-  $ready = Join-Path $OutDir "$Label.ready"
-  $watcher = Start-Process -FilePath "pwsh" -WindowStyle Hidden -PassThru -ArgumentList `
-    "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\window-watch.ps1`" -OutDir `"$OutDir`" -Label `"$Label`" -StopFile `"$stop`""
-  Wait-Until { Test-Path -LiteralPath $ready } 30 | Out-Null
+  $watcher = Start-Watcher $Label
 
   $started = Get-Date
   $runOut = (schtasks /Run /TN $TaskName 2>&1 | Out-String).Trim()
@@ -171,8 +186,7 @@ function Invoke-TaskRun([string]$Label, [scriptblock]$After = $null) {
   $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
   Start-Sleep -Seconds 2
   $afterResult = if ($After) { & $After } else { $null }
-  New-Item -ItemType File -Force -Path $stop | Out-Null
-  if (-not $watcher.WaitForExit(30000)) { $watcher.Kill() }
+  $watch = Stop-Watcher $watcher
 
   $task = Get-Task
   $logDelta = ""
@@ -181,40 +195,125 @@ function Invoke-TaskRun([string]$Label, [scriptblock]$After = $null) {
     if ($bytes.Length -gt $logBefore) { $logDelta = [System.Text.Encoding]::UTF8.GetString($bytes, [int]$logBefore, $bytes.Length - [int]$logBefore) }
   }
   Set-Content -LiteralPath (Join-Path $OutDir "$Label-service-log.txt") -Value $logDelta -Encoding utf8
-  $summaryPath = Join-Path $OutDir "$Label-summary.json"
   $run = [pscustomobject]@{
     label = $Label
+    action = if ($before["Task To Run"] -match $CmdPattern) { "cmd" } else { "wscript" }
+    repairs = $Repairs
     lastResult = $task["Last Result"]
     status = $task["Status"]
     seconds = $seconds
     logDelta = $logDelta
     requests = @(Get-Requests | Select-Object -Skip $requestsBefore)
-    watch = if (Test-Path -LiteralPath $summaryPath) { Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json -Depth 10 } else { $null }
+    watch = $watch
     after = $afterResult
   }
   Write-E2ELog "run $Label ($runOut) -> Last Result $($run.lastResult) after ${seconds}s; requests: $(($run.requests | ForEach-Object { "$($_.method) $($_.path) $($_.status)" }) -join ', ')"
   $run
 }
 
+# The run's process tree, from the starts the watcher recorded: its roots
+# (the task's action, or the pids the harness started for a control) and
+# every descendant. Windows reuses pids within seconds, so a parent is the
+# latest process with that pid started no later than its child.
+function Get-ParentProcess($Processes, $Child) {
+  @($Processes | Where-Object { $_.pid -eq $Child.ppid -and $_.t -le $Child.t }) | Select-Object -Last 1
+}
+
+function Get-RunRoots($Run) {
+  $processes = @($Run.watch.processes)
+  if ($Run.rootPids) { return @($processes | Where-Object { $_.pid -in $Run.rootPids }) }
+  # Task Scheduler, the action's parent, was running before the watcher.
+  @($processes | Where-Object {
+      $null -eq (Get-ParentProcess $processes $_) -and (
+        ($Run.action -ne "cmd" -and $_.name -eq "wscript.exe") -or
+        ($Run.action -eq "cmd" -and $_.name -eq "cmd.exe" -and ($null -eq $_.commandLine -or $_.commandLine -match 'service-sync\.cmd')))
+    })
+}
+
+function Get-RunTree($Run) {
+  $processes = @($Run.watch.processes)
+  $tree = New-Object System.Collections.Generic.HashSet[string]
+  foreach ($root in (Get-RunRoots $Run)) { [void]$tree.Add("$($root.pid)@$($root.t)") }
+  # Starts are recorded in delivery order, parents before children.
+  foreach ($process in $processes) {
+    $parent = Get-ParentProcess $processes $process
+    if ($parent -and $tree.Contains("$($parent.pid)@$($parent.t)")) { [void]$tree.Add("$($process.pid)@$($process.t)") }
+  }
+  $tree
+}
+
+# Windows and focus changes owned by the run's process tree fail the run, and
+# so do those owned by a terminal host, where a console of ours would land.
+# Anything else (the windows-11-arm image runs `wsl.exe --update` in a console
+# now and then) is ignored but listed with its process and parent, so one of
+# ours under another name would still be noticed.
 function Get-RunWindows($Run) {
   $watch = $Run.watch
-  $windows = @($watch.newVisibleWindows | Where-Object {
-      $_.process -notin $ImageNoise -and ($WatchedProcesses -contains $_.process -or $ConsoleClasses -contains $_.class)
-    })
-  # A foreground change to one of our processes, or to a window that closed
-  # before it could be described, is a stolen focus.
-  $focus = @($watch.foregroundChanges | Where-Object {
-      $null -eq $_.window -or $null -eq $_.window.process -or $WatchedProcesses -contains $_.window.process -or $ConsoleClasses -contains $_.window.class
-    })
-  $describe = { param($w) "$($w.process)#$($w.pid) class=$($w.class) title='$($w.title)' rect=$($w.rect)" }
+  $processes = @($watch.processes)
+  $tree = Get-RunTree $Run
+  # A window's process by pid; its start may be delivered up to about a second
+  # after the window shows.
+  $owner = { param($w, $at) if ($w -and $w.pid) { @($processes | Where-Object { $_.pid -eq $w.pid -and $_.t -le $at + 2 }) | Select-Object -Last 1 } }
+  $isOurs = { param($w, $at)
+    if ($null -eq $w) { return $false }
+    if ($w.process -in $TerminalHosts) { return $true }
+    $process = & $owner $w $at
+    $null -ne $process -and $tree.Contains("$($process.pid)@$($process.t)")
+  }
+  $describe = { param($w, $at)
+    if ($null -eq $w) { return "gone" }
+    $process = & $owner $w $at
+    $parent = if ($process) { Get-ParentProcess $processes $process } else { $null }
+    $from = if (-not $process) { "running before the watch" } elseif ($parent) { "started by $($parent.name)#$($parent.pid)" } else { "started by #$($process.ppid), running before the watch" }
+    "$($w.process)#$($w.pid) ($from) class=$($w.class) title='$($w.title)' rect=$($w.rect)"
+  }
+  $windows = @($watch.newVisibleWindows | Where-Object { & $isOurs $_ $_.firstSeen })
+  $focus = @($watch.foregroundChanges | Where-Object { & $isOurs $_.window $_.t })
+  $ignoredWindows = @($watch.newVisibleWindows | Where-Object { -not (& $isOurs $_ $_.firstSeen) })
+  $ignoredFocus = @($watch.foregroundChanges | Where-Object { -not (& $isOurs $_.window $_.t) })
   [pscustomobject]@{
     windows = $windows
     focus = $focus
-    detail = "windows=[$(($windows | ForEach-Object { & $describe $_ }) -join '; ')] focus=[$(($focus | ForEach-Object { "$($_.t)s->$(if ($_.window) { & $describe $_.window } else { 'gone' })" }) -join '; ')] allNew=[$(($watch.newVisibleWindows | ForEach-Object { "$($_.process):$($_.class)" }) -join ', ')] allForeground=[$(($watch.foregroundChanges | ForEach-Object { "$($_.window.process):$($_.window.class)" }) -join ', ')] polls=$($watch.polls)"
+    ignored = @($ignoredWindows) + @($ignoredFocus)
+    detail = "windows=[$(($windows | ForEach-Object { & $describe $_ $_.firstSeen }) -join '; ')] focus=[$(($focus | ForEach-Object { "$($_.t)s->$(& $describe $_.window $_.t)" }) -join '; ')] tree=$($tree.Count) ignored windows=[$(($ignoredWindows | ForEach-Object { & $describe $_ $_.firstSeen }) -join '; ')] ignored focus=[$(($ignoredFocus | ForEach-Object { "$($_.t)s->$(& $describe $_.window $_.t)" }) -join '; ')]"
   }
 }
 
+function Test-WatcherLive($Watch) { $Watch.processSource -eq "Win32_ProcessStartTrace" -and $Watch.windowSource -eq "SetWinEventHook" }
+
+function Format-WatchedProcesses($Processes) {
+  (@($Processes | Where-Object { ($_.name -replace '\.exe$', '') -in $WatchedProcesses -and $_.name -ne "conhost.exe" }) |
+      ForEach-Object { "$($_.name)#$($_.pid)<-$($_.ppid): $(if ($null -ne $_.commandLine) { $_.commandLine } else { "(gone before its command line was read)" })" }) -join " || "
+}
+
+# A watcher that misses the run's own processes is blind, and its "no
+# window" verdict means nothing. Every run must show the task's action (the
+# wscript launcher, or cmd.exe running the legacy .cmd) and each deferred
+# repair it was expected to spawn, however briefly they lived. Process starts
+# always carry the parent pid, command lines only when the process outlived
+# WMI's delivery (about a second), so the process tree decides: the action's
+# parent is Task Scheduler, which was running before the watcher started, and
+# a deferred repair is a wscript.exe started by the runner (tokenmaxxing.exe).
+# The same tree decides which windows count (Get-RunWindows).
+function Assert-WatcherSawRun([string]$Scenario, $Run) {
+  $check = "watcher saw the run's processes ($($Run.label))"
+  $watch = $Run.watch
+  if ($null -eq $watch) { Add-Check $Scenario $check $false "window watcher wrote no summary"; return }
+  $processes = @($watch.processes)
+  $actionName = if ($Run.action -eq "cmd") { "cmd.exe" } else { "wscript.exe" }
+  $actions = @(Get-RunRoots $Run)
+  $repairs = @($processes | Where-Object { $_.name -eq "wscript.exe" -and (Get-ParentProcess $processes $_).name -eq "tokenmaxxing.exe" })
+  $missing = @()
+  if ($actions.Count -eq 0) { $missing += "$actionName started by Task Scheduler" }
+  foreach ($reason in $Run.repairs) {
+    # A repair whose command line was read must name the reason.
+    if (@($repairs | Where-Object { $null -eq $_.commandLine -or $_.commandLine -match "service-sync\.vbs`"? repair $reason" }).Count -eq 0) { $missing += "$reason repair (wscript.exe started by tokenmaxxing.exe)" }
+  }
+  Add-Check $Scenario $check ((Test-WatcherLive $watch) -and $missing.Count -eq 0) "processSource=$($watch.processSource) windowSource=$($watch.windowSource) missing=[$($missing -join ', ')] seen=[$(Format-WatchedProcesses $processes)]"
+}
+
 function Assert-NoWindow([string]$Scenario, $Run) {
+  Assert-WatcherSawRun $Scenario $Run
   if ($null -eq $Run.watch) { Add-Check $Scenario "no window or focus change ($($Run.label))" $false "window watcher wrote no summary"; return }
   $seen = Get-RunWindows $Run
   Add-Check $Scenario "no window or focus change ($($Run.label))" ($seen.windows.Count -eq 0 -and $seen.focus.Count -eq 0) $seen.detail
@@ -248,7 +347,7 @@ function Invoke-ReloadRequiredRepair([string]$Scenario, [string]$Label) {
     Wait-Until { (Read-ConfigJson "service.json").templateVersion -eq $TemplateVersion } 30 | Out-Null
     Start-Sleep -Seconds 2
     "templateVersion=$((Read-ConfigJson 'service.json').templateVersion)"
-  }
+  } -Repairs "reload-required"
   Add-Check $Scenario "reload-required repair restores template $TemplateVersion" ($run.after -eq "templateVersion=$TemplateVersion") "after: $($run.after); $(Format-OneLine (Get-ServiceRunLine $run) 400)"
   Assert-NoWindow $Scenario $run
   $state = Wait-RepairFinished
@@ -277,6 +376,39 @@ function Install-Service([string]$Scenario) {
 }
 
 # ------------------------------------------------------------ scenarios
+# The watcher against processes that live for milliseconds, far below the
+# 200 ms poll it used to have: a hidden one must show up as a process and
+# nothing else, a visible console as a process and a window. Each gets its own
+# watcher, so a window cannot be pinned on the wrong one.
+function Invoke-WatcherControl([string]$Label, [string]$WindowStyle) {
+  $watcher = Start-Watcher $Label
+  $process = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList "/d /c exit" -WindowStyle $WindowStyle -PassThru
+  $process.WaitForExit()
+  Start-Sleep -Seconds 2
+  $watch = Stop-Watcher $watcher
+  $seen = if ($watch) { @($watch.processes | Where-Object { $_.pid -eq $process.Id -and $_.name -eq "cmd.exe" }) | Select-Object -First 1 } else { $null }
+  [pscustomobject]@{
+    watch = $watch
+    seen = $null -ne $seen
+    # The harness started this cmd.exe, so it is the tree's root.
+    windows = if ($watch) { Get-RunWindows ([pscustomobject]@{ watch = $watch; rootPids = @($process.Id) }) } else { $null }
+    detail = "processSource=$($watch.processSource) windowSource=$($watch.windowSource) ready after $($watch.readyAtSeconds)s; cmd.exe#$($process.Id) exit=$($process.ExitCode) $(if ($seen) { 'seen' } else { 'not seen' })"
+  }
+}
+
+function Invoke-WatcherControls {
+  $scenario = "window watcher"
+  $hidden = Invoke-WatcherControl "watch-hidden-flash" "Hidden"
+  Add-Check $scenario "sees a hidden process that lives for milliseconds" ($hidden.watch -and (Test-WatcherLive $hidden.watch) -and $hidden.seen) $hidden.detail
+  Add-Check $scenario "no window for it" ($hidden.windows -and $hidden.windows.windows.Count -eq 0 -and $hidden.windows.focus.Count -eq 0) "$($hidden.windows.detail)"
+  # A positive control that needs no legacy release: the console Windows opens
+  # for a visible cmd.exe (conhost, or Windows Terminal where that is the
+  # default terminal) must be caught even though it closes at once.
+  $visible = Invoke-WatcherControl "watch-visible-flash" "Normal"
+  Add-Check $scenario "sees a visible process that lives for milliseconds" ($visible.watch -and (Test-WatcherLive $visible.watch) -and $visible.seen) $visible.detail
+  Add-Check $scenario "catches its console window (positive control)" ($visible.windows -and $visible.windows.windows.Count -gt 0) "$($visible.windows.detail)"
+}
+
 function Invoke-Core {
   $scenario = "core"
   New-Profile (Join-Path $Root "cfg-core")
@@ -374,7 +506,7 @@ function Invoke-Core {
 
   # A failed sync (revoked token) spawns a hidden service-failure repair.
   Invoke-RestMethod -Method Post -Uri "$Api/__sandbox/revoke" -ContentType "application/json" -Body (@{ userId = $script:UserId; revoked = $true } | ConvertTo-Json) | Out-Null
-  $failRun = Invoke-TaskRun "core-service-failure" { $state = Wait-RepairFinished; "status=$($state.lastRepairStatus) error=$($state.lastRepairError)" }
+  $failRun = Invoke-TaskRun "core-service-failure" { $state = Wait-RepairFinished; "status=$($state.lastRepairStatus) error=$($state.lastRepairError)" } -Repairs "service-failure"
   Invoke-RestMethod -Method Post -Uri "$Api/__sandbox/revoke" -ContentType "application/json" -Body (@{ userId = $script:UserId; revoked = $false } | ConvertTo-Json) | Out-Null
   $state = Read-ConfigJson "service-state.json"
   Add-Check $scenario "failed sync runs a service-failure repair" ($state.lastRepairReason -eq "service-failure" -and $state.lastRepairStatus -eq "success") "Last Result=$($failRun.lastResult) reason=$($state.lastRepairReason) status=$($state.lastRepairStatus) error=$($state.lastRepairError) lastError=$(Format-OneLine "$($state.lastError)" 200)"
@@ -425,6 +557,7 @@ function Invoke-LegacyUpgrade {
   # here, every "no window" check in this run is blind.
   $seen = Get-RunWindows $legacyRun
   Add-Check $scenario "window watcher sees the legacy task's console (positive control)" ($seen.windows.Count -gt 0) $seen.detail
+  Assert-WatcherSawRun $scenario $legacyRun
 
   $runnerPath = (Get-Content -LiteralPath (Config-File "service-runner-current") -Raw).Trim()
   Copy-Item -LiteralPath $RunnerExe -Destination $runnerPath -Force
@@ -432,12 +565,14 @@ function Invoke-LegacyUpgrade {
     Wait-Until { (Get-Task)["Task To Run"] -match $WscriptPattern -and (Read-ConfigJson "service.json").templateVersion -eq $TemplateVersion } 90 | Out-Null
     Start-Sleep -Seconds 3
     "Task To Run=$((Get-Task)['Task To Run']) templateVersion=$((Read-ConfigJson 'service.json').templateVersion)"
-  }
+  } -Repairs "reload-required"
   # The repair re-creates the task, so Last Result may already belong to the
   # new, never-run task (267011 = SCHED_S_TASK_HAS_NOT_RUN).
   $line = Get-ServiceRunLine $reloadRun
   Add-Check $scenario "upgraded runner syncs under the old task" ($reloadRun.lastResult -in @("0", "267011") -and $line -match '"status":"success"') "Last Result=$($reloadRun.lastResult); $(Format-OneLine $line 500)"
   Add-Check $scenario "run reports reloadRequired" ($line -match '"reloadRequired":true') (Format-OneLine $line 500)
+  # Still the old task, so its console shows; the watcher must see the repair.
+  Assert-WatcherSawRun $scenario $reloadRun
   # cmd.exe re-reads a running batch file, so the repair must wait for the old
   # wrapper to exit before rewriting it: exactly one clean log entry.
   $headers = ([regex]::Matches($reloadRun.logDelta, "tokenmaxxing service sync")).Count
@@ -477,6 +612,7 @@ $version = Tmx @("--version")
 Add-Check "setup" "tokenmaxxing --version" ($version.code -eq 0) "$(Format-OneLine $version.out) ($((Get-Command tokenmaxxing -ErrorAction SilentlyContinue).Source))"
 schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null
 
+Invoke-Scenario "window watcher" { Invoke-WatcherControls }
 Invoke-Scenario "core" { Invoke-Core }
 
 # Trimmed from the original harness: plain spaces and "Zoë (Work)" are
