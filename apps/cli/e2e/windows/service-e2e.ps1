@@ -4,6 +4,7 @@
 #
 #   core            install -> task + launcher -> scheduled run (no window) ->
 #                   error paths -> status/doctor/repair -> deferred repairs -> uninstall
+#   npx fallback    no bun on PATH: scheduled runs sync through npm's npx.cmd shim
 #   overlapping     a held service.log -> side log, no rotation; three runs at once ->
 #                   one sync, a log entry each, no window; doctor stays clean
 #   path cases      install -> run -> reload-required deferred repair -> run -> uninstall,
@@ -338,13 +339,15 @@ function Assert-SuccessfulRun([string]$Scenario, $Run, [switch]$AllowCooldown) {
   $line = Get-ServiceRunLine $Run
   Add-Check $Scenario "service.log records a successful sync ($($Run.label))" ($Run.logDelta -match "tokenmaxxing service sync" -and $line -match '"status":"success"') (Format-OneLine $Run.logDelta 900)
   $paths = ($Run.requests | ForEach-Object { "$($_.method) $($_.path) $($_.status)" }) -join ", "
+  # Two check-ins: the started one, and the final one only a run that finished sends. A run
+  # that dies mid-sync (0.7.0/0.7.1 without bun on Windows) sends just the first.
   $checkIns = @($Run.requests | Where-Object { $_.path -eq "/usage/check-in" -and $_.status -eq 200 }).Count
   $ingests = @($Run.requests | Where-Object { $_.path -eq "/usage/ingest" -and $_.status -eq 200 }).Count
   if ($AllowCooldown -and $ingests -eq 0) {
     # A run seconds after the previous one may skip every source (cadence cooldown).
-    Add-Check $Scenario "sandbox got a check-in; sources on cooldown ($($Run.label))" ($checkIns -ge 1 -and $line -match '"rows":0') $paths
+    Add-Check $Scenario "sandbox got both check-ins; sources on cooldown ($($Run.label))" ($checkIns -ge 2 -and $line -match '"rows":0') $paths
   } else {
-    Add-Check $Scenario "sandbox got check-in + ingest ($($Run.label))" ($checkIns -ge 1 -and $ingests -ge 1) $paths
+    Add-Check $Scenario "sandbox got both check-ins + ingest ($($Run.label))" ($checkIns -ge 2 -and $ingests -ge 1) $paths
   }
 }
 
@@ -417,6 +420,35 @@ function Invoke-WatcherControls {
   $visible = Invoke-WatcherControl "watch-visible-flash" "Normal"
   Add-Check $scenario "sees a visible process that lives for milliseconds" ($visible.watch -and (Test-WatcherLive $visible.watch) -and $visible.seen) $visible.detail
   Add-Check $scenario "catches its console window (positive control)" ($visible.windows -and $visible.windows.windows.Count -gt 0) "$($visible.windows.detail)"
+}
+
+# Windows without bun: ccusage runs through npm's npx.cmd, a batch file. Bun 1.4 (the runtime
+# since 0.7.0) throws EINVAL starting one without a shell, and that ended every scheduled run
+# right after its started check-in, with nothing uploaded, logged or reported. The fake bun the
+# other scenarios use is an .exe, so they never took this path.
+function Invoke-NpxFallback {
+  $scenario = "npx fallback"
+  $npxBin = Join-Path $Root "npxbin"
+  New-Item -ItemType Directory -Force -Path $npxBin | Out-Null
+  Copy-Item -LiteralPath "$PSScriptRoot\..\shared\fakes\fake-npx.mjs", "$PSScriptRoot\..\shared\fakes\fake-ccusage.mjs" -Destination $npxBin -Force
+  # Starts node with %*, like npm's shim.
+  Set-Content -LiteralPath (Join-Path $npxBin "npx.cmd") -Value "@echo off`r`nnode `"%~dp0fake-npx.mjs`" %*`r`n" -Encoding ascii -NoNewline
+  $withoutBun = @($BasePath -split ";" | Where-Object { $_ -and -not (Test-Path -LiteralPath (Join-Path $_ "bun.exe")) })
+  $env:PATH = (@($npxBin, $TmxBin) + $withoutBun) -join ";"
+  $bun = Get-Command bun -ErrorAction SilentlyContinue
+  Add-Check $scenario "no bun on PATH" ($null -eq $bun) "bun: $(if ($bun) { $bun.Source } else { 'none' })"
+  New-Profile (Join-Path $Root "cfg-npx")
+  if (-not (Install-Service $scenario)) { return }
+
+  $run = Invoke-TaskRun "npx-run"
+  Assert-SuccessfulRun $scenario $run
+  Assert-NoWindow $scenario $run
+  $usage = @((Invoke-RestMethod -Uri "$Api/__sandbox/usage?userId=$script:UserId").rows)
+  Add-Check $scenario "ingested usage stored in the sandbox" ($usage.Count -gt 0) "$($usage.Count) usage_days rows"
+  $calls = @(Get-Content -LiteralPath (Join-Path $npxBin "calls.log") -ErrorAction SilentlyContinue | Where-Object { $_ -match " npx pid=" })
+  Copy-Item -LiteralPath (Join-Path $npxBin "calls.log") -Destination (Join-Path $OutDir "npx-calls.log") -ErrorAction SilentlyContinue
+  Add-Check $scenario "ccusage ran through npx.cmd with its version range intact" ($calls.Count -gt 0 -and @($calls | Where-Object { $_ -notmatch " -y ccusage@\^" }).Count -eq 0) "$($calls.Count) calls; first: $($calls | Select-Object -First 1)"
+  Assert-Uninstall $scenario
 }
 
 function Invoke-Core {
@@ -784,6 +816,8 @@ schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null
 
 Invoke-Scenario "window watcher" { Invoke-WatcherControls }
 Invoke-Scenario "core" { Invoke-Core }
+Invoke-Scenario "npx fallback" { Invoke-NpxFallback }
+Use-Cli $TmxBin
 Invoke-Scenario "overlapping runs" { Invoke-Overlap }
 
 # Trimmed from the original harness: plain spaces and "Zoë (Work)" are

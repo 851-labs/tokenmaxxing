@@ -5,6 +5,19 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Windows without Bun: syncs failed with "unexpected CLI failure" in 0.7.0 and 0.7.1, and scheduled
+  runs ended right after reporting that they had started, with nothing uploaded, logged or
+  reported. Without `bun`, ccusage runs through npm's `npx.cmd`, and the Bun release those
+  versions were built with refuses to start a `.cmd` file without a shell. `npx.cmd` now runs
+  through `cmd.exe`. An affected service picks this up through its next auto-update and resumes
+  syncing, and moves off the old task (and its console window) on the run after.
+- An agent whose ccusage command cannot be started now fails on its own, with the reason, and the
+  other agents still sync. Any other unexpected error in a scheduled run is logged, reported and
+  repaired like a failed sync. Before, both ended the run right after its started check-in with
+  nothing recorded.
+
 ## 0.7.1 - 2026-09-29
 
 ### Fixed

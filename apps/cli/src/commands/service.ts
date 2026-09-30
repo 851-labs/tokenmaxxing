@@ -1834,6 +1834,9 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
       },
       ...(options.scheduled ? { uploadPolicy: SERVICE_UPLOAD_RETRY_POLICY } : {}),
     }).pipe(
+      // An unexpected throw still takes the failure path below. As a defect it ended the run
+      // right after the started check-in, with no log line, final check-in or repair.
+      Effect.catchDefect((defect) => Effect.fail(defect)),
       Effect.match({
         onFailure: (cause) => ({ _tag: "failure" as const, cause }),
         onSuccess: (value) => ({ _tag: "success" as const, value }),

@@ -1,4 +1,7 @@
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, type ChildProcessByStdio, execFile, spawn } from "node:child_process";
+import { access } from "node:fs/promises";
+import { join } from "node:path";
+import type { Readable } from "node:stream";
 
 import { Data, Effect } from "effect";
 
@@ -17,6 +20,7 @@ import { type CcusageEnv, ccusageSourceEnv } from "./source-env";
 // claude-fable-5-1 usage. Earlier v20 releases also carry the Codex replay fix.
 const CCUSAGE_SPEC = "ccusage@^20.0.22";
 const RUN_TIMEOUT_MS = 180_000;
+const WINDOWS_NPX_SHIM = "npx.cmd";
 const KILL_GRACE_MS = 2_000;
 const MAX_STDOUT_BYTES = 256 * 1024 * 1024;
 const STDERR_MAX_LINES = 5;
@@ -41,6 +45,14 @@ interface RunOptions {
 interface CcusageCommandInvocation {
   args: string[];
   command: string;
+  /** The Windows command shim that `cmd.exe` runs; missing from PATH means command_not_found. */
+  shim?: string | undefined;
+  windowsVerbatimArguments?: boolean | undefined;
+}
+
+interface CcusageSpawnOptions {
+  /** Hand `args` to CreateProcess as written: the `cmd.exe /d /s /c` line quotes itself. */
+  windowsVerbatimArguments: boolean;
 }
 
 interface ExecCcusageOptions {
@@ -63,6 +75,7 @@ type CcusageCommandRunner = (
   command: string,
   args: string[],
   env: CcusageEnv,
+  options: CcusageSpawnOptions,
 ) => Effect.Effect<string, CcusageRunError>;
 
 function runCcusageDailyReport(
@@ -159,7 +172,25 @@ function execCcusage(
   const platform = options.platform ?? process.platform;
   const [primary, fallback] = ccusageCommandInvocations(args, platform);
   const runInvocation = (invocation: CcusageCommandInvocation, env: CcusageEnv) =>
-    run(invocation.command, invocation.args, env).pipe(
+    Effect.promise(() =>
+      invocation.shim === undefined ? Promise.resolve(true) : isOnWindowsPath(invocation.shim, env),
+    ).pipe(
+      Effect.flatMap((found) =>
+        found
+          ? run(invocation.command, invocation.args, env, {
+              windowsVerbatimArguments: invocation.windowsVerbatimArguments ?? false,
+            })
+          : Effect.fail(
+              new CcusageRunError({
+                cause: Object.assign(new Error(`${invocation.shim} is not on PATH`), {
+                  code: "ENOENT",
+                }),
+                code: "command_not_found",
+                report,
+                source,
+              }),
+            ),
+      ),
       Effect.timeout(`${Math.max(1, options.timeoutMs ?? RUN_TIMEOUT_MS)} millis`),
       Effect.mapError((error) =>
         error instanceof CcusageRunError
@@ -185,7 +216,7 @@ function execCcusage(
 }
 
 function makeCcusageCommandRunner(source: string, report: CcusageReportKind): CcusageCommandRunner {
-  return (command, commandArgs, env) =>
+  return (command, commandArgs, env, spawnOptions) =>
     Effect.callback<string, CcusageRunError>((resume) => {
       const fail = (cause: unknown, stderr?: string) =>
         resume(
@@ -204,11 +235,20 @@ function makeCcusageCommandRunner(source: string, report: CcusageReportKind): Cc
       // outlive a timeout and keep this process's stdio pipes open, so the
       // CLI (and a oneshot systemd unit) never finished. Never on Windows,
       // where `detached` opens a console window. (execFile drops `detached`.)
-      const child = spawn(command, commandArgs, {
-        detached: process.platform !== "win32",
-        env,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      let child: ChildProcessByStdio<null, Readable, Readable>;
+      try {
+        child = spawn(command, commandArgs, {
+          detached: process.platform !== "win32",
+          env,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsVerbatimArguments: spawnOptions.windowsVerbatimArguments,
+        });
+      } catch (cause) {
+        // spawn throws for some commands (EINVAL for a .cmd without a shell). Thrown out of this
+        // callback it became a defect that ended the whole run with nothing logged or reported.
+        fail(cause);
+        return;
+      }
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let stdoutBytes = 0;
@@ -296,16 +336,48 @@ function stderrTail(stderr: string | Buffer | undefined): string | undefined {
 function ccusageCommandInvocations(
   args: string[],
   platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env,
 ): [CcusageCommandInvocation, CcusageCommandInvocation] {
+  const primary = { args: ["x", CCUSAGE_SPEC, ...args], command: "bun" };
+  if (platform !== "win32") {
+    return [primary, { args: ["-y", CCUSAGE_SPEC, ...args], command: "npx" }];
+  }
+
+  // npm's npx.cmd is a batch file, which Node and Bun (since 1.4) refuse to start without a shell
+  // (EINVAL), so it runs through cmd.exe. The arguments are quoted: cmd reads the ^ in the version
+  // range as its escape character anywhere outside quotes. The shim's name is not: a batch file
+  // that cmd finds on PATH by a quoted name gets the current directory as %~dp0, which is where
+  // npm's shim looks for npx-cli.js. Every word is fixed, never user input.
+  const quoted = ["-y", CCUSAGE_SPEC, ...args].map((word) => `"${word}"`);
   return [
-    { args: ["x", CCUSAGE_SPEC, ...args], command: "bun" },
+    primary,
     {
-      args: ["-y", CCUSAGE_SPEC, ...args],
-      // The published Windows CLI is Bun-compiled, whose execFile implementation
-      // can launch npm's command shim directly. A Node runtime would need cmd.exe.
-      command: platform === "win32" ? "npx.cmd" : "npx",
+      args: ["/d", "/s", "/c", `"${[WINDOWS_NPX_SHIM, ...quoted].join(" ")}"`],
+      command: env["ComSpec"] ?? "cmd.exe",
+      shim: WINDOWS_NPX_SHIM,
+      windowsVerbatimArguments: true,
     },
   ];
+}
+
+/** Whether `name` is in a directory on the Windows PATH that `env` gives the child. */
+async function isOnWindowsPath(name: string, env: CcusageEnv): Promise<boolean> {
+  // Windows spells it Path; a copied environment keeps whatever case it had.
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+  const dirs = (pathKey === undefined ? "" : (env[pathKey] ?? ""))
+    .split(";")
+    .map((dir) => dir.trim().replace(/^"(.*)"$/, "$1"))
+    .filter((dir) => dir.length > 0);
+  for (const dir of dirs) {
+    try {
+      await access(join(dir, name));
+      return true;
+    } catch {
+      // Try the next PATH entry.
+    }
+  }
+
+  return false;
 }
 
 function isMissingCommand(cause: unknown): boolean {
