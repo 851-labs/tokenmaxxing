@@ -38,6 +38,7 @@ import {
   detectAutoUpdateManager,
   deterministicServiceJitterMs,
   durableTokenmaxxingCommandPath,
+  ensureServiceConfigDirSupported,
   extractServiceRunnerFromTarball,
   findCommandOnPath,
   formatServiceLastError,
@@ -108,6 +109,7 @@ import {
   serviceAuthFailureError,
   serviceRunLogLine,
   serviceRunSuccessState,
+  ServiceConfigDirUnsupportedError,
   ServiceRepairError,
   ServiceRunError,
   ServiceRunnerUpdateError,
@@ -2238,6 +2240,7 @@ describe("service repair helpers", () => {
         "--quiet",
         "--collect",
         "--on-active=2s",
+        "--timer-property=AccuracySec=100ms",
         "--unit=tokenmaxxing-sync-repair-reload-required",
         "--setenv=PATH=/usr/local/bin:/usr/bin",
         "--setenv=CODEX_HOME=/data/Codex Logs, extra",
@@ -2256,6 +2259,58 @@ describe("service repair helpers", () => {
         stdio: "ignore",
       },
     });
+  });
+
+  it("starts a linux deferred repair from the runner's directory when systemd cannot re-read its path", () => {
+    const argsFor = (commandPath: string) =>
+      deferredServiceRepairInvocation(commandPath, "reload-required", "linux", {}).args;
+    const runnerDir = `/home/alex/Zoë O'Neil "dq" \\back $HOME 100%/tm/service-runners/0.7.1/linux-x64`;
+
+    // A daemon-reload before the timer fires re-parses the transient unit: an executable path with
+    // a quote, backslash or $ no longer loads, and a $ in an argument changes meaning.
+    for (const dir of [runnerDir, "/home/alex/O'Neil/tm", "/home/alex/$HOME/tm"]) {
+      expect(argsFor(`${dir}/tokenmaxxing`).slice(-4)).toEqual([
+        `--working-directory=${dir}`,
+        "/bin/sh",
+        "-c",
+        "exec ./'tokenmaxxing' 'service' 'repair' '--deferred' '--json' '--reason' 'reload-required'",
+      ]);
+    }
+    // Other paths (specifiers included) keep the direct form.
+    expect(argsFor("/home/alex/Zoë (Work) 100%/tm/tokenmaxxing").slice(-7)).toEqual([
+      "/home/alex/Zoë (Work) 100%/tm/tokenmaxxing",
+      "service",
+      "repair",
+      "--deferred",
+      "--json",
+      "--reason",
+      "reload-required",
+    ]);
+  });
+});
+
+describe("service config dir", () => {
+  it("refuses a config dir with a tab, newline or other control character", async () => {
+    for (const configDir of ["/home/alex/tab\there/tm", "/home/alex/new\nline/tm", "/tmp/\u0001"]) {
+      const paths = servicePaths({
+        env: { TOKENMAXXING_CONFIG_DIR: configDir },
+        home: "/home/alex",
+        platform: "linux",
+      })!;
+      const exit = await Effect.runPromiseExit(ensureServiceConfigDirSupported(paths));
+      expect(failureTag(exit)).toBe("ServiceConfigDirUnsupportedError");
+    }
+    const paths = servicePaths({
+      env: { TOKENMAXXING_CONFIG_DIR: "/home/alex/Zoë O'Neil (Work) & Co 100%/tm" },
+      home: "/home/alex",
+      platform: "linux",
+    })!;
+    await expect(
+      Effect.runPromise(ensureServiceConfigDirSupported(paths)),
+    ).resolves.toBeUndefined();
+    expect(new ServiceConfigDirUnsupportedError({ configDir: "/home/a\tb/tm" }).message).toBe(
+      'error: the config dir contains a control character (such as a tab or newline)\npath: "/home/a\\tb/tm"\nhint: set TOKENMAXXING_CONFIG_DIR to a path without control characters, then run tokenmaxxing service install',
+    );
   });
 });
 
@@ -4579,6 +4634,32 @@ describe("serviceInstallProgram", () => {
     expect(state.writtenTokens).toEqual([]);
     expect(written).toEqual([]);
     expect(installed).toEqual([]);
+  });
+
+  it("refuses a config dir with a control character before writing anything", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        token: "tmx_existing",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+    });
+    for (const platform of ["darwin", "linux"] as const) {
+      const { installed, pointerWrites, runtime, written } = makeInstallRuntime({
+        env: { TOKENMAXXING_CONFIG_DIR: "/home/alex/tab\there/tm" },
+      });
+
+      const exit = await Effect.runPromiseExit(
+        serviceInstallProgram({ force: false, refresh: false }, { ...runtime, platform }).pipe(
+          Effect.provide(layer),
+        ),
+      );
+
+      expect(failureTag(exit)).toBe("ServiceConfigDirUnsupportedError");
+      expect(written).toEqual([]);
+      expect(pointerWrites).toEqual([]);
+      expect(installed).toEqual([]);
+    }
   });
 
   it("does not install while a service repair or runner update lock is active", async () => {
