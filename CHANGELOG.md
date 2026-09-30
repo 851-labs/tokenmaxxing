@@ -5,7 +5,7 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
-## 0.7.1-alpha.0 - 2026-09-29
+## 0.7.1 - 2026-09-29
 
 ### Fixed
 
