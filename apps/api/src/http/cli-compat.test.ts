@@ -607,7 +607,7 @@ describe("ingest boundary", () => {
       usageRepository.upsertChunk.mock.calls as unknown as Array<[string, string, UsageDayInput[]]>
     ).flatMap(([, , rows]) => rows);
     expect(new Set(upserted.map((row) => row.source))).toEqual(new Set(CCUSAGE_FIXTURE_SOURCES));
-    expect(upserted.some((row) => row.model.startsWith("[openclaw]"))).toBe(false);
+    expect(upserted.some((row) => /^\[(?:openclaw|pi)\]/.test(row.model))).toBe(false);
     expect(usageRepository.upsertSourceStats).toHaveBeenCalledOnce();
   });
 

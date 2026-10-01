@@ -2,10 +2,10 @@
 
 CLI for [tokenmaxxing](https://tokenmaxxing.sh) — the social leaderboard
 for LLM token usage. Parses your local agent usage (Claude Code, Codex,
-OpenCode, Gemini CLI, Copilot CLI, Hermes, Pi, Grok Build CLI, Antigravity,
-ZCode, Amp, Qwen Code, Kimi CLI, Kilo Code, Goose, Droid, Codebuff, OpenClaw)
-via [ccusage](https://github.com/ryoppippi/ccusage) and pushes daily
-aggregates to your public profile.
+OpenCode, Gemini CLI, Copilot CLI, Hermes, Pi, Oh My Pi, Grok Build CLI,
+Antigravity, ZCode, Amp, Qwen Code, Kimi CLI, Kilo Code, Goose, Droid,
+Codebuff, OpenClaw) via [ccusage](https://github.com/ryoppippi/ccusage) and
+pushes daily aggregates to your public profile.
 
 ## Usage
 

@@ -9,7 +9,7 @@ import { Data, Effect } from "effect";
 import type { CcusageDailyReport, CcusageSessionReport } from "./schema";
 import { decodeDailyReport, decodeSessionReport } from "./schema";
 import type { CcusageSource } from "./sources";
-import { type CcusageEnv, ccusageSourceEnv } from "./source-env";
+import { type CcusageEnv, ccusageSourceArgs, ccusageSourceEnv } from "./source-env";
 
 /**
  * Shells out to `bun x ccusage@^20.0.22 <source> daily --json --breakdown` (npx
@@ -27,6 +27,11 @@ const MAX_STDOUT_BYTES = 256 * 1024 * 1024;
 const STDERR_MAX_LINES = 5;
 const STDERR_MAX_CHARS = 500;
 const ANSI_ESCAPE_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
+/** What ccusage prints for a source with no logs; used when there is nothing to point it at. */
+const EMPTY_REPORTS: Record<CcusageReportKind, string> = {
+  daily: JSON.stringify({ daily: [], totals: null }),
+  session: JSON.stringify({ sessions: [], totals: null }),
+};
 
 class CcusageRunError extends Data.TaggedError("CcusageRunError")<{
   readonly cause: unknown;
@@ -140,6 +145,8 @@ function decodeCcusageJson(stdout: string, source: string, report: CcusageReport
   });
 }
 
+// The recorded (and uploaded) command leaves out the arguments
+// `ccusageSourceArgs` adds at run time: those are local paths.
 function dailyCcusageCommand(source: CcusageSource, options: RunOptions = {}): string[] {
   return [CCUSAGE_SPEC, ...dailyCcusageArgs(source, options)];
 }
@@ -174,7 +181,6 @@ function execCcusage(
 ): Effect.Effect<string, CcusageRunError> {
   const run = options.run ?? makeCcusageCommandRunner(source, report);
   const platform = options.platform ?? process.platform;
-  const [primary, fallback] = ccusageCommandInvocations(args, platform);
   const runInvocation = (invocation: CcusageCommandInvocation, env: CcusageEnv) =>
     Effect.promise(() =>
       invocation.shim === undefined ? Promise.resolve(true) : isOnWindowsPath(invocation.shim, env),
@@ -209,13 +215,19 @@ function execCcusage(
     );
 
   return Effect.promise(() => ccusageSourceEnv(source, options.env ?? process.env, platform)).pipe(
-    Effect.flatMap((env) =>
-      runInvocation(primary, env).pipe(
+    Effect.flatMap((env) => {
+      const sourceArgs = ccusageSourceArgs(source, env);
+      if (sourceArgs === null) {
+        return Effect.succeed(EMPTY_REPORTS[report]);
+      }
+
+      const [primary, fallback] = ccusageCommandInvocations([...args, ...sourceArgs], platform);
+      return runInvocation(primary, env).pipe(
         Effect.catch((error: CcusageRunError) =>
           error.code === "command_not_found" ? runInvocation(fallback, env) : Effect.fail(error),
         ),
-      ),
-    ),
+      );
+    }),
   );
 }
 
@@ -351,7 +363,8 @@ function ccusageCommandInvocations(
   // (EINVAL), so it runs through cmd.exe. The arguments are quoted: cmd reads the ^ in the version
   // range as its escape character anywhere outside quotes. The shim's name is not: a batch file
   // that cmd finds on PATH by a quoted name gets the current directory as %~dp0, which is where
-  // npm's shim looks for npx-cli.js. Every word is fixed, never user input.
+  // npm's shim looks for npx-cli.js. Every word is fixed, apart from OMP session paths, which
+  // `ompSessionDirs` only passes without `%` or `"`.
   const quoted = ["-y", CCUSAGE_SPEC, ...args].map((word) => `"${word}"`);
   return [
     primary,

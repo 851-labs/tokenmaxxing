@@ -12,14 +12,14 @@ describe("supported agents", () => {
   it("joins labels for prose", () => {
     expect(supportedAgentSentenceList()).toBe(
       "Claude Code, OpenAI Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, Hermes Agent, Pi, " +
-        "Grok Build CLI, Antigravity, ZCode, Amp, Qwen Code, Kimi CLI, Kilo Code, Goose, Droid, " +
+        "Oh My Pi, Grok Build CLI, Antigravity, ZCode, Amp, Qwen Code, Kimi CLI, Kilo Code, Goose, Droid, " +
         "Codebuff, and OpenClaw",
     );
   });
 
   it("counts the agents past a limit", () => {
     expect(supportedAgentSentenceList({ limit: 4 })).toBe(
-      "Claude Code, OpenAI Codex, OpenCode, Gemini CLI, and 14 more agents",
+      "Claude Code, OpenAI Codex, OpenCode, Gemini CLI, and 15 more agents",
     );
     expect(supportedAgentSentenceList({ limit: SUPPORTED_AGENTS.length })).toBe(
       supportedAgentSentenceList(),
@@ -29,6 +29,7 @@ describe("supported agents", () => {
   it("labels stored sources and passes unknown ones through", () => {
     expect(agentLabel("grok")).toBe("Grok Build CLI");
     expect(agentLabel("zcode")).toBe("ZCode");
+    expect(agentLabel("omp")).toBe("Oh My Pi");
     expect(agentLabel("cursor")).toBe("cursor");
   });
 

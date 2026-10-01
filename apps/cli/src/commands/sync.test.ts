@@ -9,6 +9,7 @@ import { TestClock } from "effect/testing";
 import { Unauthorized, UserId, type AuthUser } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 
+import { ccusageDailyFixture } from "../../../api/src/testing/ccusage-fixtures";
 import { SCHEDULED_ME_RETRY_POLICY } from "../api-failure";
 import { CcusageRunError } from "../ccusage/runner";
 import {
@@ -924,6 +925,94 @@ describe("sync source outcomes", () => {
       );
     },
   );
+
+  it("syncs Oh My Pi as its own source through the pi subcommand", async () => {
+    const { layer } = makeTestLayer({
+      initialConfig: {
+        apiUrl: "https://api.tokenmaxxing.example",
+        wwwUrl: "https://tokenmaxxing.example",
+      },
+      interactive: false,
+    });
+    let uploadPayload: TestUsageIngestRequest["payload"] | undefined;
+    const auth = makeUploadAuth((request) =>
+      Effect.sync(() => {
+        uploadPayload = request.payload;
+        return { received: 1, syncedAt: "2026-09-12T00:00:00.000Z", upserted: 1 };
+      }),
+    );
+    const ompReport = ccusageDailyFixture("omp");
+    const piReport = {
+      daily: [
+        {
+          date: "2026-09-10",
+          modelBreakdowns: [
+            {
+              cacheCreationTokens: 0,
+              cacheReadTokens: 0,
+              cost: 0.5,
+              inputTokens: 77_777,
+              modelName: "[pi] gemini-3.1-pro",
+              outputTokens: 1_111,
+            },
+          ],
+          totalCost: 0.5,
+          totalTokens: 78_888,
+        },
+      ],
+    };
+    const runs: Array<{ source: string; subcommand: string }> = [];
+
+    const result = await Effect.runPromise(
+      syncProgram(
+        { auth, dryRun: false, json: true, sources: "pi,omp" },
+        {
+          runDailyReport: (source) =>
+            Effect.sync(() => {
+              runs.push({ source: source.source, subcommand: source.subcommand });
+              return source.source === "omp" ? ompReport : piReport;
+            }),
+          runSessionReport: (source) =>
+            Effect.succeed({ sessions: source.source === "omp" ? [{}, {}, {}] : [{}] }),
+        },
+      ).pipe(Effect.provide(layer)),
+    );
+
+    expect(runs).toEqual([
+      { source: "pi", subcommand: "pi" },
+      { source: "omp", subcommand: "pi" },
+    ]);
+    expect(result.sourceResults).toEqual([
+      {
+        source: "pi",
+        status: "synced",
+        summary: { days: 1, models: 1, rows: 1, sessions: 1, spendUsd: 0.5 },
+      },
+      {
+        source: "omp",
+        status: "synced",
+        summary: { days: 2, models: 3, rows: 4, sessions: 3, spendUsd: expect.closeTo(0.1123, 10) },
+      },
+    ]);
+    // OMP's session paths stay out of the uploaded command.
+    const command = [
+      "ccusage@^20.0.22",
+      "pi",
+      "daily",
+      "--json",
+      "--breakdown",
+      "--mode",
+      "calculate",
+    ];
+    expect(uploadPayload?.reports).toMatchObject([
+      { command, source: "pi" },
+      { command, payload: ompReport, source: "omp" },
+    ]);
+    expect(uploadPayload?.sourceStats).toEqual([
+      { sessionCount: 1, source: "pi" },
+      { sessionCount: 3, source: "omp" },
+    ]);
+  });
 
   it("treats a valid empty daily report as no data", async () => {
     const { layer } = makeTestLayer({

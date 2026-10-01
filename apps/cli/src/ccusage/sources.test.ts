@@ -33,6 +33,7 @@ describe("resolveSources", () => {
       "copilot",
       "hermes",
       "pi",
+      "omp",
       "grok",
       "antigravity",
       "zcode",
@@ -46,8 +47,18 @@ describe("resolveSources", () => {
       "openclaw",
     ]);
     for (const { source, subcommand } of resolveSources(DEFAULT_SOURCE_NAMES).sources) {
-      expect(subcommand).toBe(source);
+      expect(subcommand).toBe(source === "omp" ? "pi" : source);
     }
+  });
+
+  it("reads Oh My Pi through ccusage's pi adapter", () => {
+    expect(resolveSources(["OMP", "pi"])).toEqual({
+      invalid: [],
+      sources: [
+        { source: "omp", subcommand: "pi" },
+        { source: "pi", subcommand: "pi" },
+      ],
+    });
   });
 
   it("normalizes case and whitespace and drops duplicates", () => {

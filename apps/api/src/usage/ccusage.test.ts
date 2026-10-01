@@ -468,4 +468,35 @@ describe("parseRawUsageReports with captured ccusage sources", () => {
       ["2026-09-11", "claude-sonnet-4-6"],
     ]);
   });
+
+  it("strips the [pi] label from Oh My Pi models read through ccusage's pi adapter", async () => {
+    const result = await Effect.runPromise(
+      parseRawUsageReports(
+        [
+          {
+            command: ccusageDailyCommand("omp"),
+            payload: ccusageDailyFixture("omp"),
+            reportKind: "daily",
+            source: "omp",
+          },
+        ],
+        options,
+      ),
+    );
+
+    expect(result.rows.map((row) => row.model)).toContain("[pi] gpt-5.5");
+    expect(
+      normalizeUsageDays(result.rows).map(({ date, model, source, totalTokens }) => [
+        date,
+        source,
+        model,
+        totalTokens,
+      ]),
+    ).toEqual([
+      ["2026-09-10", "omp", "claude-sonnet-4-6", 21960],
+      ["2026-09-10", "omp", "gpt-5.5", 7400],
+      ["2026-09-11", "omp", "claude-opus-4-6", 5150],
+      ["2026-09-11", "omp", "gpt-5.5", 4400],
+    ]);
+  });
 });

@@ -295,6 +295,7 @@ const USAGE_SOURCES = [
   "copilot",
   "hermes",
   "pi",
+  "omp",
   "grok",
   "antigravity",
   "zcode",

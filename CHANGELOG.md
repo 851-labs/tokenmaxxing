@@ -5,6 +5,17 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Added
+
+- Added Oh My Pi (OMP) as a supported source (`--sources omp`). It runs ccusage's Pi parser on
+  OMP's own sessions: `~/.omp/agent/sessions` plus every named profile, following `PI_CONFIG_DIR`
+  and `$XDG_DATA_HOME/omp` like OMP. OMP ignores `PI_AGENT_DIR` and a ccusage.json `piPath`, and
+  Pi skips any `PI_AGENT_DIR` entry that points at OMP's sessions, so neither counts the other's
+  sessions and the `PI_AGENT_DIR=~/.omp/agent/sessions` workaround can stay set. Thanks
+  @theoparis (#67).
+- Scheduled syncs now keep `PI_CONFIG_DIR` and `XDG_DATA_HOME`, so they find OMP's (and
+  OpenCode's) data where a foreground sync does.
+
 ### Fixed
 
 - A scheduled sync in which every agent failed now reports why each one failed (the reason and the
@@ -30,6 +41,12 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 - The API strips the same paths at ingest, from both stored usage rows and stored raw reports, so
   uploads from older CLIs never store or show them on profiles, stats or the leaderboard. Paths
   that reduce to the same name on the same day are merged.
+
+### Server
+
+- The API accepts `omp` on `/usage/ingest` and `/usage/sync` and stores its models without the
+  `[pi]` label ccusage's Pi parser adds. The site labels it "Oh My Pi" on the stats page, home
+  page, FAQ, privacy policy, and llms.txt.
 
 ## 0.7.2 - 2026-10-01
 
