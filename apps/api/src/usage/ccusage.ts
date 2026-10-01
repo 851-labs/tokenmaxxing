@@ -1,5 +1,6 @@
 import {
   MAX_REPORT_DAYS,
+  stripDayModelPaths,
   TokenCount,
   UsageDateKey,
   UsdAmount,
@@ -10,7 +11,7 @@ import {
 } from "@tokenmaxxing/api-contract";
 import { Effect, Option, Schema } from "effect";
 
-const PARSER_VERSION = "ccusage-v20-raw-5";
+const PARSER_VERSION = "ccusage-v20-raw-6";
 
 const MAX_MODELS_PER_DAY = 256;
 
@@ -126,7 +127,9 @@ function parseRawUsageReports(
         for (const rawDay of decoded.value.daily) {
           const day = yield* decodeDay(rawDay).pipe(Effect.option);
           if (Option.isSome(day) && day.value.date <= options.latestDate) {
-            days.push(day.value);
+            // Paths are stripped before the day is aggregated or persisted, so
+            // the stored raw report never holds them either.
+            days.push(stripDayModelPaths(day.value));
           }
         }
 

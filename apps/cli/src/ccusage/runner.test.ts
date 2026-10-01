@@ -315,6 +315,45 @@ describe("runCcusageDailyReport", () => {
     expect(report).toEqual({ daily: [] });
   });
 
+  it("strips local filesystem paths from model names before upload", async () => {
+    const report = await Effect.runPromise(
+      runCcusageDailyReport(codex, {
+        exec: {
+          run: () =>
+            Effect.succeed(
+              JSON.stringify({
+                daily: [
+                  {
+                    date: "2026-09-21",
+                    modelBreakdowns: [
+                      { modelName: "/home/alice/Downloads/gemma.gguf" },
+                      { modelName: "~anthropic/claude-sonnet-4.5" },
+                    ],
+                    models: { "C:\\Users\\alice\\models\\qwen.gguf": { inputTokens: 1 } },
+                    modelsUsed: ["/Users/alice/maple-mlx/maple-2bit-mlx"],
+                  },
+                ],
+              }),
+            ),
+        },
+      }),
+    );
+
+    expect(report).toEqual({
+      daily: [
+        {
+          date: "2026-09-21",
+          modelBreakdowns: [
+            { modelName: "gemma.gguf" },
+            { modelName: "~anthropic/claude-sonnet-4.5" },
+          ],
+          models: { "qwen.gguf": { inputTokens: 1 } },
+          modelsUsed: ["maple-2bit-mlx"],
+        },
+      ],
+    });
+  });
+
   it("classifies malformed JSON", async () => {
     const error = await ccusageErrorFor(
       runCcusageDailyReport(codex, {

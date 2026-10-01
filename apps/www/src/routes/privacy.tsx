@@ -19,7 +19,7 @@ const Route = createFileRoute("/privacy")({
 
 function PrivacyPage() {
   return (
-    <LegalPage title="Privacy Policy" updated="June 20, 2026">
+    <LegalPage title="Privacy Policy" updated="October 1, 2026">
       <LegalSection title="What we collect">
         tokenmaxxing collects daily usage aggregates only: the date, model name, agent source, token
         counts, and an API-equivalent cost estimate. When you sign in we also store your OAuth
@@ -29,7 +29,9 @@ function PrivacyPage() {
       <LegalSection title="What we never collect">
         Prompts, file paths, project names, and session content are never uploaded. We only ever
         receive the aggregated counts described above — never the contents of your conversations or
-        your code.
+        your code. Local model runners can report a model as the path of the file they loaded; the
+        CLI keeps only the file name, and the server strips the rest of any path an older CLI sends
+        before storing it.
       </LegalSection>
 
       <LegalSection title="How data is sourced">

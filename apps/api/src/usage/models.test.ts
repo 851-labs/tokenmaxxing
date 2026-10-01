@@ -11,6 +11,12 @@ describe("normalizeCcusageModelName", () => {
     ["pi", "gpt-5.5", "gpt-5.5"],
     ["pi", "[preview] gpt-5.5", "[preview] gpt-5.5"],
     ["pi", "[pi]   ", "[pi]   "],
+    [
+      "pi",
+      "[pi] /home/alice/models/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
+      "gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
+    ],
+    ["hermes", "/Users/alice/maple-mlx/maple-2bit-mlx", "maple-2bit-mlx"],
   ])("normalizes %s model %s as %s", (source, model, expected) => {
     expect(normalizeCcusageModelName(source, model)).toBe(expected);
   });
@@ -47,6 +53,17 @@ describe("normalizeUsageDays", () => {
         outputTokens: 80,
         totalTokens: 155,
       }),
+    ]);
+  });
+
+  it("merges paths that strip to the same model name", () => {
+    const rows = [
+      usageDay({ costUsd: 1, model: "/home/alice/Downloads/gemma.gguf", totalTokens: 10 }),
+      usageDay({ costUsd: 2, model: "/home/alice/models/gemma.gguf", totalTokens: 20 }),
+    ];
+
+    expect(normalizeUsageDays(rows)).toEqual([
+      usageDay({ costUsd: 3, model: "gemma.gguf", totalTokens: 30 }),
     ]);
   });
 
