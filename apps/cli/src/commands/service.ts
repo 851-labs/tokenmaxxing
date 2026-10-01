@@ -5892,7 +5892,12 @@ async function isExecutable(path: string, platform: NodeJS.Platform): Promise<bo
 const SERVICE_SOURCE_ROOT_ENV_KEYS = [
   "CLAUDE_CONFIG_DIR",
   "CODEX_HOME",
+  "OPENCODE_DATA_DIR",
+  "GEMINI_DATA_DIR",
+  "COPILOT_HOME",
+  "COPILOT_OTEL_FILE_EXPORTER_PATH",
   "HERMES_HOME",
+  "PI_AGENT_DIR",
   "GROK_HOME",
   "ANTIGRAVITY_DATA_DIR",
   "ZCODE_HOME",
@@ -5905,9 +5910,11 @@ const SERVICE_SOURCE_ROOT_ENV_KEYS = [
   "CODEBUFF_DATA_DIR",
   "OPENCLAW_DIR",
   // Oh My Pi's config root name (default `.omp`); `XDG_DATA_HOME` can hold
-  // OMP's and OpenCode's data instead.
+  // OMP's and OpenCode's data instead, and without `CLAUDE_CONFIG_DIR` ccusage
+  // reads Claude's projects from `$XDG_CONFIG_HOME/claude` too.
   "PI_CONFIG_DIR",
   "XDG_DATA_HOME",
+  "XDG_CONFIG_HOME",
 ] as const;
 
 // Environment the scheduled wrapper re-exports; PATH is always set (made
