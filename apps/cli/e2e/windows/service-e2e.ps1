@@ -19,6 +19,8 @@
 #                   goes, the running runner is deleted by a hidden cleanup once it exits
 #
 # -Only <scenario>,... runs just those scenarios (for a local VM run).
+# -WatcherTask <name> starts each window watcher through that scheduled task
+# instead of directly (see the README: a VM whose user is a UAC-filtered admin).
 param(
   [Parameter(Mandatory)] [string]$Root,
   [Parameter(Mandatory)] [string]$OutDir,
@@ -28,7 +30,8 @@ param(
   [Parameter(Mandatory)] [int]$TemplateVersion,
   [Parameter(Mandatory)] [string]$RunnerExe,
   [string]$LegacyBin = "",
-  [string[]]$Only = @()
+  [string[]]$Only = @(),
+  [string]$WatcherTask = ""
 )
 $ErrorActionPreference = "Continue"
 . (Join-Path $PSScriptRoot "lib\common.ps1")
@@ -130,10 +133,14 @@ function Assert-TaskAction([string]$Scenario, [ValidateSet("wscript", "cmd")] [s
   Add-Check $Scenario "task runs $Expect" ($toRun -match $pattern) "Task To Run: $toRun"
 }
 
-# The registered definition (schtasks /XML): wscript + launcher arguments,
-# the config dir as working directory, and the interactive-token logon.
+# The registered definition: wscript + launcher arguments, the config dir as
+# working directory, and the interactive-token logon. Read from the task's own
+# file (UTF-16 with a BOM), as the CLI does: `schtasks /XML` piped into
+# PowerShell is decoded in the console's code page, which turned the "ë" of a
+# Zoë config dir into "├½" wherever that is not UTF-8.
 function Assert-TaskDefinition([string]$Scenario, [string]$Label) {
-  $xmlText = (schtasks /Query /TN $TaskName /XML 2>&1 | Out-String)
+  $taskFile = Join-Path $env:SystemRoot "System32\Tasks\$TaskName"
+  $xmlText = try { Get-Content -LiteralPath $taskFile -Raw -ErrorAction Stop } catch { (schtasks /Query /TN $TaskName /XML 2>&1 | Out-String) }
   Set-Content -LiteralPath (Join-Path $OutDir "$Label-task.xml") -Value $xmlText -Encoding utf8
   try { $task = ([xml]$xmlText).Task } catch { Add-Check $Scenario "task XML parses" $false (Format-OneLine $xmlText 300); return }
   $exec = $task.Actions.Exec
@@ -156,22 +163,39 @@ function Assert-Launcher([string]$Scenario) {
 function Get-Requests { @((Invoke-RestMethod -Uri "$Api/__sandbox/requests").requests) }
 
 # Starts window-watch.ps1 hidden and waits until it has proved its event
-# sources live; Stop-Watcher returns its summary (or $null).
+# sources live; Stop-Watcher returns its summary (or $null). With
+# -WatcherTask, the task runs pwsh with the arguments in
+# <Root>\watcher-task-args.txt, elevated in this session.
 function Start-Watcher([string]$Label) {
   $stop = Join-Path $OutDir "$Label.stop"
   $ready = Join-Path $OutDir "$Label.ready"
+  $summary = Join-Path $OutDir "$Label-summary.json"
   # Left by an earlier run into the same out dir, they would end this watch at once.
-  Remove-Item -LiteralPath $stop, $ready -ErrorAction SilentlyContinue
-  $process = Start-Process -FilePath "pwsh" -WindowStyle Hidden -PassThru -ArgumentList `
-    "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\window-watch.ps1`" -OutDir `"$OutDir`" -Label `"$Label`" -StopFile `"$stop`""
+  Remove-Item -LiteralPath $stop, $ready, $summary -ErrorAction SilentlyContinue
+  $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\window-watch.ps1`" -OutDir `"$OutDir`" -Label `"$Label`" -StopFile `"$stop`""
+  $process = $null
+  if ($WatcherTask) {
+    Set-Content -LiteralPath (Join-Path $Root "watcher-task-args.txt") -Value $arguments -Encoding utf8
+    schtasks /Run /TN $WatcherTask 2>&1 | Out-Null
+  } else {
+    $process = Start-Process -FilePath "pwsh" -WindowStyle Hidden -PassThru -ArgumentList $arguments
+  }
   Wait-Until { Test-Path -LiteralPath $ready } 45 | Out-Null
-  [pscustomobject]@{ process = $process; stop = $stop; summary = (Join-Path $OutDir "$Label-summary.json") }
+  [pscustomobject]@{ process = $process; stop = $stop; summary = $summary }
+}
+
+function Read-WatchSummary([string]$Path) {
+  if (Test-Path -LiteralPath $Path) { try { Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 10 } catch { $null } } else { $null }
 }
 
 function Stop-Watcher($Watcher) {
   New-Item -ItemType File -Force -Path $Watcher.stop | Out-Null
-  if (-not $Watcher.process.WaitForExit(30000)) { $Watcher.process.Kill() }
-  if (Test-Path -LiteralPath $Watcher.summary) { Get-Content -LiteralPath $Watcher.summary -Raw | ConvertFrom-Json -Depth 10 } else { $null }
+  if ($Watcher.process) {
+    if (-not $Watcher.process.WaitForExit(30000)) { $Watcher.process.Kill() }
+  } else {
+    Wait-Until { $null -ne (Read-WatchSummary $Watcher.summary) } 30 | Out-Null
+  }
+  Read-WatchSummary $Watcher.summary
 }
 
 # Runs the task once under a window watcher and waits for it to finish.
@@ -228,9 +252,11 @@ function Invoke-TaskRun([string]$Label, [scriptblock]$After = $null, [string[]]$
 # The run's process tree, from the starts the watcher recorded: its roots
 # (the task's action, or the pids the harness started for a control) and
 # every descendant. Windows reuses pids within seconds, so a parent is the
-# latest process with that pid started no later than its child.
+# latest process with that pid started no later than its child. A start only
+# WMI saw, of a process gone by then (exact = false), has its delivery time,
+# up to about a second after the real one.
 function Get-ParentProcess($Processes, $Child) {
-  @($Processes | Where-Object { $_.pid -eq $Child.ppid -and $_.t -le $Child.t }) | Select-Object -Last 1
+  @($Processes | Where-Object { $_.pid -eq $Child.ppid -and ($_.t -le $Child.t -or ($_.exact -eq $false -and $_.t -le $Child.t + 2)) }) | Select-Object -Last 1
 }
 
 function Get-RunRoots($Run) {
@@ -248,11 +274,16 @@ function Get-RunTree($Run) {
   $processes = @($Run.watch.processes)
   $tree = New-Object System.Collections.Generic.HashSet[string]
   foreach ($root in (Get-RunRoots $Run)) { [void]$tree.Add("$($root.pid)@$($root.t)") }
-  # Starts are recorded in delivery order, parents before children.
-  foreach ($process in $processes) {
-    $parent = Get-ParentProcess $processes $process
-    if ($parent -and $tree.Contains("$($parent.pid)@$($parent.t)")) { [void]$tree.Add("$($process.pid)@$($process.t)") }
-  }
+  # Starts are in start order, parents before children; repeat until nothing
+  # is added in case a start time put a child first.
+  do {
+    $added = $false
+    foreach ($process in $processes) {
+      if ($tree.Contains("$($process.pid)@$($process.t)")) { continue }
+      $parent = Get-ParentProcess $processes $process
+      if ($parent -and $tree.Contains("$($parent.pid)@$($parent.t)")) { [void]$tree.Add("$($process.pid)@$($process.t)"); $added = $true }
+    }
+  } while ($added)
   $tree
 }
 
@@ -293,22 +324,34 @@ function Get-RunWindows($Run) {
   }
 }
 
-function Test-WatcherLive($Watch) { $Watch.processSource -eq "Win32_ProcessStartTrace" -and $Watch.windowSource -eq "SetWinEventHook" }
+function Test-WatcherLive($Watch) { $Watch.processSource -eq "Win32_ProcessStartTrace" -and $Watch.pollSource -eq "NtQuerySystemInformation" -and $Watch.windowSource -eq "SetWinEventHook" }
 
+function Format-WatchSources($Watch) {
+  "processSource=$($Watch.processSource) pollSource=$($Watch.pollSource) windowSource=$($Watch.windowSource) starts=$(($Watch.processStarts | ConvertTo-Json -Compress -Depth 3))"
+}
+
+# Each process with the sources that saw its start: w = WMI, p = the snapshot poll.
 function Format-WatchedProcesses($Processes) {
   (@($Processes | Where-Object { ($_.name -replace '\.exe$', '') -in $WatchedProcesses -and $_.name -ne "conhost.exe" }) |
-      ForEach-Object { "$($_.name)#$($_.pid)<-$($_.ppid): $(if ($null -ne $_.commandLine) { $_.commandLine } else { "(gone before its command line was read)" })" }) -join " || "
+      ForEach-Object {
+        $by = (@($_.sources) | ForEach-Object { if ($_ -eq "Win32_ProcessStartTrace") { "w" } else { "p" } }) -join ""
+        "$($_.name)#$($_.pid)<-$($_.ppid)[$by]: $(if ($null -ne $_.commandLine) { $_.commandLine } else { "(gone before its command line was read)" })"
+      }) -join " || "
 }
 
 # A watcher that misses the run's own processes is blind, and its "no
 # window" verdict means nothing. Every run must show the task's action (the
 # wscript launcher, or cmd.exe running the legacy .cmd) and each deferred
-# repair it was expected to spawn, however briefly they lived. Process starts
-# always carry the parent pid, command lines only when the process outlived
-# WMI's delivery (about a second), so the process tree decides: the action's
-# parent is Task Scheduler, which was running before the watcher started, and
-# a deferred repair is a wscript.exe started by the runner (tokenmaxxing.exe).
-# The same tree decides which windows count (Get-RunWindows).
+# repair it was expected to spawn, however briefly they lived. Either process
+# source seeing a start counts: WMI now and then drops one under load, and the
+# snapshot poll misses only what lives under 20 ms. Process starts always
+# carry the parent pid, command lines only when the process was still running
+# when a source reported it, so the process tree decides: the action's parent
+# is Task Scheduler, which was running before the watcher started, and a
+# deferred repair is a wscript.exe started by the runner (tokenmaxxing.exe).
+# The same tree decides which windows count (Get-RunWindows). A miss lists the
+# repair the service state recorded, to tell a blind watcher from a repair
+# that never ran.
 function Assert-WatcherSawRun([string]$Scenario, $Run) {
   $check = "watcher saw the run's processes ($($Run.label))"
   $watch = $Run.watch
@@ -323,7 +366,9 @@ function Assert-WatcherSawRun([string]$Scenario, $Run) {
     # A repair whose command line was read must name the reason.
     if (@($repairs | Where-Object { $null -eq $_.commandLine -or $_.commandLine -match "service-sync\.vbs`"? repair $reason" }).Count -eq 0) { $missing += "$reason repair (wscript.exe started by tokenmaxxing.exe)" }
   }
-  Add-Check $Scenario $check ((Test-WatcherLive $watch) -and $missing.Count -eq 0) "processSource=$($watch.processSource) windowSource=$($watch.windowSource) missing=[$($missing -join ', ')] seen=[$(Format-WatchedProcesses $processes)]"
+  $state = if ($missing.Count -gt 0) { Read-ConfigJson "service-state.json" } else { $null }
+  $recorded = if ($state) { " state: lastRepairReason=$($state.lastRepairReason) status=$($state.lastRepairStatus) attemptAt=$($state.lastRepairAttemptAt)" } else { "" }
+  Add-Check $Scenario $check ((Test-WatcherLive $watch) -and $missing.Count -eq 0) "$(Format-WatchSources $watch) missing=[$($missing -join ', ')]$recorded seen=[$(Format-WatchedProcesses $processes)]"
 }
 
 function Assert-NoWindow([string]$Scenario, $Run) {
@@ -408,7 +453,7 @@ function Invoke-WatcherControl([string]$Label, [string]$WindowStyle) {
     seen = $null -ne $seen
     # The harness started this cmd.exe, so it is the tree's root.
     windows = if ($watch) { Get-RunWindows ([pscustomobject]@{ watch = $watch; rootPids = @($process.Id) }) } else { $null }
-    detail = "processSource=$($watch.processSource) windowSource=$($watch.windowSource) ready after $($watch.readyAtSeconds)s; cmd.exe#$($process.Id) exit=$($process.ExitCode) $(if ($seen) { 'seen' } else { 'not seen' })"
+    detail = "$(Format-WatchSources $watch) ready after $($watch.readyAtSeconds)s; cmd.exe#$($process.Id) exit=$($process.ExitCode) $(if ($seen) { "seen by $(@($seen.sources) -join '+')" } else { 'not seen' })"
   }
 }
 
@@ -847,10 +892,10 @@ function Invoke-UninstallFromRunner {
   if ($null -eq $watch) { Add-Check $scenario "no window or focus change ($label)" $false "window watcher wrote no summary"; return }
   $processes = @($watch.processes)
   # The cleanup is a wscript.exe the runner started; its command line is read
-  # only if WMI delivered the start while it still ran, which its 1 s wait allows.
+  # only if a source reported the start while it still ran, which its 1 s wait allows.
   $cleanup = @($processes | Where-Object { $_.name -eq "wscript.exe" -and (Get-ParentProcess $processes $_).pid -eq $uninstallProcess.Id })
   $cleanupScript = @($cleanup | Where-Object { $null -eq $_.commandLine -or $_.commandLine -match 'service-runners\.retired-[0-9a-f]{8}\.vbs"?$' })
-  Add-Check $scenario "cleanup ran through a wscript.exe started by the runner" ((Test-WatcherLive $watch) -and $cleanupScript.Count -gt 0) "processSource=$($watch.processSource) windowSource=$($watch.windowSource) runner=#$($uninstallProcess.Id) seen=[$(Format-WatchedProcesses $processes)]"
+  Add-Check $scenario "cleanup ran through a wscript.exe started by the runner" ((Test-WatcherLive $watch) -and $cleanupScript.Count -gt 0) "$(Format-WatchSources $watch) runner=#$($uninstallProcess.Id) seen=[$(Format-WatchedProcesses $processes)]"
   $seen = Get-RunWindows ([pscustomobject]@{ watch = $watch; rootPids = @($uninstallProcess.Id) })
   Add-Check $scenario "no window or focus change ($label)" ($seen.windows.Count -eq 0 -and $seen.focus.Count -eq 0) $seen.detail
 }

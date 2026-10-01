@@ -2,7 +2,8 @@
 # writes the summary. Everything runs in one step because the sandbox API and
 # the registry must outlive every phase.
 #
-#   run-service-e2e.ps1 -BuildJson <build.json> [-Root <dir>] [-OutDir <dir>] [-LegacyVersion 0.7.0-alpha.0] [-Force]
+#   run-service-e2e.ps1 -BuildJson <build.json> [-Root <dir>] [-OutDir <dir>] [-LegacyVersion 0.7.0-alpha.0]
+#                       [-Only <scenario>,...] [-WatcherTask <task>] [-Force]
 #
 # 1. fake bun (../shared/fakes/) first on PATH, so scheduled runs never start real ccusage
 # 2. the local API sandbox (apps/api/script/sandbox-server.ts) on 127.0.0.1:8799
@@ -21,6 +22,9 @@ param(
   # its task runs the .cmd directly, which the upgrade scenario migrates and
   # whose visible console is the window watcher's positive control.
   [string]$LegacyVersion = "0.7.0-alpha.0",
+  # Passed on to service-e2e.ps1, for a local VM run.
+  [string[]]$Only = @(),
+  [string]$WatcherTask = "",
   [switch]$Force
 )
 $ErrorActionPreference = "Continue"
@@ -96,7 +100,7 @@ try {
   $template = [regex]::Match((Get-Content -LiteralPath "$repo\apps\cli\src\commands\service.ts" -Raw), 'const SERVICE_TEMPLATE_VERSION = (\d+);').Groups[1].Value
   if ((Get-FailedChecks).Count -eq 0) {
     & "$PSScriptRoot\service-e2e.ps1" -Root $Root -OutDir $OutDir -TmxBin $tmxBin -FakeBin $fakeBin -Api $api `
-      -TemplateVersion ([int]$template) -RunnerExe $build.nativeExe -LegacyBin $legacyBin
+      -TemplateVersion ([int]$template) -RunnerExe $build.nativeExe -LegacyBin $legacyBin -Only $Only -WatcherTask $WatcherTask
   } else {
     Write-Host "::error::setup failed; skipping the service scenarios"
   }

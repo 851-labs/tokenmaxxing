@@ -47,15 +47,25 @@ scheduled runs get fixed ccusage output (`../shared/fakes/`):
 | legacy upgrade            | Installs the pinned release `0.7.0-alpha.0` (template 5, whose task runs the `.cmd` directly), then swaps in this build's runner the way an auto-update does. The next scheduled run's hidden repair re-registers the task through `wscript` without rewriting the running wrapper, and the following run shows no window. `service repair` migrates a second legacy install directly.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | uninstall from the runner | The service runner exe itself runs `service install` over its own service (keeping the running exe) and then `service uninstall`: exit 0, the task is gone, the runners dir is retired aside at once, `status` and `doctor` say not installed, and a hidden `wscript.exe` started by the runner deletes the runner within 30 s, leaving only `config.json` and the log, with no window from the runner's process tree.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-Every task run is recorded by `window-watch.ps1`. It polls nothing:
-process starts come from WMI's `Win32_ProcessStartTrace` (the kernel's process
-trace, so no start is missed however short the process lives), and windows and
-focus from `SetWinEventHook` (`EVENT_OBJECT_SHOW`, `EVENT_OBJECT_UNCLOAKED`,
-`EVENT_SYSTEM_FOREGROUND`), described in the callback before they can close
-(`lib/watch-events.ps1`, inline C#). The process trace needs an administrator
-token, which the hosted runners have. Before a run starts, the watcher proves
-both sources live with a self-test window and a probe process, and before it
-stops it waits for one more probe so every start is in.
+Every task run is recorded by `window-watch.ps1` (`lib/watch-events.ps1`,
+inline C#). Windows and focus come from `SetWinEventHook` (`EVENT_OBJECT_SHOW`,
+`EVENT_OBJECT_UNCLOAKED`, `EVENT_SYSTEM_FOREGROUND`), described in the callback
+before they can close. Process starts come from two sources, and either one
+seeing a start is enough:
+
+- WMI's `Win32_ProcessStartTrace`, the kernel's process trace, which reports a
+  process however short it lives. It needs an administrator token, which the
+  hosted runners have. Under load it has dropped a start now and then (while
+  still delivering that process's exit): on `windows-11-arm`, a run that
+  started some 20 bun/node pairs in seven seconds lost the start of the
+  deferred repair's `wscript.exe` and of its `cmd.exe`.
+- A snapshot of every process (`NtQuerySystemInformation`) every 20 ms, which
+  sees whatever lives longer than that, with its exact creation time.
+
+The summary counts the starts each source saw alone (`processStarts`). Before a
+run starts, the watcher proves every source live with a self-test window and a
+probe process both process sources must report, and before it stops it waits
+for one more probe so every start is in.
 
 A new visible window or a foreground change fails the check when it belongs
 to the run's process tree: the task's action (or, for a control, the process
@@ -69,9 +79,11 @@ things keep the watcher from passing blind:
 - Each run must show the processes it is known to start: the task's action
   (the `wscript.exe` launcher, or `cmd.exe` for the legacy `.cmd` task) and
   every deferred repair it spawns (a `wscript.exe` started by the runner),
-  however briefly they lived. WMI hands process starts over in batches about a
-  second apart, so a command line is only there for a process still running
-  by then; the check goes by the process tree, not the command line.
+  however briefly they lived. A command line is only there for a process
+  still running when a source reported it (WMI hands starts over in batches
+  about a second apart); the check goes by the process tree, not the command
+  line. When one is missing, the check lists the repair the service state
+  recorded, to tell a blind watcher from a repair that never ran.
 - Positive controls: the window watcher scenario's visible `cmd.exe`, and the
   legacy task's console, must both be caught.
 
@@ -127,3 +139,11 @@ bun apps/cli/e2e/shared/build-packages.ts --out $env:TEMP\tmx-e2e\pkgs --version
 apps/cli/e2e/windows/session-probe.ps1 -OutDir $env:TEMP\tmx-e2e\out
 apps/cli/e2e/windows/run-service-e2e.ps1 -BuildJson $env:TEMP\tmx-e2e\pkgs\build.json -Force
 ```
+
+`-Only "<scenario>",...` runs just those scenarios. On a VM whose user is an
+administrator under UAC (not the built-in Administrator, as on the hosted
+runners), the harness has to run unelevated, since `service install` refuses
+an elevated shell, while the watcher's WMI trace needs elevation. Register an
+interactive task with the highest run level that runs
+`pwsh <the arguments in <Root>\watcher-task-args.txt>` hidden, and pass its
+name as `-WatcherTask <name>`; each watcher then starts through it.
