@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import { cn } from "../../lib/cn";
 import { formatMonth, formatMonthLong, formatUsd } from "../../lib/format";
-import { BarChart, ColumnSpotlight, hiddenWhenNarrow } from "./axis";
+import { barAnchor, BarChart, ColumnSpotlight, hiddenWhenNarrow } from "./axis";
 import {
   barCenter,
   barLayout,
@@ -14,7 +14,7 @@ import {
   round2,
 } from "./scale";
 import { segmentTooltipRows, type ChartSegment } from "./series";
-import { anchorLeft, ChartLiveRegion, ChartTooltip } from "./tooltip";
+import { ChartLiveRegion, ChartTooltip } from "./tooltip";
 import { useChartCursor } from "./use-chart-cursor";
 
 /** Spend per calendar month with value labels above each bar. */
@@ -72,12 +72,8 @@ function MonthBars({ months }: { months: readonly MonthPoint[] }) {
           <ChartLiveRegion>
             {active !== undefined && hovered !== null ? (
               <ChartTooltip
-                className="w-56 -translate-y-full"
+                anchor={barAnchor(layout, hovered, HEIGHT - y(active.value), y(active.value))}
                 rows={segmentTooltipRows(active.segments, (segment) => formatUsd(segment.value))}
-                style={{
-                  left: anchorLeft(centerOf(hovered), 11),
-                  top: `${HEIGHT - y(active.value) - 12}px`,
-                }}
                 subtitle={`${formatUsd(active.value)} total`}
                 title={formatMonthLong(active.month)}
               />

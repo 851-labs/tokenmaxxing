@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { formatDay, formatMonth, formatPercent, percentOf } from "../../lib/format";
-import { BarChart, ColumnSpotlight, type AxisLabel } from "./axis";
+import { barAnchor, BarChart, ColumnSpotlight, type AxisLabel } from "./axis";
 import {
   barCenter,
   barLayout,
@@ -13,7 +13,7 @@ import {
   round2,
 } from "./scale";
 import { segmentTooltipRows, type LegendEntry, type StackedDay } from "./series";
-import { anchorBesideBar, ChartLiveRegion, ChartTooltip } from "./tooltip";
+import { ChartLiveRegion, ChartTooltip } from "./tooltip";
 import { useChartCursor } from "./use-chart-cursor";
 
 /**
@@ -113,17 +113,6 @@ function StackedBars({
   );
 
   const active = hovered === null ? undefined : days[hovered];
-  const activePosition =
-    hovered === null
-      ? null
-      : (() => {
-          const x = barX(layout, hovered);
-          const center = barCenter(layout, hovered);
-          return {
-            center: center / CHART_WIDTH,
-            edge: (center < CHART_WIDTH / 2 ? x + layout.barWidth : x) / CHART_WIDTH,
-          };
-        })();
 
   return (
     <BarChart
@@ -136,18 +125,15 @@ function StackedBars({
       onColumn={cursor.setActive}
       overlay={
         <ChartLiveRegion>
-          {active !== undefined && activePosition !== null ? (
+          {active !== undefined && hovered !== null ? (
             <ChartTooltip
-              className="w-56 -translate-y-1/2"
+              anchor={barAnchor(layout, hovered, 0, HEIGHT)}
+              placement="beside"
               rows={segmentTooltipRows(active.segments, (segment) =>
                 mode === "share"
                   ? formatPercent(percentOf(segment.value, active.total))
                   : valueFormatter(segment.value),
               )}
-              style={{
-                left: anchorBesideBar(activePosition.center, activePosition.edge),
-                top: "50%",
-              }}
               subtitle={`${valueFormatter(active.total)} total`}
               title={formatDay(active.date)}
             />
