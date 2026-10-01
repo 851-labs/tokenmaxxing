@@ -1,79 +1,135 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 
-import { cn } from "../../lib/cn";
 import type { TooltipRow } from "./series";
+import { placeTooltip, tooltipBounds, type TooltipPlacement } from "./tooltip-placement";
 
 /**
  * The shared hover tooltip for every dashboard chart: a floating card with a
- * title, optional subtitle, and optional colour-swatched rows. Presentational
- * only — each chart positions it via `style`/`className`, since the
- * pointer-to-datum math differs per chart. Centralising the card keeps all
- * four charts visually identical.
+ * title, optional subtitle, and optional colour-swatched rows. It owns its
+ * placement too: charts only say what it points at, and the card measures its
+ * real size, then sits beside or above that anchor, flipping and clamping so
+ * it stays inside the chart frame and the viewport.
  */
-
-/** Card width (rem) the anchored charts render at — kept in sync with the clamp. */
-const CARD_REM = 14;
-const BAR_GUTTER_REM = 0.75;
 
 /**
- * Left offset (a CSS string) that centres a tooltip on the point at `fraction`
- * (0–1) across the chart, clamped so the card never spills past either edge of
- * its relative container.
+ * What the card points at: a box in its positioned container (CSS lengths,
+ * so bar charts can use plot percentages), or a getter for a rendered mark.
  */
-function anchorLeft(fraction: number, cardRem: number = CARD_REM): string {
-  const pct = Math.min(Math.max(fraction, 0), 1) * 100;
+type TooltipAnchor =
+  | { height: number; left: number | string; top: number; width: number | string }
+  | (() => Element | null | undefined);
 
-  return `clamp(0rem, calc(${pct}% - ${cardRem / 2}rem), calc(100% - ${cardRem}rem))`;
-}
-
-/**
- * Position a bar-chart tooltip beside the hovered bar: to the right in the
- * first half of the chart, and to the left in the second half.
- */
-function anchorBesideBar(centerFraction: number, edgeFraction: number = centerFraction): string {
-  const pct = Math.min(Math.max(edgeFraction, 0), 1) * 100;
-  const offset = centerFraction < 0.5 ? BAR_GUTTER_REM : -(CARD_REM + BAR_GUTTER_REM);
-
-  return `clamp(0rem, calc(${pct}% + ${offset}rem), calc(100% - ${CARD_REM}rem))`;
-}
+/** Widest the card grows for long labels before they truncate. */
+const MAX_CARD_WIDTH = "20rem";
 
 function ChartTooltip({
-  className,
+  anchor,
+  offset = 12,
+  placement = "above",
   rows,
-  style,
   subtitle,
   title,
 }: {
-  className?: string;
+  anchor: TooltipAnchor;
+  /** Gap (px) between the anchor and the card. */
+  offset?: number;
+  placement?: TooltipPlacement;
   rows?: TooltipRow[];
-  style?: CSSProperties;
   subtitle?: ReactNode;
   title: ReactNode;
 }) {
+  const anchorBoxRef = useRef<HTMLSpanElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const anchorBox = typeof anchor === "function" ? null : anchor;
+  const resolveAnchor = typeof anchor === "function" ? anchor : () => anchorBoxRef.current;
+
+  // Measure before paint on every render (the datum or its rows may change),
+  // and again whenever the card, the frame or the viewport moves or resizes.
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    const container = card?.offsetParent;
+    if (card === null || !(container instanceof HTMLElement)) {
+      return;
+    }
+    const frame = card.closest<HTMLElement>("[data-chart-frame]") ?? container;
+
+    const position = () => {
+      const target = resolveAnchor();
+      if (target === null || target === undefined) {
+        return;
+      }
+      const bounds = tooltipBounds(frame.getBoundingClientRect(), {
+        height: window.innerHeight,
+        width: document.documentElement.clientWidth,
+      });
+      // Measure at the origin with the width cap applied, so the size is the
+      // card's own and not squeezed by wherever it sat last time.
+      card.style.left = "0px";
+      card.style.top = "0px";
+      card.style.maxWidth = `min(${MAX_CARD_WIDTH}, ${bounds.right - bounds.left}px)`;
+      const size = card.getBoundingClientRect();
+      const origin = container.getBoundingClientRect();
+      const spot = placeTooltip({
+        anchor: target.getBoundingClientRect(),
+        bounds,
+        card: size,
+        offset,
+        placement,
+      });
+      card.style.left = `${spot.left - origin.left}px`;
+      card.style.top = `${spot.top - origin.top}px`;
+      card.dataset["side"] = spot.side;
+    };
+
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(card);
+    observer.observe(frame);
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position, { capture: true, passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", position);
+      window.removeEventListener("scroll", position, { capture: true });
+    };
+  });
+
   return (
-    <div
-      className={cn(
-        "pointer-events-none absolute top-0 z-10 border border-border bg-card p-3 text-xs shadow-lg",
-        className,
+    <>
+      {anchorBox === null ? null : (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none invisible absolute"
+          ref={anchorBoxRef}
+          style={anchorBox}
+        />
       )}
-      style={style}
-    >
-      <p className="font-medium">{title}</p>
-      {subtitle !== undefined ? <p className="mt-1 text-muted-foreground">{subtitle}</p> : null}
-      {rows !== undefined && rows.length > 0 ? (
-        <ul className="mt-2 flex flex-col gap-1">
-          {rows.map((row) => (
-            <li className="flex items-center gap-2" key={row.label}>
-              {row.color !== undefined ? (
-                <span className="size-2 shrink-0" style={{ background: row.color }} />
-              ) : null}
-              <span className="flex-1 truncate">{row.label}</span>
-              <span className="text-muted-foreground">{row.value}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
+      <div
+        className="pointer-events-none absolute top-0 left-0 z-10 w-max border border-border bg-card p-3 text-xs shadow-lg"
+        data-chart-tooltip=""
+        ref={cardRef}
+      >
+        <p className="truncate font-medium">{title}</p>
+        {subtitle !== undefined ? (
+          <p className="mt-1 truncate text-muted-foreground">{subtitle}</p>
+        ) : null}
+        {rows !== undefined && rows.length > 0 ? (
+          <ul className="mt-2 flex flex-col gap-1">
+            {rows.map((row) => (
+              <li className="flex items-center gap-2" key={row.label}>
+                {row.color !== undefined ? (
+                  <span className="size-2 shrink-0" style={{ background: row.color }} />
+                ) : null}
+                <span className="min-w-0 flex-1 truncate">{row.label}</span>
+                <span className="shrink-0 pl-2 text-muted-foreground tabular-nums">
+                  {row.value}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </>
   );
 }
 
@@ -90,4 +146,6 @@ function ChartLiveRegion({ children }: { children: ReactNode }) {
   );
 }
 
-export { anchorBesideBar, anchorLeft, ChartLiveRegion, ChartTooltip };
+export { ChartLiveRegion, ChartTooltip };
+
+export type { TooltipAnchor };

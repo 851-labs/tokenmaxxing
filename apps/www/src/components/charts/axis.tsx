@@ -1,7 +1,8 @@
 import type { PointerEvent, ReactNode } from "react";
 
 import { cn } from "../../lib/cn";
-import { CHART_TICKS, CHART_WIDTH, columnAt } from "./scale";
+import { barX, CHART_TICKS, CHART_WIDTH, columnAt, type BarLayout } from "./scale";
+import type { TooltipAnchor } from "./tooltip";
 import { CHART_FOCUS_CLASS_NAME, type ChartSurfaceProps } from "./use-chart-cursor";
 
 /**
@@ -50,7 +51,7 @@ function BarChart({
   labels: readonly AxisLabel[];
   max: number;
   onColumn: (index: number) => void;
-  /** HTML positioned over the plot (value labels, the tooltip). */
+  /** HTML positioned over the plot (value labels, the tooltip). Tooltips may use the whole frame, axis gutter included. */
   overlay?: ReactNode;
   surfaceProps: ChartSurfaceProps;
   /** The chart's `linearScale` fn. */
@@ -68,7 +69,7 @@ function BarChart({
   };
 
   return (
-    <div className="flex text-[10px] leading-none">
+    <div className="flex text-[10px] leading-none" data-chart-frame="">
       <div aria-hidden="true" className="relative w-11 shrink-0" style={{ height }}>
         {ticks.map(({ top, value }) => (
           <span
@@ -85,12 +86,15 @@ function BarChart({
           aria-label={ariaLabel}
           className={cn("block w-full touch-pan-y select-none", CHART_FOCUS_CLASS_NAME)}
           height={height}
-          onPointerDown={activateColumn}
           onPointerMove={activateColumn}
           preserveAspectRatio="none"
           role="img"
           viewBox={`0 0 ${CHART_WIDTH} ${height}`}
           {...surfaceProps}
+          onPointerDown={(event) => {
+            surfaceProps.onPointerDown(event);
+            activateColumn(event);
+          }}
         >
           {ticks.map(({ top }, tick) => (
             <line
@@ -127,6 +131,19 @@ function BarChart({
 }
 
 /**
+ * Tooltip anchor for the bar in column `index`: horizontally in plot
+ * percentages, vertically `top`/`height` in plot px.
+ */
+function barAnchor(layout: BarLayout, index: number, top: number, height: number): TooltipAnchor {
+  return {
+    height,
+    left: `${(barX(layout, index) / CHART_WIDTH) * 100}%`,
+    top,
+    width: `${(layout.barWidth / CHART_WIDTH) * 100}%`,
+  };
+}
+
+/**
  * Fades every column but `active` by covering the rest of the plot with the
  * page background, so hover needs no per-bar re-render.
  */
@@ -153,6 +170,6 @@ function ColumnSpotlight({
   );
 }
 
-export { BarChart, ColumnSpotlight, hiddenWhenNarrow };
+export { barAnchor, BarChart, ColumnSpotlight, hiddenWhenNarrow };
 
 export type { AxisLabel };

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
 import { formatUsd } from "../../lib/format";
-import { BarChart, ColumnSpotlight } from "./axis";
+import { barAnchor, BarChart, ColumnSpotlight } from "./axis";
 import {
   barCenter,
   barLayout,
@@ -12,7 +12,7 @@ import {
   niceMax,
   round2,
 } from "./scale";
-import { anchorLeft, ChartLiveRegion, ChartTooltip } from "./tooltip";
+import { ChartLiveRegion, ChartTooltip } from "./tooltip";
 import { useChartCursor } from "./use-chart-cursor";
 
 /** Spend bucketed by weekday (Monday-first); hovering a bar dims the others. */
@@ -55,11 +55,12 @@ function WeekdayBars({ spend }: { spend: readonly number[] }) {
         <ChartLiveRegion>
           {hovered === null ? null : (
             <ChartTooltip
-              className="w-56 -translate-y-full"
-              style={{
-                left: anchorLeft(centerOf(hovered), 11),
-                top: `${HEIGHT - y(spend[hovered] ?? 0) - 12}px`,
-              }}
+              anchor={barAnchor(
+                layout,
+                hovered,
+                HEIGHT - y(spend[hovered] ?? 0),
+                y(spend[hovered] ?? 0),
+              )}
               subtitle={`${formatUsd(spend[hovered] ?? 0)} total`}
               title={WEEKDAY_NAMES[hovered]}
             />

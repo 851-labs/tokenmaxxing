@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 
 import { cn } from "../../lib/cn";
 import { enumerateDays, weekdaySundayFirst } from "../../lib/dates";
@@ -23,12 +23,6 @@ interface HeatmapProps {
   segmentsByDate: ReadonlyMap<string, ChartSegment[]>;
 }
 
-interface CellPosition {
-  /** Pixel position of the cell within the rendered chart container. */
-  left: number;
-  top: number;
-}
-
 const CELL = 11;
 const GAP = 2;
 const LEFT = 28;
@@ -47,7 +41,6 @@ const HEATMAP_STEPS: CursorSteps = {
 function Heatmap({ byDate, first, focus, last, segmentsByDate }: HeatmapProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
 
   // When the year overflows (phones), open on the focus day, not January.
   useLayoutEffect(() => {
@@ -96,29 +89,14 @@ function Heatmap({ byDate, first, focus, last, segmentsByDate }: HeatmapProps) {
 
   const cursor = useChartCursor(allDays.length, HEATMAP_STEPS);
   const activeDay = cursor.active === null ? undefined : allDays[cursor.active];
-  const [position, setPosition] = useState<CellPosition | null>(null);
+  const activeCell = () =>
+    activeDay === undefined ? null : rootRef.current?.querySelector(`[data-day="${activeDay}"]`);
 
-  // Tooltip placement needs the rendered cell's box, so measure before paint.
+  // Keep the keyboard-selected day in view; a tapped or hovered one already is.
   useLayoutEffect(() => {
-    const root = rootRef.current;
-    const cell =
-      activeDay === undefined
-        ? null
-        : (root?.querySelector<SVGRectElement>(`[data-day="${activeDay}"]`) ?? null);
-    if (root === null || cell === null) {
-      setPosition(null);
-      return;
+    if (cursor.surfaceProps.ref.current?.matches(":focus-visible") === true) {
+      activeCell()?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
-
-    if (document.activeElement === svgRef.current) {
-      cell.scrollIntoView({ block: "nearest", inline: "nearest" });
-    }
-    const rootRect = root.getBoundingClientRect();
-    const cellRect = cell.getBoundingClientRect();
-    setPosition({
-      left: cellRect.left - rootRect.left + cellRect.width / 2,
-      top: cellRect.top - rootRect.top,
-    });
   }, [activeDay]);
 
   const intensity = (value: number): number => {
@@ -135,14 +113,13 @@ function Heatmap({ byDate, first, focus, last, segmentsByDate }: HeatmapProps) {
   const activeValue = activeDay === undefined ? 0 : (byDate.get(activeDay) ?? 0);
 
   return (
-    <div className="relative" ref={rootRef}>
+    <div className="relative" data-chart-frame="" ref={rootRef}>
       <div className="overflow-x-auto" ref={scrollerRef}>
         <svg
           aria-label={`Daily spend heatmap from ${formatDay(first)} to ${formatDay(last)}`}
           className={cn("block h-auto w-full select-none", CHART_FOCUS_CLASS_NAME)}
           height={height}
           preserveAspectRatio="xMinYMin meet"
-          ref={svgRef}
           role="img"
           style={{ minWidth: width }}
           viewBox={`0 0 ${width} ${height}`}
@@ -196,13 +173,13 @@ function Heatmap({ byDate, first, focus, last, segmentsByDate }: HeatmapProps) {
         </svg>
       </div>
       <ChartLiveRegion>
-        {activeDay !== undefined && position !== null ? (
+        {activeDay !== undefined ? (
           <ChartTooltip
-            className="w-56 -translate-x-1/2 -translate-y-full"
+            anchor={activeCell}
+            offset={4}
             rows={segmentTooltipRows(segmentsByDate.get(activeDay) ?? [], (segment) =>
               formatUsd(segment.value),
             )}
-            style={{ left: `${position.left}px`, top: `${position.top - 4}px` }}
             subtitle={activeValue > 0 ? `${formatUsd(activeValue)} spent` : "No spend"}
             title={formatDay(activeDay)}
           />
