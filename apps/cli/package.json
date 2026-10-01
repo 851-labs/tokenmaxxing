@@ -1,6 +1,6 @@
 {
   "name": "@851-labs/tokenmaxxing",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "CLI for tokenmaxxing — sync your LLM token usage to the leaderboard.",
   "keywords": [
     "ccusage",

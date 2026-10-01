@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.2 - 2026-10-01
+
 ### Fixed
 
 - Windows without Bun: syncs failed with "unexpected CLI failure" in 0.7.0 and 0.7.1, and scheduled
