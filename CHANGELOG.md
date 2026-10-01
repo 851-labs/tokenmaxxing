@@ -35,6 +35,12 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   name before upload, so your home directory no longer leaves the device. A Hugging Face cache
   path keeps its file name, or `<org>/<repo>` when it names only the snapshot. Provider ids with
   slashes (`openai/gpt-5`, `~anthropic/…`) are unchanged.
+- Scheduled syncs now keep the custom data directories of OpenCode (`OPENCODE_DATA_DIR`), Gemini
+  CLI (`GEMINI_DATA_DIR`), GitHub Copilot CLI (`COPILOT_HOME`, `COPILOT_OTEL_FILE_EXPORTER_PATH`)
+  and Pi (`PI_AGENT_DIR`), and Claude Code's projects under `$XDG_CONFIG_HOME/claude` when
+  `CLAUDE_CONFIG_DIR` is unset. The service didn't capture these variables, so a foreground `sync`
+  honoured them while scheduled runs read the default locations. `service doctor` now warns when
+  they drift; run `tokenmaxxing service repair` once if you set any of them.
 
 ### Server
 
