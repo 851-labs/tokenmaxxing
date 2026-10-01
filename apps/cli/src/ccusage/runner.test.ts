@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Cause, Effect, Option } from "effect";
+import { Cause, Effect, Fiber, Option } from "effect";
+import { TestClock } from "effect/testing";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -473,19 +474,46 @@ describe.skipIf(process.platform === "win32")("the real ccusage command runner",
   // S3c/S3d: npx (and a bun that does not exec in place) runs ccusage's node
   // as a child. A timeout used to kill only the direct child; the grandchild
   // kept the stdio pipes open and the CLI never exited.
-  it("kills what ccusage started when it times out", async () => {
-    const dir = await fakeBun(`sleep 30 &\necho $! > "$(dirname "$0")/grandchild.pid"\nwait`);
+  // The timeout runs on a TestClock and fires only once the grandchild has
+  // written its pid (renamed into place, so never half-written): on a loaded
+  // machine a real 500 ms timeout could kill the fake bun before it started
+  // anything, and there was no pid file to read.
+  it("kills what ccusage started when it times out", { timeout: 30_000 }, async () => {
+    const dir = await fakeBun(
+      `sleep 30 &\necho $! > "$(dirname "$0")/grandchild.pid.tmp"\nmv "$(dirname "$0")/grandchild.pid.tmp" "$(dirname "$0")/grandchild.pid"\nwait`,
+    );
     try {
-      const error = await ccusageErrorFor(
-        execCcusage(["codex", "daily"], "codex", "daily", {
-          env: { PATH: `${dir}:/usr/bin:/bin` },
-          timeoutMs: 500,
-        }),
+      const { error, grandchild } = await Effect.runPromise(
+        Effect.gen(function* () {
+          const run = yield* Effect.forkChild(
+            Effect.flip(
+              execCcusage(["codex", "daily"], "codex", "daily", {
+                env: { PATH: `${dir}:/usr/bin:/bin` },
+                timeoutMs: 500,
+              }),
+            ),
+          );
+          const grandchild = yield* Effect.promise(() =>
+            vi.waitFor(
+              () => {
+                const pid = Number(readFileSync(join(dir, "grandchild.pid"), "utf8"));
+                expect(pid).toBeGreaterThan(0);
+                return pid;
+              },
+              { interval: 20, timeout: 20_000 },
+            ),
+          );
+          expect(isAlive(grandchild)).toBe(true);
+          yield* TestClock.adjust("500 millis");
+          return { error: yield* Fiber.join(run), grandchild };
+        }).pipe(Effect.provide(TestClock.layer())),
       );
 
       expect(error.code).toBe("command_timed_out");
-      const grandchild = Number(readFileSync(join(dir, "grandchild.pid"), "utf8"));
-      await vi.waitFor(() => expect(isAlive(grandchild)).toBe(false), { timeout: 3_000 });
+      await vi.waitFor(() => expect(isAlive(grandchild)).toBe(false), {
+        interval: 20,
+        timeout: 20_000,
+      });
     } finally {
       await rm(dir, { force: true, recursive: true });
     }
