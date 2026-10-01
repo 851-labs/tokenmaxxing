@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
@@ -109,6 +109,7 @@ import {
   serviceRunFailureState,
   serviceAuthFailureError,
   serviceRunLogLine,
+  redactHomePaths,
   serviceRunSuccessState,
   ServiceConfigDirUnsupportedError,
   ServiceRepairError,
@@ -3408,7 +3409,9 @@ describe("service run state", () => {
     );
 
     expect(state).toMatchObject({
-      lastError: "no usage synced; could not run ccusage: neither bun nor npx is on PATH",
+      lastError: `no usage synced; could not run ccusage for codex: neither bun nor ${
+        process.platform === "win32" ? "npx.cmd" : "npx"
+      } is on PATH`,
       lastRows: 0,
       lastSuccessAt: "2026-06-16T09:00:00.000Z",
       lastSyncStatus: "error",
@@ -3490,6 +3493,68 @@ describe("service run state", () => {
         "claude and 2 agents without logs: ccusage command failed: npm error 401 Unauthorized - GET https://registry.corp/ccusage",
         "codex: ccusage command timed out",
       ].join("\n"),
+    );
+  });
+
+  // The check-in's error leaves the machine: a profile path names the user.
+  it("redacts home directories from a failed run's error", () => {
+    const state = serviceRunSuccessState(
+      { version: 1 },
+      {
+        arch: "x64",
+        attemptAt: "2026-10-01T10:00:00.000Z",
+        autoUpdate: autoUpdateReport(),
+        durationMs: 1234,
+        result: {
+          dryRun: false,
+          rows: 0,
+          sourceResults: [
+            {
+              issue: {
+                code: "command_failed",
+                detail: `npm error A complete log of this run can be found in: ${homedir()}/.npm/_logs/debug-0.log`,
+                message: "ccusage command failed",
+                report: "daily",
+              },
+              source: "claude",
+              status: "failed",
+              summary: null,
+            },
+          ],
+          sources: {},
+          status: "error",
+        },
+        successAt: "2026-10-01T10:00:01.000Z",
+        version: "0.7.2",
+      },
+    );
+
+    expect(state.lastError).toBe(
+      [
+        "no usage synced; ccusage failed for claude",
+        "claude: ccusage command failed: npm error A complete log of this run can be found in: <home>/.npm/_logs/debug-0.log",
+      ].join("\n"),
+    );
+  });
+
+  it.each([
+    [
+      "npm error path C:\\Users\\jdoe\\AppData\\Local\\npm-cache",
+      "npm error path <home>\\AppData\\Local\\npm-cache",
+    ],
+    ["at c:/users/jdoe/AppData/x.js:1", "at <home>/AppData/x.js:1"],
+    ['{"path":"C:\\\\Users\\\\jdoe\\\\AppData"}', '{"path":"<home>\\\\AppData"}'],
+    ["open C:\\Users\\Jo Doe\\AppData\\npmrc", "open <home>\\AppData\\npmrc"],
+    ["C:\\Users\\Zoë O'Neil (Work)\\.npmrc", "<home>\\.npmrc"],
+    ["EACCES: /Users/jdoe/.npm, '/home/jdoe'", "EACCES: <home>/.npm, '<home>'"],
+    ["no profile path here: /usr/local/bin/npx", "no profile path here: /usr/local/bin/npx"],
+  ])("redacts the profile directory in %s", (text, redacted) => {
+    expect(redactHomePaths(text, "/nonexistent-home")).toBe(redacted);
+  });
+
+  it("redacts the home directory wherever it lives", () => {
+    expect(redactHomePaths("cannot read D:\\Profiles\\jdoe\\.npmrc", "D:\\Profiles\\jdoe")).toBe(
+      "cannot read <home>\\.npmrc",
     );
   });
 

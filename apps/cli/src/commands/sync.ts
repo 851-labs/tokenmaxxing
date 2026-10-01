@@ -135,6 +135,8 @@ interface SyncSourcesFailure {
   /** Sources the run's limits left for the next run (`SyncSourceLimits`). */
   readonly deferred?: number | undefined;
   readonly failures: readonly SyncSourceFailure[];
+  /** Names the missing npx (`npx.cmd` on Windows); defaults to this machine's. */
+  readonly platform?: NodeJS.Platform | undefined;
   /**
    * Failed sources with no logs on this machine (`sourcesWithoutLogs`). A
    * broken ccusage fails every agent, so the message counts these instead of
@@ -152,6 +154,7 @@ interface SyncSourcesFailure {
 function describeSyncSourcesFailure({
   deferred = 0,
   failures,
+  platform = process.platform,
   withoutLogs: without,
 }: SyncSourcesFailure): {
   hint: string;
@@ -175,11 +178,14 @@ function describeSyncSourcesFailure({
     };
   }
 
+  // The runner reports command_not_found only once the `npx` fallback is
+  // missing too.
+  const missing = `neither bun nor ${platform === "win32" ? "npx.cmd" : "npx"} is on PATH`;
   // Neither `bun x` nor the `npx` fallback exists: nothing else can help.
   if (failures.every((failure) => failure.issue.code === "command_not_found")) {
     return {
       hint: "install Bun (https://bun.sh) or Node.js (https://nodejs.org), then run tokenmaxxing sync again",
-      lines: ["no usage synced; could not run ccusage: neither bun nor npx is on PATH"],
+      lines: [`no usage synced; could not run ccusage for ${named(sources)}: ${missing}`],
     };
   }
 
@@ -187,9 +193,11 @@ function describeSyncSourcesFailure({
   const reasons = new Map<string, UsageSource[]>();
   for (const { issue, source } of failures) {
     const reason =
-      issue.detail === undefined
-        ? issue.message
-        : `${issue.message}: ${issue.detail.split("\n").at(-1)}`;
+      issue.code === "command_not_found"
+        ? `${issue.message} (${missing})`
+        : issue.detail === undefined
+          ? issue.message
+          : `${issue.message}: ${issue.detail.split("\n").at(-1)}`;
     reasons.set(reason, [...(reasons.get(reason) ?? []), source]);
   }
   return {

@@ -27,6 +27,7 @@ import { makeStubApiClient, type StubResponse } from "../testing/stub-api-client
 import { browserLoginEffect, NonInteractiveLoginError } from "./login";
 import { NotLoggedInError } from "./whoami";
 import {
+  describeSyncSourcesFailure,
   formatSyncUsd,
   InvalidSinceError,
   openProfileIfAvailable,
@@ -1200,16 +1201,35 @@ describe("SyncSourcesFailedError", () => {
   });
 
   it("names the missing runner when neither bun nor npx exists", () => {
-    expect(
-      new SyncSourcesFailedError({
-        failures: [
-          { issue: issue("command_not_found", "ccusage command not found"), source: "claude" },
-          { issue: issue("command_not_found", "ccusage command not found"), source: "codex" },
-        ],
-      }).message,
-    ).toBe(
-      "error: no usage synced; could not run ccusage: neither bun nor npx is on PATH\nhint: install Bun (https://bun.sh) or Node.js (https://nodejs.org), then run tokenmaxxing sync again",
+    const notFound = issue("command_not_found", "ccusage command not found");
+    const failures = [
+      { issue: notFound, source: "claude" as const },
+      { issue: notFound, source: "codex" as const },
+    ];
+
+    expect(new SyncSourcesFailedError({ failures, platform: "linux" }).message).toBe(
+      "error: no usage synced; could not run ccusage for claude, codex: neither bun nor npx is on PATH\nhint: install Bun (https://bun.sh) or Node.js (https://nodejs.org), then run tokenmaxxing sync again",
     );
+    // Windows runs npm's npx.cmd shim.
+    expect(
+      describeSyncSourcesFailure({ failures, platform: "win32", withoutLogs: ["codex"] }).lines,
+    ).toEqual([
+      "no usage synced; could not run ccusage for claude and 1 agent without logs: neither bun nor npx.cmd is on PATH",
+    ]);
+    // Next to other reasons, it still says what was missing.
+    expect(
+      describeSyncSourcesFailure({
+        failures: [
+          { issue: notFound, source: "claude" },
+          { issue: issue("command_failed", "ccusage command failed"), source: "codex" },
+        ],
+        platform: "win32",
+      }).lines,
+    ).toEqual([
+      "no usage synced; ccusage failed for claude, codex",
+      "claude: ccusage command not found (neither bun nor npx.cmd is on PATH)",
+      "codex: ccusage command failed",
+    ]);
   });
 
   it("lists each distinct reason with the sources it hit", () => {
