@@ -12,6 +12,7 @@ import {
   dailyCcusageCommand,
   execCcusage,
   runCcusageDailyReport,
+  runCcusageSessionReport,
   sessionCcusageCommand,
 } from "./runner";
 import type { CcusageSource } from "./sources";
@@ -19,6 +20,7 @@ import type { CcusageSource } from "./sources";
 const codex: CcusageSource = { source: "codex", subcommand: "codex" };
 const hermes: CcusageSource = { source: "hermes", subcommand: "hermes" };
 const pi: CcusageSource = { source: "pi", subcommand: "pi" };
+const omp: CcusageSource = { source: "omp", subcommand: "pi" };
 
 function missingBun(source: string) {
   return new CcusageRunError({
@@ -84,6 +86,21 @@ describe("ccusage commands", () => {
       "--mode",
       "calculate",
     ]);
+  });
+
+  it("records Oh My Pi's pi commands without its local session paths", () => {
+    expect(dailyCcusageCommand(omp, { since: "2026-09-10" })).toEqual([
+      "ccusage@^20.0.22",
+      "pi",
+      "daily",
+      "--json",
+      "--breakdown",
+      "--mode",
+      "calculate",
+      "--since",
+      "20260910",
+    ]);
+    expect(sessionCcusageCommand(omp)).toEqual(sessionCcusageCommand(pi));
   });
 
   it("builds focused Hermes daily and session commands", () => {
@@ -246,6 +263,66 @@ describe("execCcusage", () => {
     expect(error.code).toBe("command_timed_out");
     expect(error.report).toBe("daily");
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("points Oh My Pi's pi run at OMP's sessions on both the Bun and npm paths", async () => {
+    const home = await mkdtemp(join(tmpdir(), "tokenmaxxing-runner-omp-"));
+    try {
+      await mkdir(join(home, ".omp", "profiles", "work"), { recursive: true });
+      const realHome = await realpath(home);
+      const dirs = [
+        join(realHome, ".omp", "agent", "sessions"),
+        join(realHome, ".omp", "profiles", "work", "agent", "sessions"),
+      ].join(",");
+      const env = { HOME: home, PATH: "/usr/bin", PI_AGENT_DIR: "/data/pi-sessions" };
+      const run = vi
+        .fn()
+        .mockReturnValueOnce(Effect.fail(missingBun("omp")))
+        .mockReturnValueOnce(Effect.succeed('{"daily":[]}'));
+
+      await expect(
+        Effect.runPromise(
+          runCcusageDailyReport(omp, {
+            exec: { env, platform: "linux", run },
+            since: "2026-09-10",
+          }),
+        ),
+      ).resolves.toEqual({ daily: [] });
+      const args = [
+        "pi",
+        "daily",
+        "--json",
+        "--breakdown",
+        "--mode",
+        "calculate",
+        "--since",
+        "20260910",
+        "--pi-path",
+        dirs,
+      ];
+      const ompEnv = { ...env, PI_AGENT_DIR: dirs };
+      expect(run).toHaveBeenNthCalledWith(1, "bun", ["x", "ccusage@^20.0.22", ...args], ompEnv, {
+        windowsVerbatimArguments: false,
+      });
+      expect(run).toHaveBeenNthCalledWith(2, "npx", ["-y", "ccusage@^20.0.22", ...args], ompEnv, {
+        windowsVerbatimArguments: false,
+      });
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
+  it("reports no Oh My Pi usage instead of reading Pi's when no OMP dir can be passed", async () => {
+    const run = vi.fn(() => Effect.succeed('{"daily":[{"date":"2026-09-10"}]}'));
+    const exec = { env: { HOME: "/home/Smith, J" }, platform: "linux" as const, run };
+
+    await expect(Effect.runPromise(runCcusageDailyReport(omp, { exec }))).resolves.toEqual({
+      daily: [],
+    });
+    await expect(Effect.runPromise(runCcusageSessionReport(omp, { exec }))).resolves.toEqual({
+      sessions: [],
+    });
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("runs Hermes with discovered profile roots on both the Bun and npm paths", async () => {

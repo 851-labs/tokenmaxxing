@@ -5904,6 +5904,10 @@ const SERVICE_SOURCE_ROOT_ENV_KEYS = [
   "DROID_SESSIONS_DIR",
   "CODEBUFF_DATA_DIR",
   "OPENCLAW_DIR",
+  // Oh My Pi's config root name (default `.omp`); `XDG_DATA_HOME` can hold
+  // OMP's and OpenCode's data instead.
+  "PI_CONFIG_DIR",
+  "XDG_DATA_HOME",
 ] as const;
 
 // Environment the scheduled wrapper re-exports; PATH is always set (made

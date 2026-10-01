@@ -16,6 +16,7 @@ const SUPPORTED_AGENTS = [
   { label: "GitHub Copilot CLI", source: "copilot" },
   { label: "Hermes Agent", source: "hermes" },
   { label: "Pi", source: "pi" },
+  { label: "Oh My Pi", source: "omp" },
   { label: "Grok Build CLI", source: "grok" },
   { label: "Antigravity", source: "antigravity" },
   { label: "ZCode", source: "zcode" },

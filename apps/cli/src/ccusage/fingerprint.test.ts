@@ -191,6 +191,56 @@ describe("fingerprintSource", () => {
   });
 });
 
+describe("fingerprintSource for Pi and Oh My Pi", () => {
+  const piSession = () => join(home, ".pi", "agent", "sessions", "--work--", "a.jsonl");
+  const ompSession = () => join(home, ".omp", "agent", "sessions", "-work-", "b.jsonl");
+  const ompProfileSession = () =>
+    join(home, ".omp", "profiles", "work", "agent", "sessions", "-api-", "c.jsonl");
+
+  beforeEach(async () => {
+    await write(piSession());
+    await write(ompSession());
+    await write(ompProfileSession());
+  });
+
+  it("keeps each source to its own sessions", async () => {
+    const pi = await digest("pi");
+    const omp = await digest("omp");
+    expect(pi).toMatchObject({ files: 1 });
+    expect(omp).toMatchObject({ files: 2 });
+
+    await appendFile(piSession(), "{}\n");
+    expect((await digest("omp"))?.digest).toBe(omp?.digest);
+    expect((await digest("pi"))?.digest).not.toBe(pi?.digest);
+
+    await appendFile(ompProfileSession(), "{}\n");
+    expect((await digest("omp"))?.digest).not.toBe(omp?.digest);
+  });
+
+  it("ignores a PI_AGENT_DIR pointed at OMP for both sources", async () => {
+    const env = { PI_AGENT_DIR: join(home, ".omp", "agent", "sessions") };
+
+    expect(await digest("pi", env)).toEqual(await digest("pi"));
+    expect(await digest("omp", env)).toEqual(await digest("omp"));
+  });
+
+  it("follows PI_CONFIG_DIR to a renamed OMP root", async () => {
+    await write(join(home, ".omp-dev", "agent", "sessions", "-x-", "d.jsonl"));
+
+    expect(await digest("omp", { PI_CONFIG_DIR: ".omp-dev" })).toMatchObject({ files: 1 });
+  });
+
+  it("still fingerprints OMP when a ccusage config sets a Pi path, which --pi-path overrides", async () => {
+    await write(
+      join(root, ".ccusage", "ccusage.json"),
+      JSON.stringify({ pi: { defaults: { piPath: join(home, ".pi", "agent", "sessions") } } }),
+    );
+
+    expect(await digest("pi")).toBeNull();
+    expect(await digest("omp")).not.toBeNull();
+  });
+});
+
 describe("fingerprintSource for the newer ccusage sources", () => {
   const cases = [
     {

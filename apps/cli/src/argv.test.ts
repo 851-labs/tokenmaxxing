@@ -383,9 +383,9 @@ describe.skipIf(process.platform === "win32").concurrent("CLI argv parsing", () 
 
     expect(run.status).toBe(1);
     expect(run.stdout).toMatch(/^claude +failed/m);
-    // Only claude has logs; the other 17 agents failed too but are counted.
+    // Only claude has logs; the other 18 agents failed too but are counted.
     expect(run.stderr).toContain(
-      "error: no usage synced; ccusage failed for claude and 17 agents without logs\nclaude and 17 agents without logs: ccusage command failed: fake ccusage failure",
+      "error: no usage synced; ccusage failed for claude and 18 agents without logs\nclaude and 18 agents without logs: ccusage command failed: fake ccusage failure",
     );
   });
 

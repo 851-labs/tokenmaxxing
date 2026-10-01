@@ -4,7 +4,13 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { type HermesDiscoveryFs, ccusageSourceEnv, discoverHermesHomes } from "./source-env";
+import {
+  type SourceDiscoveryFs,
+  ccusageSourceArgs,
+  ccusageSourceEnv,
+  discoverHermesHomes,
+  ompSessionDirs,
+} from "./source-env";
 
 /** In-memory Windows filesystem: `files` and `dirs` are canonical paths. */
 function fakeWindowsFs(options: {
@@ -12,7 +18,7 @@ function fakeWindowsFs(options: {
   dirs: Record<string, readonly string[]>;
   files: readonly string[];
   realpath?: (path: string) => string;
-}): HermesDiscoveryFs {
+}): SourceDiscoveryFs {
   const lower = (path: string) => path.toLowerCase();
   const exists = (path: string) =>
     options.files.some((file) => lower(file) === lower(path)) ||
@@ -249,7 +255,7 @@ describe("discoverHermesHomes (Windows)", () => {
   });
 
   it("degrades to the unchanged environment when discovery throws", async () => {
-    const fs: HermesDiscoveryFs = {
+    const fs: SourceDiscoveryFs = {
       access: async () => undefined,
       readdir: async () => {
         throw new Error("boom");
@@ -282,5 +288,175 @@ describe("ccusageSourceEnv", () => {
       HERMES_HOME: "C:\\Users\\alex\\.hermes\\profiles\\work",
     });
     await expect(ccusageSourceEnv("codex", env, "win32", fs)).resolves.toBe(env);
+  });
+});
+
+describe("ompSessionDirs (POSIX)", () => {
+  let home: string;
+
+  beforeEach(async () => {
+    // Canonical, so expectations match the realpaths discovery returns (macOS /var → /private/var).
+    home = await realpath(await mkdtemp(join(tmpdir(), "tokenmaxxing-omp-")));
+  });
+
+  afterEach(async () => {
+    await rm(home, { force: true, recursive: true });
+  });
+
+  const sessions = (...segments: string[]) => join(home, ...segments, "sessions");
+
+  it("lists the default sessions dir even before OMP has written any", async () => {
+    await expect(ompSessionDirs({ HOME: home }, "linux")).resolves.toEqual([
+      sessions(".omp", "agent"),
+    ]);
+  });
+
+  it("adds every named profile in code-unit order and skips non-profile entries", async () => {
+    for (const profile of ["work", "a-team", "Upper", ".hidden", "trailing."]) {
+      await mkdir(join(home, ".omp", "profiles", profile), { recursive: true });
+    }
+
+    await expect(ompSessionDirs({ HOME: home }, "linux")).resolves.toEqual([
+      sessions(".omp", "agent"),
+      sessions(".omp", "profiles", "a-team", "agent"),
+      sessions(".omp", "profiles", "work", "agent"),
+    ]);
+  });
+
+  it("follows PI_CONFIG_DIR but never PI_CODING_AGENT_DIR, which Pi shares", async () => {
+    await expect(
+      ompSessionDirs(
+        { HOME: home, PI_CODING_AGENT_DIR: join(home, ".pi", "agent"), PI_CONFIG_DIR: ".omp-dev" },
+        "linux",
+      ),
+    ).resolves.toEqual([sessions(".omp-dev", "agent")]);
+  });
+
+  it("moves to $XDG_DATA_HOME/omp once it exists, per profile", async () => {
+    const xdg = join(home, "xdg");
+    const env = { HOME: home, XDG_DATA_HOME: xdg };
+    await mkdir(join(home, ".omp", "profiles", "work"), { recursive: true });
+    await mkdir(join(home, ".omp", "profiles", "home"), { recursive: true });
+    await expect(ompSessionDirs(env, "linux")).resolves.toEqual([
+      sessions(".omp", "agent"),
+      sessions(".omp", "profiles", "home", "agent"),
+      sessions(".omp", "profiles", "work", "agent"),
+    ]);
+
+    await mkdir(join(xdg, "omp", "profiles", "work"), { recursive: true });
+    await mkdir(join(xdg, "omp", "profiles", "xdg-only"), { recursive: true });
+    await expect(ompSessionDirs(env, "darwin")).resolves.toEqual([
+      join(xdg, "omp", "sessions"),
+      sessions(".omp", "profiles", "home", "agent"),
+      join(xdg, "omp", "profiles", "work", "sessions"),
+      join(xdg, "omp", "profiles", "xdg-only", "sessions"),
+    ]);
+    // A relative XDG_DATA_HOME means nothing to a process in another directory.
+    await expect(ompSessionDirs({ ...env, XDG_DATA_HOME: "xdg" }, "linux")).resolves.toEqual([
+      sessions(".omp", "agent"),
+      sessions(".omp", "profiles", "home", "agent"),
+      sessions(".omp", "profiles", "work", "agent"),
+    ]);
+  });
+
+  it("dedupes a profile symlinked to the default root", async () => {
+    await mkdir(join(home, ".omp", "agent", "sessions"), { recursive: true });
+    await mkdir(join(home, ".omp", "profiles", "real", "agent"), { recursive: true });
+    await symlink(join(home, ".omp"), join(home, ".omp", "profiles", "alias"));
+    await symlink(
+      join(home, ".omp", "profiles", "real"),
+      join(home, ".omp", "profiles", "real-alias"),
+    );
+
+    await expect(ompSessionDirs({ HOME: home }, "linux")).resolves.toEqual([
+      sessions(".omp", "agent"),
+      sessions(".omp", "profiles", "real", "agent"),
+    ]);
+  });
+
+  it("skips dirs ccusage would split on commas", async () => {
+    await mkdir(join(home, ".omp", "profiles", "work"), { recursive: true });
+
+    await expect(ompSessionDirs({ HOME: join(home, "Smith, J") }, "linux")).resolves.toEqual([]);
+  });
+});
+
+describe("ompSessionDirs (Windows)", () => {
+  it("uses USERPROFILE, ignores XDG, and skips paths cmd.exe would expand", async () => {
+    const fs = fakeWindowsFs({
+      dirs: {
+        "C:\\Users\\alex\\.omp\\profiles": ["work", "100%"],
+        "C:\\Users\\alex\\.omp\\profiles\\work": [],
+        "D:\\xdg\\omp": [],
+      },
+      files: [],
+    });
+
+    await expect(
+      ompSessionDirs({ USERPROFILE: "C:\\Users\\alex", XDG_DATA_HOME: "D:\\xdg" }, "win32", fs),
+    ).resolves.toEqual([
+      "C:\\Users\\alex\\.omp\\agent\\sessions",
+      "C:\\Users\\alex\\.omp\\profiles\\work\\agent\\sessions",
+    ]);
+    await expect(ompSessionDirs({ USERPROFILE: "C:\\Users\\100%" }, "win32", fs)).resolves.toEqual(
+      [],
+    );
+  });
+});
+
+describe("Pi and Oh My Pi environments", () => {
+  const fs = fakeWindowsFs({
+    dirs: {
+      "C:\\Users\\alex\\.omp\\agent\\sessions": [],
+      "C:\\Users\\alex\\.omp\\profiles": ["work"],
+      "C:\\Users\\alex\\.omp\\profiles\\work": [],
+    },
+    files: [],
+  });
+  const ompDirs =
+    "C:\\Users\\alex\\.omp\\agent\\sessions,C:\\Users\\alex\\.omp\\profiles\\work\\agent\\sessions";
+  const base = { CODEX_HOME: "D:\\Codex", USERPROFILE: "C:\\Users\\alex" };
+
+  it("points OMP at its own sessions, never the user's PI_AGENT_DIR", async () => {
+    const env = await ccusageSourceEnv(
+      "omp",
+      { ...base, PI_AGENT_DIR: "D:\\pi-sessions" },
+      "win32",
+      fs,
+    );
+
+    expect(env).toEqual({ ...base, PI_AGENT_DIR: ompDirs });
+    expect(ccusageSourceArgs("omp", env)).toEqual(["--pi-path", ompDirs]);
+  });
+
+  it("does not run OMP when no dir can be passed, rather than fall back to Pi's", async () => {
+    const env = await ccusageSourceEnv(
+      "omp",
+      { PI_AGENT_DIR: "D:\\pi-sessions", USERPROFILE: "C:\\Users\\100%" },
+      "win32",
+      fs,
+    );
+
+    expect(env).toEqual({ USERPROFILE: "C:\\Users\\100%" });
+    expect(ccusageSourceArgs("omp", env)).toBeNull();
+  });
+
+  it("drops PI_AGENT_DIR entries that overlap OMP's sessions from Pi", async () => {
+    const piEnv = (PI_AGENT_DIR: string) =>
+      ccusageSourceEnv("pi", { ...base, PI_AGENT_DIR }, "win32", fs);
+
+    await expect(piEnv("c:\\users\\ALEX\\.omp\\agent\\sessions")).resolves.toEqual(base);
+    await expect(
+      piEnv("D:\\pi-sessions, C:\\Users\\alex\\.omp\\profiles\\work\\agent\\sessions\\proj"),
+    ).resolves.toEqual({ ...base, PI_AGENT_DIR: "D:\\pi-sessions" });
+    await expect(piEnv("C:\\Users\\alex")).resolves.toEqual(base);
+    const untouched = { ...base, PI_AGENT_DIR: "D:\\pi-sessions,C:\\Users\\alex\\.omp-notes" };
+    await expect(ccusageSourceEnv("pi", untouched, "win32", fs)).resolves.toBe(untouched);
+    await expect(ccusageSourceEnv("pi", base, "win32", fs)).resolves.toBe(base);
+  });
+
+  it("adds no arguments for other sources", () => {
+    expect(ccusageSourceArgs("pi", { PI_AGENT_DIR: "D:\\pi-sessions" })).toEqual([]);
+    expect(ccusageSourceArgs("codex", base)).toEqual([]);
   });
 });

@@ -595,7 +595,9 @@ describe("capturedServiceEnv agent data directories", () => {
       KILO_DATA_DIR: "/data/kilo",
       KIMI_DATA_DIR: "/data/kimi",
       OPENCLAW_DIR: "/data/openclaw",
+      PI_CONFIG_DIR: ".omp-work",
       QWEN_DATA_DIR: "/data/qwen",
+      XDG_DATA_HOME: "/data/xdg",
       ZCODE_HOME: "/data/zcode",
     };
 

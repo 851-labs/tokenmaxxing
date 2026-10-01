@@ -17,6 +17,15 @@ describe("normalizeCcusageModelName", () => {
       "gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
     ],
     ["hermes", "/Users/alice/maple-mlx/maple-2bit-mlx", "maple-2bit-mlx"],
+    ["omp", "[pi] claude-sonnet-4-6", "claude-sonnet-4-6"],
+    ["omp", "[omp] gpt-5.5", "gpt-5.5"],
+    ["omp", "[openclaw] gpt-5.5", "[openclaw] gpt-5.5"],
+    ["pi", "[omp] gpt-5.5", "[omp] gpt-5.5"],
+    ["constructor", "[constructor] gpt-5.5", "gpt-5.5"],
+    ["omp", "[pi] /home/alice/models/qwen3-coder-30b-Q4_K_M.gguf", "qwen3-coder-30b-Q4_K_M.gguf"],
+    ["omp", "[pi] ~/models/qwen3-coder-30b-Q4_K_M.gguf", "qwen3-coder-30b-Q4_K_M.gguf"],
+    ["omp", "[omp] C:\\Users\\alice\\models\\phi-5.gguf", "phi-5.gguf"],
+    ["omp", "[pi] openai/gpt-5.5", "openai/gpt-5.5"],
   ])("normalizes %s model %s as %s", (source, model, expected) => {
     expect(normalizeCcusageModelName(source, model)).toBe(expected);
   });

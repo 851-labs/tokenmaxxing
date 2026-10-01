@@ -14,10 +14,11 @@ import { ccusageSourceEnv } from "./source-env";
  *
  * The roots mirror where ccusage v20 looks (rust/adapters/<source>/src/paths.rs
  * upstream), including the env overrides it honors, resolved through the same
- * `ccusageSourceEnv` the runner hands ccusage (e.g. discovered Hermes profiles). A fingerprint covers
- * every matching file's path, size, and mtime. It deliberately does not look
- * at dates: any change (append, new file, deletion, archive move) produces a
- * new fingerprint, and a false "changed" only costs one extra ccusage run.
+ * `ccusageSourceEnv` the runner hands ccusage (e.g. discovered Hermes profiles,
+ * OMP's session dirs). A fingerprint covers every matching file's path, size,
+ * and mtime. It deliberately does not look at dates: any change (append, new
+ * file, deletion, archive move) produces a new fingerprint, and a false
+ * "changed" only costs one extra ccusage run.
  * When ccusage could read logs from somewhere this module cannot see (a
  * ccusage config file can point pi at other stores), the source has no
  * fingerprint and always runs.
@@ -49,7 +50,13 @@ async function sourceLogRoots(
   source: UsageSource,
   options: LogRootOptions = {},
 ): Promise<LogRoot[] | null> {
-  const env = await ccusageSourceEnv(source, options.env ?? process.env);
+  const baseEnv = options.env ?? process.env;
+  const homeKey = process.platform === "win32" ? "USERPROFILE" : "HOME";
+  // Discovery (Hermes profiles, OMP's dirs) looks under the same home.
+  const env = await ccusageSourceEnv(
+    source,
+    options.home === undefined ? baseEnv : { [homeKey]: options.home, ...baseEnv },
+  );
   const home = options.home ?? homedir();
   const configFiles = ccusageConfigFiles(env, home, options.cwd ?? process.cwd());
 
@@ -199,6 +206,13 @@ async function sourceLogRoots(
       return envPaths(env.PI_AGENT_DIR, [join(home, ".pi", "agent", "sessions")]).map((path) =>
         tree(path, ["jsonl"]),
       );
+    case "omp":
+      // `ccusageSourceEnv` resolved OMP's session dirs into PI_AGENT_DIR, which
+      // the runner also passes as `--pi-path`, so ccusage.json cannot move them.
+      return [
+        ...(splitPaths(env.PI_AGENT_DIR) ?? []).map((path) => tree(path, ["jsonl"])),
+        ...configFiles,
+      ];
   }
 }
 

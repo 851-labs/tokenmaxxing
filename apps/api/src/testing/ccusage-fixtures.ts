@@ -7,7 +7,9 @@ import type { UsageSource } from "@tokenmaxxing/api-contract";
  * Real `ccusage <source> daily --json --breakdown --mode calculate` output from
  * ccusage 20.0.24, one file per source under `usage/fixtures/ccusage/`. Grok is
  * trimmed from a real machine; the others ran against small synthetic data
- * directories written in each agent's on-disk format.
+ * directories written in each agent's on-disk format. Oh My Pi is
+ * `ccusage pi daily … --pi-path <OMP sessions>` from ccusage 20.0.26, over
+ * OMP-format sessions (title slot, `model_usage` side calls, a named profile).
  */
 
 interface CcusageFixtureBreakdown {
@@ -31,6 +33,7 @@ interface CcusageFixtureReport {
 }
 
 const CCUSAGE_FIXTURE_SOURCES = [
+  "omp",
   "grok",
   "antigravity",
   "zcode",
@@ -52,8 +55,10 @@ function ccusageDailyFixture(source: CcusageFixtureSource): CcusageFixtureReport
   return JSON.parse(readFileSync(path, "utf8")) as CcusageFixtureReport;
 }
 
+/** The command the CLI records for a source: OMP runs the `pi` subcommand. */
 function ccusageDailyCommand(source: CcusageFixtureSource): string[] {
-  return ["ccusage@^20.0.22", source, "daily", "--json", "--breakdown", "--mode", "calculate"];
+  const subcommand = source === "omp" ? "pi" : source;
+  return ["ccusage@^20.0.22", subcommand, "daily", "--json", "--breakdown", "--mode", "calculate"];
 }
 
 export { CCUSAGE_FIXTURE_SOURCES, ccusageDailyCommand, ccusageDailyFixture };

@@ -1,13 +1,25 @@
 import { stripModelPath, type UsageDayInput } from "@tokenmaxxing/api-contract";
 
-/** Strips the agent's own `[source]` label, then any local filesystem path. */
+/**
+ * ccusage labels a source's models `[label] model` by its own adapter name.
+ * Oh My Pi is read through the `pi` adapter, so its models arrive as `[pi] …`
+ * (and a ccusage named Pi store would label them `[omp] …`).
+ */
+const CCUSAGE_MODEL_LABELS = new Map<string, readonly string[]>([["omp", ["omp", "pi"]]]);
+
+/**
+ * Strips the agent's own `[source]` label, then any local filesystem path: the
+ * label first, since a path behind it does not start like one.
+ */
 function normalizeCcusageModelName(source: string, model: string): string {
   return stripModelPath(stripSourcePrefix(source, model));
 }
 
 function stripSourcePrefix(source: string, model: string): string {
   const prefix = /^\[([^\]]+)\]/.exec(model);
-  if (prefix?.[1]?.toLowerCase() !== source.toLowerCase()) {
+  const sourceKey = source.toLowerCase();
+  const labels = CCUSAGE_MODEL_LABELS.get(sourceKey) ?? [sourceKey];
+  if (prefix?.[1] === undefined || !labels.includes(prefix[1].toLowerCase())) {
     return model;
   }
 
