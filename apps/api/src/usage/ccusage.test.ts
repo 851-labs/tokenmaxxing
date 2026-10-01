@@ -168,6 +168,78 @@ describe("parseRawUsageReports", () => {
     expect(JSON.stringify(result.persistableReports)).not.toContain("secret-client");
   });
 
+  it("strips local model paths from rows and persisted reports", async () => {
+    const result = await Effect.runPromise(
+      parseRawUsageReports(
+        [
+          {
+            command: ["ccusage@^20", "pi", "daily", "--json"],
+            payload: {
+              daily: [
+                {
+                  date: "2026-09-20",
+                  modelBreakdowns: [
+                    {
+                      cost: 0,
+                      inputTokens: 10,
+                      modelName: "/home/alice/Downloads/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
+                    },
+                    { cost: 1, inputTokens: 20, modelName: "openai/gpt-5" },
+                  ],
+                  modelsUsed: [
+                    "/home/alice/Downloads/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
+                    "openai/gpt-5",
+                  ],
+                  totalCost: 1,
+                  totalTokens: 30,
+                },
+                {
+                  date: "2026-09-21",
+                  models: {
+                    "/Users/alice/maple-mlx/maple-2bit-mlx": { inputTokens: 5, totalTokens: 5 },
+                    "/Users/alice/old/maple-2bit-mlx": { outputTokens: 7, totalTokens: 7 },
+                  },
+                  totalTokens: 12,
+                },
+              ],
+            },
+            reportKind: "daily",
+            source: "pi",
+          },
+        ],
+        options,
+      ),
+    );
+
+    expect(result.rows.map(({ date, model, totalTokens }) => [date, model, totalTokens])).toEqual([
+      ["2026-09-20", "gemma-4-12B-it-qat-UD-Q4_K_XL.gguf", 10],
+      ["2026-09-20", "openai/gpt-5", 20],
+      ["2026-09-21", "maple-2bit-mlx", 12],
+    ]);
+    expect(result.persistableReports[0]?.payload).toEqual({
+      daily: [
+        {
+          date: "2026-09-20",
+          modelBreakdowns: [
+            { cost: 0, inputTokens: 10, modelName: "gemma-4-12B-it-qat-UD-Q4_K_XL.gguf" },
+            { cost: 1, inputTokens: 20, modelName: "openai/gpt-5" },
+          ],
+          modelsUsed: ["gemma-4-12B-it-qat-UD-Q4_K_XL.gguf", "openai/gpt-5"],
+          totalCost: 1,
+          totalTokens: 30,
+        },
+        {
+          date: "2026-09-21",
+          models: {
+            "maple-2bit-mlx": { inputTokens: 5, outputTokens: 7, totalTokens: 12 },
+          },
+          totalTokens: 12,
+        },
+      ],
+    });
+    expect(JSON.stringify(result.persistableReports)).not.toContain("alice");
+  });
+
   it("drops invalid daily reports instead of persisting unknown payloads", async () => {
     const result = await Effect.runPromise(
       parseRawUsageReports(

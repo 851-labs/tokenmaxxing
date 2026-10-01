@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 
+import { stripDayModelPaths } from "@tokenmaxxing/api-contract";
 import { Data, Effect } from "effect";
 
 import type { CcusageDailyReport, CcusageSessionReport } from "./schema";
@@ -102,6 +103,9 @@ function runCcusageDailyReport(
         ),
       ),
     ),
+    // Local model runners report the loaded file's path as the model, which
+    // can name the home directory; only the file name ever leaves the device.
+    Effect.map((report) => ({ ...report, daily: report.daily.map(stripDayModelPaths) })),
   );
 }
 

@@ -19,6 +19,17 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   through fnm's default alias in `%APPDATA%\fnm`. It used to drop it, and every scheduled sync then
   failed to run ccusage. This hits services moving off a 0.6.0 install, whose `PATH` named the
   link of the shell they were installed from.
+- Model names that are local file paths (llama.cpp, LM Studio, MLX and other local runners report
+  the file they loaded, e.g. `/home/<you>/models/gemma.gguf`) are reduced to the file or directory
+  name before upload, so your home directory no longer leaves the device. A Hugging Face cache
+  path keeps its file name, or `<org>/<repo>` when it names only the snapshot. Provider ids with
+  slashes (`openai/gpt-5`, `~anthropic/…`) are unchanged.
+
+### Server
+
+- The API strips the same paths at ingest, from both stored usage rows and stored raw reports, so
+  uploads from older CLIs never store or show them on profiles, stats or the leaderboard. Paths
+  that reduce to the same name on the same day are merged.
 
 ## 0.7.2 - 2026-10-01
 

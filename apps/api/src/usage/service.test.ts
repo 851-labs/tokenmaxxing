@@ -325,7 +325,7 @@ describe("UsageService.ingestRaw", () => {
           ) as unknown as string,
           payloadBytes: JSON.stringify(rawReports[0]!.payload).length,
           payloadJson: JSON.stringify(rawReports[0]!.payload),
-          parserVersion: "ccusage-v20-raw-5",
+          parserVersion: "ccusage-v20-raw-6",
           reportKind: "daily",
           source: "codex",
         }),

@@ -1,6 +1,11 @@
-import type { UsageDayInput } from "@tokenmaxxing/api-contract";
+import { stripModelPath, type UsageDayInput } from "@tokenmaxxing/api-contract";
 
+/** Strips the agent's own `[source]` label, then any local filesystem path. */
 function normalizeCcusageModelName(source: string, model: string): string {
+  return stripModelPath(stripSourcePrefix(source, model));
+}
+
+function stripSourcePrefix(source: string, model: string): string {
   const prefix = /^\[([^\]]+)\]/.exec(model);
   if (prefix?.[1]?.toLowerCase() !== source.toLowerCase()) {
     return model;
