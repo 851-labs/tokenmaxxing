@@ -69,6 +69,8 @@ import {
   type ServiceRunnerTarget,
 } from "../service-runner-targets";
 import {
+  describeSyncSourcesFailure,
+  failedSyncSources,
   type LoginCheckFailure,
   resolveSyncAuth,
   SyncAuthValidationError,
@@ -1882,6 +1884,12 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
     }
 
     const successAt = new Date().toISOString();
+    const withoutLogs =
+      result.value.status === "error"
+        ? yield* sourcesWithoutLogs(
+            failedSyncSources(result.value.sourceResults).map((failure) => failure.source),
+          )
+        : undefined;
     const successState = serviceRunSuccessState(currentState, {
       arch: cliArch,
       attemptAt: startedAtIso,
@@ -1898,6 +1906,7 @@ function runServiceSyncOnce(paths: ServicePaths, options: ServiceRunOptions) {
           ? USAGE_REPLACEMENT_BACKFILL_VERSION
           : undefined,
       version: cliVersion,
+      withoutLogs,
     });
     const repairReport = yield* maybeScheduleDeferredServiceRepair({
       commandPath: metadata?.commandPath,
@@ -2593,6 +2602,8 @@ function serviceRunSuccessState(
     successAt: string;
     usageReplacementBackfillVersion?: number | undefined;
     version: string;
+    /** Failed sources with no logs on this machine (`sourcesWithoutLogs`). */
+    withoutLogs?: readonly UsageSource[] | undefined;
   },
 ): ServiceState {
   return {
@@ -2603,7 +2614,7 @@ function serviceRunSuccessState(
     lastAutoUpdated: input.autoUpdate.status === "success",
     lastCliVersion: input.version,
     lastDurationMs: input.durationMs,
-    lastError: serviceSyncError(input.result),
+    lastError: serviceSyncError(input.result, input.withoutLogs),
     lastRows: input.result.rows,
     lastSchedulerActive: input.schedulerActive,
     lastSince: input.since,
@@ -2626,9 +2637,14 @@ function serviceRunSuccessState(
 /**
  * What went wrong in a sync that ran: sources left for the next run by the
  * run's limits (even when others synced, so doctor shows it), or every
- * source failing.
+ * source failing. The latter carries the per-source reasons the console
+ * shows (stderr's last line included), so the check-in's `error` says why;
+ * its first line stays a summary for doctor and status.
  */
-function serviceSyncError(result: Pick<SyncResult, "sourceResults" | "status">) {
+function serviceSyncError(
+  result: Pick<SyncResult, "sourceResults" | "status">,
+  withoutLogs?: readonly UsageSource[],
+) {
   const deferred = (reason: SyncSkipReason) =>
     result.sourceResults.filter(
       (sourceResult) => sourceResult.status === "skipped" && sourceResult.reason === reason,
@@ -2649,7 +2665,35 @@ function serviceSyncError(result: Pick<SyncResult, "sourceResults" | "status">) 
     return `the run reached its ${SERVICE_SOURCE_DEADLINE_MS / 60_000}-minute limit; skipped ${count(afterDeadline)} until the next run`;
   }
 
-  return result.status === "error" ? "ccusage source collection failed" : undefined;
+  if (result.status !== "error") {
+    return undefined;
+  }
+
+  return redactHomePaths(
+    describeSyncSourcesFailure({
+      failures: failedSyncSources(result.sourceResults),
+      withoutLogs,
+    }).lines.join("\n"),
+  );
+}
+
+/**
+ * A user's profile directory, which names them: `C:\Users\<name>` (also with
+ * forward or doubled slashes), `/Users/<name>` and `/home/<name>`. Up to the
+ * next backslash, a Windows name may hold spaces, quotes and parentheses
+ * (`C:\Users\Zoë O'Neil (Work)\AppData`).
+ */
+const HOME_PATH_PATTERN =
+  /(?:\b[A-Za-z]:)?[\\/]+(?:Users|home)[\\/]+(?:[^\\/\r\n":]+?(?=\\)|[^\\/\s"'`:;,)\]]+)/gi;
+
+/**
+ * Replaces home directories with `<home>` in text that leaves the machine:
+ * ccusage's stderr reaches the check-in's `error` and often names a path
+ * under the profile (npm's cache and logs live there).
+ */
+function redactHomePaths(text: string, home: string = homedir()): string {
+  const withoutHome = home.length > 1 ? text.replaceAll(home, "<home>") : text;
+  return withoutHome.replace(HOME_PATH_PATTERN, "<home>");
 }
 
 function serviceRunFailureState(
@@ -6527,6 +6571,7 @@ export {
   npmPrefixOfInstall,
   npmUpdatePrefix,
   readNpmConfiguredPrefix,
+  redactHomePaths,
   backendForPlatform,
   capturedServiceEnv,
   commandShimInvocation,

@@ -424,8 +424,9 @@ describe.skipIf(process.platform === "win32").concurrent("CLI argv parsing", () 
       });
 
       expect(run.status).toBe(1);
-      expect(run.stderr).toContain(
-        "error: no usage synced; could not run ccusage: neither bun nor npx is on PATH",
+      // The test home may hold no agent logs, so the agents can be counted instead of named.
+      expect(run.stderr).toMatch(
+        /error: no usage synced; could not run ccusage for .+: neither bun nor npx is on PATH/,
       );
       expect(run.stderr).toContain("install Bun (https://bun.sh) or Node.js");
     },

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
@@ -109,6 +109,7 @@ import {
   serviceRunFailureState,
   serviceAuthFailureError,
   serviceRunLogLine,
+  redactHomePaths,
   serviceRunSuccessState,
   ServiceConfigDirUnsupportedError,
   ServiceRepairError,
@@ -143,6 +144,7 @@ import {
   SyncAuthValidationError,
   SyncPushError,
   type SyncResult,
+  type SyncSourceIssue,
   type SyncSourceResult,
 } from "./sync";
 import { NotLoggedInError } from "./whoami";
@@ -3407,7 +3409,9 @@ describe("service run state", () => {
     );
 
     expect(state).toMatchObject({
-      lastError: "ccusage source collection failed",
+      lastError: `no usage synced; could not run ccusage for codex: neither bun nor ${
+        process.platform === "win32" ? "npx.cmd" : "npx"
+      } is on PATH`,
       lastRows: 0,
       lastSuccessAt: "2026-06-16T09:00:00.000Z",
       lastSyncStatus: "error",
@@ -3424,6 +3428,134 @@ describe("service run state", () => {
         status: "failed",
       },
     ]);
+  });
+
+  // A Windows device failing every run only reported "ccusage source
+  // collection failed"; the reasons lived in its service.log alone.
+  it("records why each source failed as the run's error", () => {
+    const failed = (
+      source: UsageSource,
+      issue: Omit<SyncSourceIssue, "report">,
+    ): SyncSourceResult => ({
+      issue: { ...issue, report: "daily" },
+      source,
+      status: "failed",
+      summary: null,
+    });
+    const npmFailed = {
+      code: "command_failed" as const,
+      detail: "npm error code E401\nnpm error 401 Unauthorized - GET https://registry.corp/ccusage",
+      message: "ccusage command failed",
+    };
+    const input = {
+      arch: "x64",
+      attemptAt: "2026-10-01T10:00:00.000Z",
+      autoUpdate: autoUpdateReport(),
+      durationMs: 1234,
+      successAt: "2026-10-01T10:00:01.000Z",
+      version: "0.7.2",
+    };
+    const result: SyncResult = {
+      dryRun: false,
+      rows: 0,
+      sourceResults: [
+        failed("claude", npmFailed),
+        failed("codex", { code: "command_timed_out", message: "ccusage command timed out" }),
+        failed("gemini", npmFailed),
+        failed("amp", npmFailed),
+      ],
+      sources: {},
+      status: "error",
+    };
+
+    const state = serviceRunSuccessState({ version: 1 }, { ...input, result });
+
+    expect(state.lastError).toBe(
+      [
+        "no usage synced; ccusage failed for claude, codex, gemini, amp",
+        "claude, gemini, amp: ccusage command failed: npm error 401 Unauthorized - GET https://registry.corp/ccusage",
+        "codex: ccusage command timed out",
+      ].join("\n"),
+    );
+    expect(serviceRunLogLine(state, "failure")).toMatchObject({ error: state.lastError });
+    // doctor and status show the summary line.
+    expect(formatServiceLastError(state.lastError ?? "")).toBe(
+      "no usage synced; ccusage failed for claude, codex, gemini, amp",
+    );
+
+    // Agents without logs are counted, as on the console.
+    expect(
+      serviceRunSuccessState({ version: 1 }, { ...input, result, withoutLogs: ["gemini", "amp"] })
+        .lastError,
+    ).toBe(
+      [
+        "no usage synced; ccusage failed for claude, codex and 2 agents without logs",
+        "claude and 2 agents without logs: ccusage command failed: npm error 401 Unauthorized - GET https://registry.corp/ccusage",
+        "codex: ccusage command timed out",
+      ].join("\n"),
+    );
+  });
+
+  // The check-in's error leaves the machine: a profile path names the user.
+  it("redacts home directories from a failed run's error", () => {
+    const state = serviceRunSuccessState(
+      { version: 1 },
+      {
+        arch: "x64",
+        attemptAt: "2026-10-01T10:00:00.000Z",
+        autoUpdate: autoUpdateReport(),
+        durationMs: 1234,
+        result: {
+          dryRun: false,
+          rows: 0,
+          sourceResults: [
+            {
+              issue: {
+                code: "command_failed",
+                detail: `npm error A complete log of this run can be found in: ${homedir()}/.npm/_logs/debug-0.log`,
+                message: "ccusage command failed",
+                report: "daily",
+              },
+              source: "claude",
+              status: "failed",
+              summary: null,
+            },
+          ],
+          sources: {},
+          status: "error",
+        },
+        successAt: "2026-10-01T10:00:01.000Z",
+        version: "0.7.2",
+      },
+    );
+
+    expect(state.lastError).toBe(
+      [
+        "no usage synced; ccusage failed for claude",
+        "claude: ccusage command failed: npm error A complete log of this run can be found in: <home>/.npm/_logs/debug-0.log",
+      ].join("\n"),
+    );
+  });
+
+  it.each([
+    [
+      "npm error path C:\\Users\\jdoe\\AppData\\Local\\npm-cache",
+      "npm error path <home>\\AppData\\Local\\npm-cache",
+    ],
+    ["at c:/users/jdoe/AppData/x.js:1", "at <home>/AppData/x.js:1"],
+    ['{"path":"C:\\\\Users\\\\jdoe\\\\AppData"}', '{"path":"<home>\\\\AppData"}'],
+    ["open C:\\Users\\Jo Doe\\AppData\\npmrc", "open <home>\\AppData\\npmrc"],
+    ["C:\\Users\\Zoë O'Neil (Work)\\.npmrc", "<home>\\.npmrc"],
+    ["EACCES: /Users/jdoe/.npm, '/home/jdoe'", "EACCES: <home>/.npm, '<home>'"],
+    ["no profile path here: /usr/local/bin/npx", "no profile path here: /usr/local/bin/npx"],
+  ])("redacts the profile directory in %s", (text, redacted) => {
+    expect(redactHomePaths(text, "/nonexistent-home")).toBe(redacted);
+  });
+
+  it("redacts the home directory wherever it lives", () => {
+    expect(redactHomePaths("cannot read D:\\Profiles\\jdoe\\.npmrc", "D:\\Profiles\\jdoe")).toBe(
+      "cannot read <home>\\.npmrc",
+    );
   });
 
   it("records partial source diagnostics while advancing the last success", () => {
@@ -5394,11 +5526,16 @@ describe("service doctor", () => {
   it.each(platforms)("exits 1 on a %s WARN, with its fix as the hint", async (platform) => {
     const checks = serviceDoctorChecks({
       ...healthyFacts(platform),
-      state: { lastError: "ccusage source collection failed", version: 1 },
+      state: {
+        lastError:
+          "no usage synced; ccusage failed for claude\nclaude: ccusage command failed: npm error 401 Unauthorized",
+        version: 1,
+      },
     });
 
     expect(checks.find((check) => check.label === "last error")).toEqual({
-      detail: "ccusage source collection failed; retry with tokenmaxxing service run to see why",
+      detail:
+        "no usage synced; ccusage failed for claude; retry with tokenmaxxing service run to see why",
       fix: "retry with tokenmaxxing service run to see why",
       label: "last error",
       status: "warn",
@@ -5411,7 +5548,7 @@ describe("service doctor", () => {
       "error: service doctor found 1 warning (last error)\nhint: retry with tokenmaxxing service run to see why",
     );
     expect(logs).toContain(
-      "WARN last error   ccusage source collection failed; retry with tokenmaxxing service run to see why",
+      "WARN last error   no usage synced; ccusage failed for claude; retry with tokenmaxxing service run to see why",
     );
   });
 
@@ -5428,9 +5565,11 @@ describe("service doctor", () => {
     expect(checks.find((check) => check.label === "last error")?.detail).toBe(
       "failed to validate stored login; retry with tokenmaxxing service run to see why",
     );
-    expect(formatServiceLastError("ccusage source collection failed")).toBe(
-      "ccusage source collection failed",
-    );
+    expect(
+      formatServiceLastError(
+        "no usage synced; ccusage failed for claude\nclaude: ccusage command failed: npm error 401 Unauthorized",
+      ),
+    ).toBe("no usage synced; ccusage failed for claude");
   });
 
   it.each(platforms)("exits 1 on a %s FAIL, and counts every problem", async (platform) => {

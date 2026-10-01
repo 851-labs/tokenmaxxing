@@ -5,6 +5,16 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- A scheduled sync in which every agent failed now reports why each one failed (the reason and the
+  last line of ccusage's error output, grouped by reason as on the console) in `service status`,
+  the service log and the device's reported error, instead of only "ccusage source collection
+  failed". Home directories in that output are replaced with `<home>`. `service doctor` shows the
+  summary line.
+- When neither bun nor npx can be found, the error names the agents and, on Windows, the `npx.cmd`
+  shim it looked for.
+
 ## 0.7.2 - 2026-10-01
 
 ### Fixed

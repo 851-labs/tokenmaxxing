@@ -122,57 +122,94 @@ class InvalidSinceError extends Data.TaggedError("InvalidSinceError")<{
  * reflects the failure. A "partial" sync is not an error: whatever was
  * collected was pushed, and the payload/table name the degraded sources.
  */
-class SyncSourcesFailedError extends Data.TaggedError("SyncSourcesFailedError")<{
+class SyncSourcesFailedError extends Data.TaggedError(
+  "SyncSourcesFailedError",
+)<SyncSourcesFailure> {
+  override get message() {
+    const { hint, lines } = describeSyncSourcesFailure(this);
+    return [`error: ${lines[0]}`, ...lines.slice(1), `hint: ${hint}`].join("\n");
+  }
+}
+
+interface SyncSourcesFailure {
   /** Sources the run's limits left for the next run (`SyncSourceLimits`). */
   readonly deferred?: number | undefined;
   readonly failures: readonly SyncSourceFailure[];
+  /** Names the missing npx (`npx.cmd` on Windows); defaults to this machine's. */
+  readonly platform?: NodeJS.Platform | undefined;
   /**
    * Failed sources with no logs on this machine (`sourcesWithoutLogs`). A
    * broken ccusage fails every agent, so the message counts these instead of
    * naming all 18 next to the few that have usage.
    */
   readonly withoutLogs?: readonly UsageSource[] | undefined;
-}> {
-  override get message() {
-    const sources = this.failures.map((failure) => failure.source);
-    const withoutLogs = new Set(this.withoutLogs);
-    const named = (failed: readonly UsageSource[]) => {
-      const listed = failed.filter((source) => !withoutLogs.has(source));
-      const rest = failed.length - listed.length;
-      const others = `${rest} agent${rest === 1 ? "" : "s"} without logs`;
-      if (rest === 0) {
-        return listed.join(", ");
-      }
-      return listed.length === 0 ? others : `${listed.join(", ")} and ${others}`;
+}
+
+/**
+ * Why every source failed, without the console's `error:`/`hint:` framing: a
+ * summary line, then one line per distinct reason naming the sources it hit
+ * (with the last line of ccusage's stderr). The scheduled service reports the
+ * same lines as its `lastError`.
+ */
+function describeSyncSourcesFailure({
+  deferred = 0,
+  failures,
+  platform = process.platform,
+  withoutLogs: without,
+}: SyncSourcesFailure): {
+  hint: string;
+  lines: string[];
+} {
+  const sources = failures.map((failure) => failure.source);
+  const withoutLogs = new Set(without);
+  const named = (failed: readonly UsageSource[]) => {
+    const listed = failed.filter((source) => !withoutLogs.has(source));
+    const rest = failed.length - listed.length;
+    const others = `${rest} agent${rest === 1 ? "" : "s"} without logs`;
+    if (rest === 0) {
+      return listed.join(", ");
+    }
+    return listed.length === 0 ? others : `${listed.join(", ")} and ${others}`;
+  };
+  if (sources.length === 0) {
+    return {
+      hint: "run tokenmaxxing sync again",
+      lines: ["no usage synced; source collection failed"],
     };
-    if (sources.length === 0) {
-      return "error: no usage synced; source collection failed\nhint: run tokenmaxxing sync again";
-    }
+  }
 
-    // Neither `bun x` nor the `npx` fallback exists: nothing else can help.
-    if (this.failures.every((failure) => failure.issue.code === "command_not_found")) {
-      return `error: no usage synced; could not run ccusage: neither bun nor npx is on PATH\nhint: install Bun (https://bun.sh) or Node.js (https://nodejs.org), then run tokenmaxxing sync again`;
-    }
+  // The runner reports command_not_found only once the `npx` fallback is
+  // missing too.
+  const missing = `neither bun nor ${platform === "win32" ? "npx.cmd" : "npx"} is on PATH`;
+  // Neither `bun x` nor the `npx` fallback exists: nothing else can help.
+  if (failures.every((failure) => failure.issue.code === "command_not_found")) {
+    return {
+      hint: "install Bun (https://bun.sh) or Node.js (https://nodejs.org), then run tokenmaxxing sync again",
+      lines: [`no usage synced; could not run ccusage for ${named(sources)}: ${missing}`],
+    };
+  }
 
-    // One line per distinct reason, naming the sources it hit.
-    const reasons = new Map<string, UsageSource[]>();
-    for (const { issue, source } of this.failures) {
-      const reason =
-        issue.detail === undefined
+  // One line per distinct reason, naming the sources it hit.
+  const reasons = new Map<string, UsageSource[]>();
+  for (const { issue, source } of failures) {
+    const reason =
+      issue.code === "command_not_found"
+        ? `${issue.message} (${missing})`
+        : issue.detail === undefined
           ? issue.message
           : `${issue.message}: ${issue.detail.split("\n").at(-1)}`;
-      reasons.set(reason, [...(reasons.get(reason) ?? []), source]);
-    }
-    const deferred = this.deferred ?? 0;
-    return [
-      `error: no usage synced; ccusage failed for ${named(sources)}`,
+    reasons.set(reason, [...(reasons.get(reason) ?? []), source]);
+  }
+  return {
+    hint: `check that ccusage runs for ${sources.length > 1 ? "these agents" : "this agent"}, then run tokenmaxxing sync again`,
+    lines: [
+      `no usage synced; ccusage failed for ${named(sources)}`,
       ...[...reasons].map(([reason, failed]) => `${named(failed)}: ${reason}`),
       ...(deferred > 0
         ? [`skipped ${deferred} more source${deferred === 1 ? "" : "s"} until the next run`]
         : []),
-      `hint: check that ccusage runs for ${sources.length > 1 ? "these agents" : "this agent"}, then run tokenmaxxing sync again`,
-    ].join("\n");
-  }
+    ],
+  };
 }
 
 const usd0 = new Intl.NumberFormat("en-US", {
@@ -1035,6 +1072,8 @@ function formatCount(value: number, noun: string): string {
 }
 
 export {
+  describeSyncSourcesFailure,
+  failedSyncSources,
   formatSyncUsd,
   InvalidSinceError,
   openProfileIfAvailable,
