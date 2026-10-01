@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 
 import { Effect } from "effect";
 
+import { retryWindowsFs, sleep } from "./windows-fs-retry";
+
 /**
  * Removes the service runners dir (`<config dir>\service-runners`) on
  * uninstall, including when a runner in it is still running.
@@ -19,6 +21,13 @@ import { Effect } from "effect";
  * later install writes a fresh runners dir. A hidden wscript.exe waits for the
  * exe to exit and deletes the retired dir, and every later install, uninstall
  * and scheduled run sweeps any retired dir that is still there.
+ *
+ * Both the delete and the rename can also fail for a moment while antivirus,
+ * the indexer or a child that just exited still holds a handle in the dir, so
+ * they are retried for about 2 s (windows-fs-retry.ts). A dir that still will
+ * not go is left in place and reported rather than failing an uninstall whose
+ * task is already gone: the next install writes into it and prunes it, and
+ * the next uninstall tries again.
  */
 
 const RETIRED_RUNNERS_PREFIX = "service-runners.retired-";
@@ -34,6 +43,8 @@ interface RunnerRemovalFs {
   readdir: (path: string) => Promise<Dirent[]>;
   rename: (from: string, to: string) => Promise<void>;
   rm: (path: string) => Promise<void>;
+  /** Waits between retries of a delete or rename Windows refused for a moment. */
+  sleep: (ms: number) => Promise<void>;
   /** Starts the detached, hidden cleanup script. Never throws. */
   startCleanup: (scriptPath: string) => void;
   writeFile: (path: string, content: string) => Promise<void>;
@@ -42,7 +53,12 @@ interface RunnerRemovalFs {
 type RunnersRemoval =
   | { readonly _tag: "removed" }
   /** Retired aside because a runner in it is running; deleted once it exits. */
-  | { readonly _tag: "retired"; readonly path: string };
+  | { readonly _tag: "retired"; readonly path: string }
+  /**
+   * Windows refused both the delete and the rename aside, after retries. The
+   * dir stays where it is; the next install or uninstall deals with it.
+   */
+  | { readonly _tag: "left"; readonly path: string; readonly cause: unknown };
 
 const nodeFs: RunnerRemovalFs = {
   exists: async (path) => {
@@ -56,6 +72,7 @@ const nodeFs: RunnerRemovalFs = {
   readdir: (path) => readdir(path, { withFileTypes: true }),
   rename,
   rm: (path) => rm(path, { force: true, recursive: true }),
+  sleep,
   startCleanup: (scriptPath) => {
     try {
       // wscript.exe is a GUI program, so the detached script opens no console
@@ -120,42 +137,59 @@ If Not fso.FolderExists(target) Then fso.DeleteFile WScript.ScriptFullName, True
 
 /**
  * Deletes the runners dir. On Windows, a dir that keeps a running runner is
- * renamed aside and handed to the cleanup script instead; the rename failing
- * (a process has its working directory in there) fails the removal with the
- * delete's error. Elsewhere a running binary never blocks the delete.
+ * renamed aside and handed to the cleanup script instead. Windows can refuse
+ * both for a moment (a handle someone else holds in the dir), so the pair is
+ * retried; a dir that still cannot be deleted or renamed is left in place and
+ * reported. Elsewhere a running binary never blocks the delete, and a failed
+ * delete fails the removal.
  */
 async function removeRunnersDir(
   runnersDir: string,
   platform: NodeJS.Platform,
   fs: RunnerRemovalFs,
 ): Promise<RunnersRemoval> {
-  try {
+  if (platform !== "win32") {
     await fs.rm(runnersDir);
     return { _tag: "removed" };
-  } catch (cause) {
-    if (platform !== "win32") {
-      throw cause;
-    }
-    const retired = retiredRunnersPath(runnersDir);
-    try {
-      await fs.rename(runnersDir, retired);
-    } catch {
-      throw cause;
-    }
-    // Everything but the running image goes now.
-    await fs.rm(retired).catch(() => {});
-    if (!(await fs.exists(retired))) {
-      return { _tag: "removed" };
-    }
-    try {
-      const scriptPath = `${retired}${CLEANUP_SCRIPT_EXTENSION}`;
-      await fs.writeFile(scriptPath, renderRunnerCleanupScript());
-      fs.startCleanup(scriptPath);
-    } catch {
-      // The next install, uninstall or scheduled run sweeps the retired dir.
-    }
-    return { _tag: "retired", path: retired };
   }
+
+  const retired = retiredRunnersPath(runnersDir);
+  let moved: boolean;
+  try {
+    moved = await retryWindowsFs(
+      async () => {
+        try {
+          await fs.rm(runnersDir);
+          return false;
+        } catch {
+          // A running runner keeps its image, and so the dir; move it aside.
+          await fs.rename(runnersDir, retired);
+          return true;
+        }
+      },
+      { platform, sleep: fs.sleep },
+    );
+  } catch (cause) {
+    return (await fs.exists(runnersDir))
+      ? { _tag: "left", cause, path: runnersDir }
+      : { _tag: "removed" };
+  }
+  if (!moved) {
+    return { _tag: "removed" };
+  }
+  // Everything but the running image goes now.
+  await fs.rm(retired).catch(() => {});
+  if (!(await fs.exists(retired))) {
+    return { _tag: "removed" };
+  }
+  try {
+    const scriptPath = `${retired}${CLEANUP_SCRIPT_EXTENSION}`;
+    await fs.writeFile(scriptPath, renderRunnerCleanupScript());
+    fs.startCleanup(scriptPath);
+  } catch {
+    // The next install, uninstall or scheduled run sweeps the retired dir.
+  }
+  return { _tag: "retired", path: retired };
 }
 
 /**

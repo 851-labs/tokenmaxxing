@@ -4,6 +4,8 @@ import { win32 } from "node:path";
 
 import { Effect } from "effect";
 
+import { retryWindowsFs, sleep } from "./windows-fs-retry";
+
 /**
  * Removes the copies of the CLI that `npm install -g` leaves behind on
  * Windows when it replaces the package while its native exe is running.
@@ -40,6 +42,8 @@ interface NpmStagingFs {
   hasRunningExe: (dir: string) => Promise<boolean>;
   readdir: (path: string) => Promise<Dirent[]>;
   rm: (path: string) => Promise<void>;
+  /** Waits between retries of a delete Windows refused for a moment. */
+  sleep: (ms: number) => Promise<void>;
 }
 
 interface NpmStagingCleanup {
@@ -73,6 +77,7 @@ const nodeFs: NpmStagingFs = {
   },
   readdir: (path) => readdir(path, { withFileTypes: true }),
   rm: (path) => rm(path, { force: true, recursive: true }),
+  sleep,
 };
 
 // A running image (through any of its hard links) cannot be opened for
@@ -148,7 +153,8 @@ function removeNpmStagingDirs(
             continue;
           }
           try {
-            await fs.rm(stagingDir);
+            // No exe in it runs, so a refusal is antivirus or the indexer, and passes.
+            await retryWindowsFs(() => fs.rm(stagingDir), { platform, sleep: fs.sleep });
             cleanup.removed.push(stagingDir);
           } catch {
             cleanup.failed.push(stagingDir);

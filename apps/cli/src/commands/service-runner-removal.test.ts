@@ -23,11 +23,13 @@ const busy = (path: string) =>
   Object.assign(new Error(`EPERM: operation not permitted, unlink '${path}'`), { code: "EPERM" });
 
 // A Windows filesystem where the paths in `running` keep a running runner:
-// deleting them removes everything else but never the dir itself.
+// deleting them removes everything else but never the dir itself. A rename
+// fails always (`renameFails: true`) or only the first few times, the way a
+// handle antivirus holds in the dir goes away.
 function fakeFs(options: {
   entries?: { kind: "dir" | "file"; name: string }[];
   existing?: string[];
-  renameFails?: boolean;
+  renameFails?: boolean | number;
   running?: string[];
   writeFails?: boolean;
 }) {
@@ -36,9 +38,12 @@ function fakeFs(options: {
   const calls = {
     rename: [] as [string, string][],
     rm: [] as string[],
+    sleep: [] as number[],
     startCleanup: [] as string[],
     writeFile: [] as [string, string][],
   };
+  let renameFailuresLeft =
+    options.renameFails === true ? Number.POSITIVE_INFINITY : Number(options.renameFails ?? 0);
   const fs: RunnerRemovalFs = {
     exists: async (path) => existing.has(path),
     readdir: async () =>
@@ -52,7 +57,8 @@ function fakeFs(options: {
       ),
     rename: async (from, to) => {
       calls.rename.push([from, to]);
-      if (options.renameFails) {
+      if (renameFailuresLeft > 0) {
+        renameFailuresLeft--;
         throw Object.assign(new Error(`EBUSY: resource busy or locked, rename '${from}'`), {
           code: "EBUSY",
         });
@@ -69,6 +75,9 @@ function fakeFs(options: {
         throw busy(path);
       }
       existing.delete(path);
+    },
+    sleep: async (ms) => {
+      calls.sleep.push(ms);
     },
     startCleanup: (scriptPath) => {
       calls.startCleanup.push(scriptPath);
@@ -145,13 +154,63 @@ describe("removeServiceRunnersDir", () => {
     expect(calls.startCleanup).toEqual([]);
   });
 
-  it("fails with the delete's error when the dir cannot be renamed aside either", async () => {
-    const { calls, fs } = fakeFs({ renameFails: true, running: [runnersDir] });
+  it("retries a rename that antivirus or a just-exited child holds up for a moment", async () => {
+    const { calls, existing, fs } = fakeFs({ renameFails: 2, running: [runnersDir] });
 
-    const exit = await Effect.runPromiseExit(removeServiceRunnersDir(runnersDir, "win32", fs));
+    const removal = await Effect.runPromise(removeServiceRunnersDir(runnersDir, "win32", fs));
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(JSON.stringify(exit)).toContain("EPERM");
+    expect(removal._tag).toBe("retired");
+    const retired = removal._tag === "retired" ? removal.path : "";
+    // Each attempt tries the delete first, in case whatever blocked it is gone too.
+    expect(calls.rename).toEqual([
+      [runnersDir, retired],
+      [runnersDir, retired],
+      [runnersDir, retired],
+    ]);
+    expect(calls.rm).toEqual([runnersDir, runnersDir, runnersDir, retired]);
+    expect(calls.sleep).toEqual([100, 250]);
+    expect(existing.has(runnersDir)).toBe(false);
+    expect(calls.startCleanup).toEqual([`${retired}.vbs`]);
+  });
+
+  it("deletes the dir on a retry once the handle that blocked it is gone", async () => {
+    // Nothing runs from the dir; a scanner holds a file in it for the first attempt.
+    const { calls, existing, fs } = fakeFs({ renameFails: 1 });
+    let scanning = true;
+    const scanned: RunnerRemovalFs = {
+      ...fs,
+      rm: async (path) => {
+        if (scanning) {
+          scanning = false;
+          calls.rm.push(path);
+          throw busy(path);
+        }
+        return fs.rm(path);
+      },
+    };
+
+    const removal = await Effect.runPromise(removeServiceRunnersDir(runnersDir, "win32", scanned));
+
+    expect(removal).toEqual({ _tag: "removed" });
+    expect(calls.rm).toEqual([runnersDir, runnersDir]);
+    expect(calls.rename).toHaveLength(1);
+    expect(calls.sleep).toEqual([100]);
+    expect(existing.has(runnersDir)).toBe(false);
+    expect(calls.startCleanup).toEqual([]);
+  });
+
+  it("leaves the dir in place, without failing, when it can be neither deleted nor renamed", async () => {
+    const { calls, existing, fs } = fakeFs({ renameFails: true, running: [runnersDir] });
+
+    const removal = await Effect.runPromise(removeServiceRunnersDir(runnersDir, "win32", fs));
+
+    expect(removal._tag).toBe("left");
+    expect(removal._tag === "left" ? removal.path : "").toBe(runnersDir);
+    expect(JSON.stringify(removal._tag === "left" ? removal.cause : null)).toContain("EBUSY");
+    // Five attempts over about 2 s.
+    expect(calls.rename).toHaveLength(5);
+    expect(calls.sleep).toEqual([100, 250, 500, 1000]);
+    expect(existing.has(runnersDir)).toBe(true);
     expect(calls.startCleanup).toEqual([]);
   });
 

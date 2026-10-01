@@ -92,6 +92,7 @@ import {
   windowsScriptHostPath,
 } from "./service-runner-removal";
 import { defaultServicePath, stableServicePath } from "./service-path";
+import { retryWindowsFs } from "./windows-fs-retry";
 
 const execFilePromise = promisify(execFile);
 const gunzipPromise = promisify(gunzip);
@@ -1049,8 +1050,9 @@ function serviceUninstallEffect(options: { json?: boolean | undefined } = {}) {
         Effect.mapError((cause) => new ServiceUninstallError({ cause })),
       );
       // The runner running this uninstall (or a scheduled sync) cannot be
-      // deleted until it exits; the service itself is already gone.
-      const pendingRemoval = runners._tag === "retired" ? [runners.path] : [];
+      // deleted until it exits, and Windows can refuse a dir someone holds a
+      // handle in; the service itself is already gone either way.
+      const pendingRemoval = runners._tag === "removed" ? [] : [runners.path];
 
       if (options.json) {
         yield* writeJson({ pendingRemoval, removed: true, status: "ok" });
@@ -1058,8 +1060,18 @@ function serviceUninstallEffect(options: { json?: boolean | undefined } = {}) {
       }
 
       yield* humanLog("success", "Automatic sync uninstalled", options);
-      for (const path of pendingRemoval) {
-        yield* humanLog("info", `Runner still running; removed once it exits: ${path}`, options);
+      if (runners._tag === "retired") {
+        yield* humanLog(
+          "info",
+          `Runner still running; removed once it exits: ${runners.path}`,
+          options,
+        );
+      } else if (runners._tag === "left") {
+        yield* humanLog(
+          "warn",
+          `Could not remove ${runners.path} (${(runners.cause as NodeJS.ErrnoException | null)?.code ?? "unknown error"}); the next service install or uninstall removes it, or delete it by hand`,
+          options,
+        );
       }
       yield* humanLog("info", "Auth and synced usage were left untouched", options);
     }),
@@ -5363,35 +5375,37 @@ function writeServiceFiles(
 /**
  * Removes every service file. The runners dir goes last: on Windows a runner
  * that is still running (the one running this uninstall, or a scheduled sync)
- * leaves it retired aside for a hidden cleanup, and a failure there still
- * leaves nothing else behind.
+ * leaves it retired aside for a hidden cleanup, and a dir Windows will not
+ * let go of is reported instead of failing, with nothing else left behind.
  */
 function removeServiceFiles(
   paths: ServicePaths,
   platform: NodeJS.Platform = process.platform,
 ): Effect.Effect<RunnersRemoval, unknown> {
+  // A file wscript.exe or antivirus still has open refuses a delete for a moment on Windows.
+  const remove = (path: string) => retryWindowsFs(() => rm(path, { force: true }), { platform });
   return Effect.tryPromise({
     try: async () => {
-      await rm(paths.wrapperPath, { force: true });
+      await remove(paths.wrapperPath);
       const launcherPath = windowsLauncherPath(paths);
       if (launcherPath !== null) {
-        await rm(launcherPath, { force: true });
-        await rm(windowsTaskXmlPath(paths), { force: true });
+        await remove(launcherPath);
+        await remove(windowsTaskXmlPath(paths));
       }
       for (const legacyWrapperPath of legacyServiceWrapperPaths(paths)) {
-        await rm(legacyWrapperPath, { force: true });
+        await remove(legacyWrapperPath);
       }
-      await rm(paths.metadataPath, { force: true });
-      await rm(paths.runnerPointerPath, { force: true });
-      await rm(paths.statePath, { force: true });
-      await rm(serviceSourceCadencePath(paths), { force: true });
-      await rm(paths.lockPath, { force: true });
-      await rm(paths.updateLockPath, { force: true });
+      await remove(paths.metadataPath);
+      await remove(paths.runnerPointerPath);
+      await remove(paths.statePath);
+      await remove(serviceSourceCadencePath(paths));
+      await remove(paths.lockPath);
+      await remove(paths.updateLockPath);
       if (paths.definitionPath !== null) {
-        await rm(paths.definitionPath, { force: true });
+        await remove(paths.definitionPath);
       }
       if (paths.backend === "systemd" && paths.definitionPath !== null) {
-        await rm(systemdTimerPath(paths.definitionPath), { force: true });
+        await remove(systemdTimerPath(paths.definitionPath));
       }
     },
     catch: (cause) => cause,
@@ -6496,7 +6510,7 @@ async function writeFileAtomic(
     if (mode !== undefined) {
       await chmod(temporaryPath, mode);
     }
-    await rename(temporaryPath, path);
+    await retryWindowsFs(() => rename(temporaryPath, path));
   } catch (cause) {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw cause;
@@ -6534,7 +6548,7 @@ async function copyFileAtomic(
     if (mode !== undefined) {
       await chmod(temporaryPath, mode);
     }
-    await rename(temporaryPath, destinationPath);
+    await retryWindowsFs(() => rename(temporaryPath, destinationPath));
   } catch (cause) {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw cause;
