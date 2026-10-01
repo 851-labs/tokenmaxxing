@@ -5,6 +5,9 @@
 #   core            install -> task + launcher -> scheduled run (no window) ->
 #                   error paths -> status/doctor/repair -> deferred repairs -> uninstall
 #   npx fallback    no bun on PATH: scheduled runs sync through npm's npx.cmd shim
+#   version-manager node
+#                   node only from an fnm per-shell junction: install keeps fnm's default alias,
+#                   and a 0.6.0-style wrapper whose junction is gone is repaired back to it
 #   overlapping     a held service.log -> side log, no rotation; three runs at once ->
 #                   one sync, a log entry each, no window; doctor stays clean
 #   path cases      install -> run -> reload-required deferred repair -> run -> uninstall,
@@ -345,7 +348,7 @@ function Assert-SuccessfulRun([string]$Scenario, $Run, [switch]$AllowCooldown) {
   $ingests = @($Run.requests | Where-Object { $_.path -eq "/usage/ingest" -and $_.status -eq 200 }).Count
   if ($AllowCooldown -and $ingests -eq 0) {
     # A run seconds after the previous one may skip every source (cadence cooldown).
-    Add-Check $Scenario "sandbox got both check-ins; sources on cooldown ($($Run.label))" ($checkIns -ge 2 -and $line -match '"rows":0') $paths
+    Add-Check $Scenario "sandbox got both check-ins; sources on cooldown ($($Run.label))" ($checkIns -ge 2 -and $line -match '"status":"success"' -and $line -match '"rows":0') $paths
   } else {
     Add-Check $Scenario "sandbox got both check-ins + ingest ($($Run.label))" ($checkIns -ge 2 -and $ingests -ge 1) $paths
   }
@@ -449,6 +452,59 @@ function Invoke-NpxFallback {
   Copy-Item -LiteralPath (Join-Path $npxBin "calls.log") -Destination (Join-Path $OutDir "npx-calls.log") -ErrorAction SilentlyContinue
   Add-Check $scenario "ccusage ran through npx.cmd with its version range intact" ($calls.Count -gt 0 -and @($calls | Where-Object { $_ -notmatch " -y ccusage@\^" }).Count -eq 0) "$($calls.Count) calls; first: $($calls | Select-Object -First 1)"
   Assert-Uninstall $scenario
+}
+
+# Node only from a version manager: fnm puts each shell's node on PATH through a junction under
+# %LOCALAPPDATA%\fnm_multishells\<id> and drops it with the shell, so a wrapper must keep fnm's
+# default alias instead. 0.6.0 wrappers baked the junction in; the reload-required repair that
+# migrates them re-captures PATH from that wrapper after the junction is gone, and finds fnm's node
+# only through fnm's own data dir (%APPDATA%\fnm), since the wrapper never exports FNM_DIR.
+function Invoke-VersionManagerNode {
+  $scenario = "version-manager node"
+  $node = Get-Command node.exe -ErrorAction SilentlyContinue
+  if (-not $node) { Add-Check $scenario "node on PATH" $false "no node.exe"; return }
+  $fnm = Join-Path $env:APPDATA "fnm"
+  if (Test-Path -LiteralPath $fnm) { Add-Check $scenario "no fnm install to shadow" "INFO" "skipped: $fnm exists"; return }
+  $installation = Join-Path $fnm "node-versions\v-e2e\installation"
+  $alias = Join-Path $fnm "aliases\default"
+  $multishell = Join-Path $Root "fnm_multishells\4242_1"
+  try {
+    New-Item -ItemType Directory -Force -Path (Split-Path $installation), (Split-Path $alias), (Split-Path $multishell) | Out-Null
+    New-Item -ItemType Junction -Path $installation -Target (Split-Path $node.Source) | Out-Null
+    New-Item -ItemType Junction -Path $alias -Target $installation | Out-Null
+    if (Test-Path -LiteralPath $multishell) { [System.IO.Directory]::Delete($multishell) }
+    New-Item -ItemType Junction -Path $multishell -Target $installation | Out-Null
+    $withoutNode = @($BasePath -split ";" | Where-Object { $_ -and -not (Test-Path -LiteralPath (Join-Path $_ "node.exe")) })
+    $env:PATH = (@($FakeBin, $multishell, $TmxBin) + $withoutNode) -join ";"
+    $resolved = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
+    Add-Check $scenario "node only from the per-shell junction" ($resolved -like "$multishell\*") "node: $resolved"
+    New-Profile (Join-Path $Root "cfg-version-manager")
+    if (-not (Install-Service $scenario)) { return }
+    $wrapperPath = Config-File "service-sync.cmd"
+    $pathEntries = { @(((Get-Content -LiteralPath $wrapperPath | Where-Object { $_ -like 'set "PATH=*' }) | Select-Object -First 1) -replace '^set "PATH=|"$', "" -split ";") }
+    $entries = & $pathEntries
+    Add-Check $scenario "install writes fnm's default alias, not the per-shell junction" (($entries -contains $alias) -and -not ($entries -contains $multishell)) ($entries -join ";")
+
+    # A 0.6.0 wrapper: the junction baked in, and gone since its shell exited.
+    $legacy = (Get-Content -LiteralPath $wrapperPath -Raw).Replace(";$alias;", ";$multishell;")
+    [System.IO.File]::WriteAllText($wrapperPath, $legacy, (New-Object System.Text.UTF8Encoding $false))
+    $entries = & $pathEntries
+    Add-Check $scenario "wrapper rewritten with the junction, as 0.6.0 wrote it" (($entries -contains $multishell) -and -not ($entries -contains $alias)) ($entries -join ";")
+    [System.IO.Directory]::Delete($multishell)
+    # A new shell gets node through fnm's default alias.
+    $env:PATH = (@($FakeBin, $alias, $TmxBin) + $withoutNode) -join ";"
+    Set-TemplateVersion ($TemplateVersion - 1)
+    $repairRun = Invoke-TaskRun "version-manager-reload" { $state = Wait-RepairFinished; "status=$($state.lastRepairStatus) reason=$($state.lastRepairReason) error=$($state.lastRepairError)" } -Repairs "reload-required"
+    $entries = & $pathEntries
+    Add-Check $scenario "the repair maps the gone junction to fnm's default alias" (($entries -contains $alias) -and -not ($entries -contains $multishell)) "repair: $($repairRun.after); PATH: $($entries -join ';')"
+    $run = Invoke-TaskRun "version-manager-run"
+    Assert-SuccessfulRun $scenario $run -AllowCooldown
+    Assert-NoWindow $scenario $run
+    Assert-Uninstall $scenario
+  } finally {
+    foreach ($link in @($multishell, $alias, $installation)) { if (Test-Path -LiteralPath $link) { [System.IO.Directory]::Delete($link) } }
+    Remove-Item -LiteralPath $fnm -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function Invoke-Core {
@@ -817,6 +873,8 @@ schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null
 Invoke-Scenario "window watcher" { Invoke-WatcherControls }
 Invoke-Scenario "core" { Invoke-Core }
 Invoke-Scenario "npx fallback" { Invoke-NpxFallback }
+Use-Cli $TmxBin
+Invoke-Scenario "version-manager node" { Invoke-VersionManagerNode }
 Use-Cli $TmxBin
 Invoke-Scenario "overlapping runs" { Invoke-Overlap }
 

@@ -109,7 +109,9 @@ function resolveFnmMultishell(
 }
 
 // Where fnm keeps its versions and aliases: FNM_DIR, else its XDG data dir,
-// the macOS application-support dir, or the legacy ~/.fnm.
+// the macOS application-support dir, %APPDATA%\fnm on Windows, or the legacy
+// ~/.fnm. A service wrapper never exports FNM_DIR, so a repair that finds the
+// per-shell junction gone relies on these defaults.
 function fnmDataDirs(
   env: Record<string, string | undefined>,
   platform: NodeJS.Platform,
@@ -123,6 +125,9 @@ function fnmDataDirs(
     home === undefined || platform !== "darwin"
       ? undefined
       : path.join(home, "Library", "Application Support", "fnm"),
+    platform !== "win32" || env["APPDATA"] === undefined
+      ? undefined
+      : path.join(env["APPDATA"], "fnm"),
     home === undefined ? undefined : path.join(home, ".fnm"),
   ];
 

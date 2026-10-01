@@ -140,6 +140,31 @@ describe("stableServicePath", () => {
     expect(linux({ HOME: "/home/alex" }, [])).toBe("/usr/bin");
   });
 
+  // fnm on Windows keeps its data in %APPDATA%\fnm and links each shell's node through a
+  // junction under %LOCALAPPDATA%\fnm_multishells. A wrapper never exports FNM_DIR, so when a
+  // repair finds that junction gone only the default dir leads back to fnm's node.
+  it("maps a Windows fnm per-shell junction to %APPDATA%\\fnm's default alias", () => {
+    const appData = "C:\\Users\\alex\\AppData\\Roaming";
+    const multishell = "C:\\Users\\alex\\AppData\\Local\\fnm_multishells\\1304_1790891596390";
+    const alias = `${appData}\\fnm\\aliases\\default`;
+    const windows = (readLink: (dir: string) => string) =>
+      stableServicePath(`${multishell};C:\\WINDOWS\\system32`, {
+        env: { APPDATA: appData, USERPROFILE: "C:\\Users\\alex" },
+        exists: (dir) => dir === alias,
+        platform: "win32",
+        readLink,
+      });
+
+    expect(
+      windows(() => {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }),
+    ).toBe(`${alias};C:\\WINDOWS\\system32`);
+    expect(windows(() => `${appData}\\fnm\\node-versions\\v22.23.3\\installation`)).toBe(
+      `${alias};C:\\WINDOWS\\system32`,
+    );
+  });
+
   it("resolves Linux fnm per-shell directories under XDG_RUNTIME_DIR", () => {
     const path = stableServicePath("/run/user/1000/fnm_multishells/42_1/bin:/usr/bin", {
       env: {},

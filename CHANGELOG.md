@@ -14,6 +14,11 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   summary line.
 - When neither bun nor npx can be found, the error names the agents and, on Windows, the `npx.cmd`
   shim it looked for.
+- Windows with Node from fnm: a service repair that finds the shell's fnm link gone (fnm links
+  each shell's Node through `%LOCALAPPDATA%\fnm_multishells`) keeps Node on the service's `PATH`
+  through fnm's default alias in `%APPDATA%\fnm`. It used to drop it, and every scheduled sync then
+  failed to run ccusage. This hits services moving off a 0.6.0 install, whose `PATH` named the
+  link of the shell they were installed from.
 
 ## 0.7.2 - 2026-10-01
 
