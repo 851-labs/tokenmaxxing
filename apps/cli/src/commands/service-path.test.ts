@@ -230,6 +230,149 @@ describe("stableServicePath", () => {
     );
   });
 
+  describe("Node version managers", () => {
+    // A machine with asdf, mise and nodenv, each with two Node versions (and
+    // mise's version aliases), plus rbenv, whose shims must stay as they are.
+    const asdf = `${home}/.asdf`;
+    const mise = `${home}/.local/share/mise`;
+    const nodenv = `${home}/.nodenv`;
+    const versionDirs: Record<string, string[]> = {
+      [`${asdf}/installs/nodejs`]: ["22.21.0", "24.11.0"],
+      [`${asdf}/installs/python`]: ["3.13.1"],
+      [`${mise}/installs/node`]: ["22", "22.21.0", "24", "24.11", "24.11.0", "latest", "lts"],
+      [`${nodenv}/versions`]: ["22.21.0", "24.11.0"],
+      [`${home}/.rbenv/versions`]: ["3.3.0"],
+    };
+    const files = new Set([
+      ...Object.entries(versionDirs).flatMap(([dir, names]) =>
+        names.flatMap((name) => (dir.includes("rbenv") ? [] : [`${dir}/${name}/bin/node`])),
+      ),
+      `${asdf}/shims`,
+      `${mise}/shims`,
+      `${nodenv}/shims`,
+      `${home}/.rbenv/shims`,
+    ]);
+    const managerPath = (entries: string[], fs: { exists?: (path: string) => boolean } = {}) =>
+      stableServicePath(entries.join(":"), {
+        env: { HOME: home },
+        exists: fs.exists ?? ((path) => files.has(path)),
+        platform: "linux",
+        readDir: (dir) => versionDirs[dir] ?? [],
+        readLink: () => {
+          throw new Error("no links");
+        },
+      });
+
+    // The 0.7.0 migration rewrote a 0.6.0 wrapper's `installs/nodejs/<v>/bin`
+    // (prepended by `asdf exec` when the CLI ran through asdf's npx) to
+    // ~/.asdf/shims. A launchd job runs in /, where a node set only in a
+    // project's .tool-versions does not apply: "No version is set for command node".
+    it("puts asdf's newest Node ahead of its shims, from `asdf exec` or a plain shell", () => {
+      const fromAsdfExec = managerPath([
+        `${asdf}/plugins/nodejs/shims`,
+        `${asdf}/installs/nodejs/22.21.0/bin`,
+        `${home}/bin`,
+        `${asdf}/shims`,
+        "/usr/bin",
+      ]);
+      const fromShell = managerPath([`${home}/bin`, `${asdf}/shims`, "/usr/bin"]);
+
+      expect(fromAsdfExec).toBe(
+        [`${home}/bin`, `${asdf}/installs/nodejs/24.11.0/bin`, `${asdf}/shims`, "/usr/bin"].join(
+          ":",
+        ),
+      );
+      expect(fromShell).toBe(fromAsdfExec);
+      // A 0.7.5 wrapper, and whatever a later repair recaptures from the new one.
+      expect(managerPath(fromAsdfExec.split(":"))).toBe(fromAsdfExec);
+    });
+
+    it("does the same for mise in activate mode, shims mode, and with version aliases", () => {
+      const expected = [`${mise}/installs/node/24.11.0/bin`, `${mise}/shims`, "/usr/bin"].join(":");
+
+      expect(
+        managerPath([
+          `${mise}/installs/node/24/bin`,
+          `${mise}/installs/python/3.13/bin`,
+          "/usr/bin",
+        ]),
+      ).toBe(expected);
+      expect(managerPath([`${mise}/shims`, "/usr/bin"])).toBe(expected);
+      expect(managerPath([`${mise}/installs/node/22.21.0/bin`, `${mise}/shims`, "/usr/bin"])).toBe(
+        expected,
+      );
+    });
+
+    it("does the same for nodenv, dropping what `nodenv exec` adds", () => {
+      const expected = [
+        `${nodenv}/versions/24.11.0/bin`,
+        `${nodenv}/shims`,
+        `${nodenv}/bin`,
+        "/usr/bin",
+      ].join(":");
+
+      expect(
+        managerPath([
+          `${nodenv}/versions/22.21.0/bin`,
+          `${nodenv}/libexec`,
+          `${nodenv}/plugins/node-build/bin`,
+          `${nodenv}/shims`,
+          `${nodenv}/bin`,
+          "/usr/bin",
+        ]),
+      ).toBe(expected);
+      expect(managerPath([`${nodenv}/shims`, `${nodenv}/bin`, "/usr/bin"])).toBe(expected);
+    });
+
+    it("skips versions without a node binary and keeps shims without any Node", () => {
+      const without = (missing: string) => (path: string) => files.has(path) && path !== missing;
+
+      expect(
+        managerPath([`${asdf}/shims`, "/usr/bin"], {
+          exists: without(`${asdf}/installs/nodejs/24.11.0/bin/node`),
+        }),
+      ).toBe(`${asdf}/installs/nodejs/22.21.0/bin:${asdf}/shims:/usr/bin`);
+      expect(
+        managerPath([`${home}/.rbenv/shims`, `${home}/.rbenv/versions/3.3.0/bin`, "/usr/libexec"]),
+      ).toBe(`${home}/.rbenv/shims:${home}/.rbenv/versions/3.3.0/bin:/usr/libexec`);
+    });
+
+    it("leaves Volta, nvm and fnm directories as they were", () => {
+      expect(
+        managerPath([
+          `${home}/.nvm/versions/node/v22.21.0/bin`,
+          `${home}/.local/share/fnm/node-versions/v22.21.0/installation/bin`,
+          "/usr/bin",
+        ]),
+      ).toBe(
+        [
+          `${home}/.nvm/versions/node/v22.21.0/bin`,
+          `${home}/.local/share/fnm/node-versions/v22.21.0/installation/bin`,
+          "/usr/bin",
+        ].join(":"),
+      );
+    });
+
+    it("finds mise's node.exe in a Windows version directory", () => {
+      const localAppData = "C:\\Users\\alex\\AppData\\Local";
+      const installs = `${localAppData}\\mise\\installs\\node`;
+      const path = stableServicePath([`${installs}\\22.21.0`, "C:\\Windows\\System32"].join(";"), {
+        env: { LOCALAPPDATA: localAppData },
+        exists: (dir) =>
+          dir === `${installs}\\24.11.0\\node.exe` || dir === `${localAppData}\\mise\\shims`,
+        platform: "win32",
+        readDir: (dir) => (dir === installs ? ["22.21.0", "24.11.0"] : []),
+        readLink: () => {
+          throw new Error("no links");
+        },
+      });
+
+      expect(path).toBe(
+        [`${installs}\\24.11.0`, `${localAppData}\\mise\\shims`, "C:\\Windows\\System32"].join(";"),
+      );
+    });
+  });
+
   it("drops relative and empty entries and repeats, keeping the first position", () => {
     expect(darwinPath(["", ".", "bin", "/usr/local/bin", "/usr/bin", "/usr/local/bin/"])).toBe(
       "/usr/local/bin:/usr/bin",

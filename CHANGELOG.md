@@ -5,6 +5,25 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Scheduled syncs work again for Node installed through asdf or mise when no global Node version
+  is set (only a project's `.tool-versions`, `mise.toml` or `.node-version`). Since 0.7.0 the
+  service wrapper's `PATH` swapped a version's install directory for the manager's shims, which
+  pick a version from the job's working directory (`/` under launchd, `~` under systemd) and found
+  none: one macOS device failed every run since its 0.7.0 migration with
+  `ccusage command failed: nodejs 26.3.0`. asdf, mise and nodenv entries on the wrapper's `PATH`
+  now lead to the newest installed Node's own `bin` directory, ahead of the shims, the same from
+  any shell (with or without `asdf exec`/`nodenv exec`, mise activate or shims mode). The service
+  template moves to 9, so each service's next run repairs its wrapper once; a wrapper whose `PATH`
+  is unchanged is not rewritten. Volta, nvm and fnm are unchanged.
+- A failed ccusage run's reason is now the stderr line that says why rather than the last one:
+  dyld's `Library not loaded: …` instead of the tail of its `Reason: tried: …`, asdf's
+  `No preset version installed for command node` or mise's `No version is set for shim: node`
+  instead of the installed versions listed after it, and npm's error instead of where it wrote its
+  log. The source's stored stderr keeps that line even when it came before the last five, and long
+  lines are cut at the end rather than the start.
+
 ## 0.7.5 - 2026-10-01
 
 ### Fixed

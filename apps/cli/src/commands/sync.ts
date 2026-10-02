@@ -19,6 +19,7 @@ import {
   CcusageRunError,
   type CcusageRunErrorCode,
   ccusageRunDiagnostic,
+  ccusageStderrReason,
   dailyCcusageCommand,
   runCcusageDailyReport,
   runCcusageSessionReport,
@@ -149,8 +150,8 @@ interface SyncSourcesFailure {
 /**
  * Why every source failed, without the console's `error:`/`hint:` framing: a
  * summary line, then one line per distinct reason naming the sources it hit
- * (with the last line of ccusage's stderr). The scheduled service reports the
- * same lines as its `lastError`.
+ * (with the line of ccusage's stderr that says why, `ccusageStderrReason`).
+ * The scheduled service reports the same lines as its `lastError`.
  */
 function describeSyncSourcesFailure({
   deferred = 0,
@@ -198,7 +199,7 @@ function describeSyncSourcesFailure({
         ? `${issue.message} (${missing})`
         : issue.detail === undefined
           ? issue.message
-          : `${issue.message}: ${issue.detail.split("\n").at(-1)}`;
+          : `${issue.message}: ${ccusageStderrReason(issue.detail) ?? issue.detail}`;
     reasons.set(reason, [...(reasons.get(reason) ?? []), source]);
   }
   return {
@@ -321,7 +322,7 @@ type SyncSourceSummary = SourceSummary & { sessions: number | null };
 interface SyncSourceIssue {
   code: CcusageRunErrorCode;
   /**
-   * The end of ccusage's stderr; without any, how the runner ended (`ccusageRunDiagnostic`:
+   * The end of ccusage's stderr (`stderrTail`); without any, how the runner ended (`ccusageRunDiagnostic`:
    * `bun.cmd could not be started (EINVAL)`, `npx.cmd exited with code 1`).
    */
   detail?: string | undefined;

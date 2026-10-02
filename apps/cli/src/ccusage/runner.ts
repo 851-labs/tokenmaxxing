@@ -28,6 +28,24 @@ const KILL_GRACE_MS = 2_000;
 const MAX_STDOUT_BYTES = 256 * 1024 * 1024;
 const STDERR_MAX_LINES = 5;
 const STDERR_MAX_CHARS = 500;
+const STDERR_MAX_LINE_CHARS = 240;
+/**
+ * stderr lines that say why ccusage could not run, best first. The reason is
+ * rarely the last line: dyld ends with a long `Reason: tried: …` after
+ * `Library not loaded`, asdf and mise end their "No version is set" message
+ * with the installed versions, and npm with where its log went.
+ */
+const STDERR_REASON_PATTERNS: readonly (readonly RegExp[])[] = [
+  [
+    /^dyld\b|Library not loaded/,
+    /No (?:preset )?version (?:is set|installed)|\bnot installed\b/i,
+    /command not found|: not found$|No such file or directory|Cannot find module/i,
+    /\bE(?:NOENT|ACCES|PERM)\b/,
+  ],
+  [/\berror\b/i, /Error:/],
+];
+/** Lines that look like reasons but never are. */
+const STDERR_NOISE = /A complete log of this run can be found in|^npm error code \S+$|^npm warn\b/i;
 /**
  * What a bun that took the `x` of `bun x` for a script to run prints, and nothing else:
  * `error: Script not found "x"` (Bun 1.0.19 and later) or `error: missing script "x"`
@@ -498,19 +516,52 @@ function killProcessTree(
   setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS).unref();
 }
 
+/**
+ * What a failed ccusage wrote to stderr, for the source's `detail`: the last lines, and the line
+ * `ccusageStderrReason` picks when it came earlier, each cut to STDERR_MAX_LINE_CHARS.
+ */
 function stderrTail(stderr: string | Buffer | undefined): string | undefined {
-  const lines = String(stderr ?? "")
-    .replaceAll(ANSI_ESCAPE_SEQUENCE, "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .slice(-STDERR_MAX_LINES)
-    .join("\n");
-  if (lines.length === 0) {
+  const lines = stderrLines(stderr).map((line) =>
+    line.length > STDERR_MAX_LINE_CHARS ? `${line.slice(0, STDERR_MAX_LINE_CHARS)}…` : line,
+  );
+  const reason = ccusageStderrReason(lines.join("\n"));
+  if (reason === undefined) {
     return undefined;
   }
 
-  return lines.length > STDERR_MAX_CHARS ? `…${lines.slice(-STDERR_MAX_CHARS)}` : lines;
+  const tail = lines.slice(-STDERR_MAX_LINES);
+  const head = tail.includes(reason) ? [] : [reason, "…"];
+  while (tail.length > 1 && [...head, ...tail].join("\n").length > STDERR_MAX_CHARS) {
+    tail.shift();
+  }
+  return [...head, ...tail].join("\n");
+}
+
+/**
+ * The stderr line that says why ccusage failed, for the one-line reason a failed sync reports:
+ * the first that matches STDERR_REASON_PATTERNS (dyld's `Library not loaded`, asdf's `No preset
+ * version installed for command node`, `env: node: No such file or directory`, then any error),
+ * else the last line.
+ */
+function ccusageStderrReason(stderr: string | undefined): string | undefined {
+  const lines = stderrLines(stderr);
+  const useful = lines.filter((line) => !STDERR_NOISE.test(line));
+  for (const patterns of STDERR_REASON_PATTERNS) {
+    const reason = useful.find((line) => patterns.some((pattern) => pattern.test(line)));
+    if (reason !== undefined) {
+      return reason;
+    }
+  }
+
+  return useful.at(-1) ?? lines.at(-1);
+}
+
+function stderrLines(stderr: string | Buffer | undefined): string[] {
+  return String(stderr ?? "")
+    .replaceAll(ANSI_ESCAPE_SEQUENCE, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 function ccusageCommandInvocations(
@@ -632,6 +683,7 @@ export {
   CcusageRunError,
   ccusageCommandInvocations,
   ccusageRunDiagnostic,
+  ccusageStderrReason,
   dailyCcusageCommand,
   execCcusage,
   findWindowsBun,
