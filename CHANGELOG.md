@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.3 - 2026-10-01
+
 ### Added
 
 - Added Oh My Pi (OMP) as a supported source (`--sources omp`). It runs ccusage's Pi parser on
@@ -51,15 +53,15 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ### Server
 
-- The API strips the same paths at ingest, from both stored usage rows and stored raw reports, so
-  uploads from older CLIs never store or show them on profiles, stats or the leaderboard. Paths
-  that reduce to the same name on the same day are merged.
-
-### Server
-
 - The API accepts `omp` on `/usage/ingest` and `/usage/sync` and stores its models without the
   `[pi]` label ccusage's Pi parser adds. The site labels it "Oh My Pi" on the stats page, home
   page, FAQ, privacy policy, and llms.txt.
+- The API also reduces model names that are local file paths to their file name at ingest, from both stored usage rows and stored raw reports, so
+  uploads from older CLIs never store or show them on profiles, stats or the leaderboard. Paths
+  that reduce to the same name on the same day are merged.
+- Chart tooltips on the site stay inside the chart and the screen on phones (they were clipped
+  and could scroll the page sideways), and a tap now keeps a tooltip open until you tap elsewhere
+  or scroll.
 
 ## 0.7.2 - 2026-10-01
 
