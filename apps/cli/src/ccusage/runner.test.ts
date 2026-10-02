@@ -460,6 +460,123 @@ describe("execCcusage", () => {
     });
   });
 
+  // What Bun prints when it takes the `x` of `bun x` for a script name: 1.0.19 and later, and
+  // before that. A prod Linux device's bun failed every run with the first.
+  const bunXRejections = ['error: Script not found "x"', 'error: missing script "x"'];
+
+  it.each(bunXRejections)("falls back to npx when bun prints %s", async (stderr) => {
+    const run = vi
+      .fn()
+      .mockReturnValueOnce(Effect.fail(exited("codex", 1, stderr)))
+      .mockReturnValueOnce(Effect.succeed('{"daily":[]}'));
+
+    await expect(
+      Effect.runPromise(
+        execCcusage(["codex", "daily"], "codex", "daily", { env: {}, platform: "linux", run }),
+      ),
+    ).resolves.toBe('{"daily":[]}');
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenLastCalledWith(
+      "npx",
+      ["-y", "ccusage@^20.0.22", "codex", "daily"],
+      {},
+      { windowsVerbatimArguments: false },
+    );
+  });
+
+  it("falls back to npx.cmd when bun.exe does not take `bun x`", async () => {
+    await windowsPath(["bun.exe", "npx.cmd"], async (dir) => {
+      const run = vi
+        .fn()
+        .mockReturnValueOnce(Effect.fail(exited("codex", 1, 'error: Script not found "x"')))
+        .mockReturnValueOnce(Effect.succeed('{"daily":[]}'));
+
+      await expect(
+        Effect.runPromise(
+          execCcusage(["codex", "daily"], "codex", "daily", {
+            env: { PATH: dir },
+            platform: "win32",
+            run,
+          }),
+        ),
+      ).resolves.toBe('{"daily":[]}');
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(run).toHaveBeenLastCalledWith(
+        "cmd.exe",
+        ["/d", "/s", "/c", '"npx.cmd "-y" "ccusage@^20.0.22" "codex" "daily""'],
+        { PATH: dir },
+        { windowsVerbatimArguments: true },
+      );
+    });
+  });
+
+  it("says that bun does not take `bun x` and npx is missing when neither can run ccusage", async () => {
+    const run = vi
+      .fn()
+      .mockReturnValueOnce(Effect.fail(exited("codex", 1, 'error: Script not found "x"')))
+      .mockReturnValueOnce(Effect.fail(missingBun("codex")));
+
+    const error = await ccusageErrorFor(
+      execCcusage(["codex", "daily"], "codex", "daily", { env: {}, platform: "linux", run }),
+    );
+
+    expect(error.code).toBe("command_failed");
+    expect(error.runner).toBe("bun");
+    // The sync layer prefers stderr; this way the reason says what to do about it.
+    expect(error.stderr).toBeUndefined();
+    expect(ccusageRunDiagnostic(error)).toBe(
+      'bun does not support `bun x` (error: Script not found "x") and npx is not on PATH; update Bun or install Node.js',
+    );
+  });
+
+  it("names a bun that does not take `bun x` when the npx fallback fails too", async () => {
+    const run = vi
+      .fn()
+      .mockReturnValueOnce(Effect.fail(exited("codex", 1, 'error: missing script "x"')))
+      .mockReturnValueOnce(Effect.fail(exited("codex", 1)));
+
+    const error = await ccusageErrorFor(
+      execCcusage(["codex", "daily"], "codex", "daily", { env: {}, platform: "linux", run }),
+    );
+
+    expect(error.runner).toBe("npx");
+    expect(ccusageRunDiagnostic(error)).toBe(
+      'npx exited with code 1; tried first: bun does not support `bun x` (error: missing script "x")',
+    );
+  });
+
+  it.each([
+    ["ccusage's own error", "error: ccusage blew up"],
+    ["a script name other than x", 'error: Script not found "codex"'],
+    ["the message inside a longer line", 'TypeError: error: Script not found "x" in config'],
+  ])("reports a bun that ran ccusage as failed, without npx, for %s", async (_, stderr) => {
+    const run = vi.fn(() => Effect.fail(exited("codex", 1, stderr)));
+
+    const error = await ccusageErrorFor(
+      execCcusage(["codex", "daily"], "codex", "daily", { env: {}, platform: "linux", run }),
+    );
+
+    expect(error.code).toBe("command_failed");
+    expect(error.rejected).toBeUndefined();
+    expect(error.stderr).toBe(stderr);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("reports npx's own failure as is, even if it reads like bun's", async () => {
+    const run = vi
+      .fn()
+      .mockReturnValueOnce(Effect.fail(missingBun("codex")))
+      .mockReturnValueOnce(Effect.fail(exited("codex", 1, 'error: Script not found "x"')));
+
+    const error = await ccusageErrorFor(
+      execCcusage(["codex", "daily"], "codex", "daily", { env: {}, platform: "linux", run }),
+    );
+
+    expect(error.runner).toBe("npx");
+    expect(error.rejected).toBeUndefined();
+    expect(error.stderr).toBe('error: Script not found "x"');
+  });
+
   it("classifies command timeouts without trying the npm fallback", async () => {
     const run = vi.fn(() => Effect.never);
 
@@ -782,6 +899,40 @@ describe.skipIf(process.platform === "win32")("the real ccusage command runner",
           }),
         ),
       ).resolves.toBe('{"daily":["npx"]}\n');
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("falls back to npx when bun takes the x of `bun x` for a script", async () => {
+    const dir = await fakeBun(`echo 'error: Script not found "x"' >&2\nexit 1`);
+    try {
+      await writeFile(join(dir, "npx"), `#!/bin/sh\necho '{"daily":["npx"]}'\n`, { mode: 0o755 });
+
+      await expect(
+        Effect.runPromise(
+          execCcusage(["codex", "daily"], "codex", "daily", {
+            env: { PATH: `${dir}:/usr/bin:/bin` },
+          }),
+        ),
+      ).resolves.toBe('{"daily":["npx"]}\n');
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("says what to do when bun does not take `bun x` and there is no npx", async () => {
+    // Only the fake bun on PATH: CI runners have a real npx in /usr/bin or /usr/local/bin.
+    const dir = await fakeBun(`echo 'error: Script not found "x"' >&2\nexit 1`);
+    try {
+      const error = await ccusageErrorFor(
+        execCcusage(["codex", "daily"], "codex", "daily", { env: { PATH: dir } }),
+      );
+
+      expect(error.code).toBe("command_failed");
+      expect(ccusageRunDiagnostic(error)).toBe(
+        'bun does not support `bun x` (error: Script not found "x") and npx is not on PATH; update Bun or install Node.js',
+      );
     } finally {
       await rm(dir, { force: true, recursive: true });
     }

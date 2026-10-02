@@ -12,6 +12,8 @@
  *   hanging ccusage a full run whose ccusage hangs (npx on a black-holed network)
  *                   stops after the first timeout, records why, and the next
  *                   run syncs the rest
+ *   bun without bun x  a bun that prints `Script not found "x"` for `bun x`:
+ *                   every source falls back to npx and the run syncs
  *   path cases      install -> run -> reload-required repair -> run -> uninstall
  *                   under config dirs with spaces, (), &, ', ", \, $, % and
  *                   non-ASCII (Linux: with a daemon-reload while the repair
@@ -971,6 +973,55 @@ async function hangingCcusage() {
   assertUninstall(name, profile);
 }
 
+// A bun that takes the x of `bun x` for a script name and prints `error: Script not found "x"`,
+// as one Linux device's did on every run through 0.7.4. Bun was found and ran, so npx was
+// never tried and nothing synced; now ccusage falls back to npx (fake-npx.sh) and the run syncs.
+async function bunWithoutBunX() {
+  const name = "bun without bun x";
+  const noBunX = join(fakeBin, "no-bun-x");
+  const callsLog = join(fakeBin, "calls.log");
+  writeFileSync(noBunX, "");
+  try {
+    const profile = await profileFor(join(root, "cfg-no-bun-x"));
+    if (!install(name, profile)) {
+      return;
+    }
+    if (backend === "systemd") {
+      await waitForSystemdRun(60_000);
+    }
+    // A full run, as after every CLI update, so every source runs ccusage.
+    rmSync(configFile(profile, "service-sources.json"), { force: true });
+    const callsBefore = fileSize(callsLog);
+    const observed = await scheduledRun(profile, "no-bun-x-run");
+    assertSuccessfulRun(name, observed, { allowCooldown: true });
+    const calls = readFrom(callsLog, callsBefore)
+      .split("\n")
+      .filter((line) => line.length > 0);
+    const bunCalls = calls.filter((line) => line.includes(" bun pid="));
+    const npxCalls = calls.filter(
+      (line) => line.includes(" npx pid=") && line.includes(" -y ccusage@^"),
+    );
+    check(
+      name,
+      "every ccusage run tried bun x first, then npx",
+      bunCalls.length > 0 && npxCalls.length === bunCalls.length,
+      `bun ${bunCalls.length}, npx ${npxCalls.length}: ${oneLine(calls.slice(0, 4).join(" | "), 400)}`,
+    );
+    const sources = (observed.line?.sources ?? []) as Array<{ source?: string; status?: string }>;
+    check(
+      name,
+      "the run syncs through npx without an error",
+      sources.some((source) => source.status === "synced") &&
+        sources.every((source) => source.status !== "failed") &&
+        observed.line?.error === undefined,
+      oneLine(JSON.stringify(observed.line), 900),
+    );
+    assertUninstall(name, profile);
+  } finally {
+    rmSync(noBunX, { force: true });
+  }
+}
+
 async function pathCase(name: string, configDir: string) {
   const keepAs = label(name);
   const profile = await profileFor(configDir);
@@ -1311,6 +1362,7 @@ try {
     uninstallAll();
     await scenario("core", core);
     await scenario("hanging ccusage", hangingCcusage);
+    await scenario("bun without bun x", bunWithoutBunX);
     const pathCases: Record<string, string> =
       backend === "launchd"
         ? {

@@ -5,6 +5,17 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Syncs no longer fail on every run when `bun` is on `PATH` but takes the `x` of `bun x` for a
+  script name: it prints `error: Script not found "x"` (or `missing script "x"` before Bun 1.0.19)
+  and ccusage never runs. One Linux device's every run failed with
+  `codex: ccusage command failed: error: Script not found "x"`, and npx was never tried because
+  bun had been found and started. ccusage now falls back to npx then too. When there is no npx
+  either, the reason says so, e.g. `bun does not support \`bun x\` (error: Script not found "x")
+  and npx is not on PATH; update Bun or install Node.js`. A ccusage that ran and failed is still
+  reported as such.
+
 ## 0.7.4 - 2026-10-01
 
 ### Fixed

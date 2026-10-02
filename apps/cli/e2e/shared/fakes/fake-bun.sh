@@ -17,6 +17,14 @@ if [ -f "$dir/hang" ]; then
   exit 1
 fi
 
+# <fakebin>/no-bun-x makes it answer like a bun that takes the x of `bun x` for
+# a script name, as one Linux device's did on every run through 0.7.4: ccusage
+# never runs, so the CLI falls back to npx (fake-npx.sh).
+if [ -f "$dir/no-bun-x" ]; then
+  echo 'error: Script not found "x"' >&2
+  exit 1
+fi
+
 if [ "$1" != x ]; then
   echo "fake bun: unsupported invocation: $*" >&2
   exit 1

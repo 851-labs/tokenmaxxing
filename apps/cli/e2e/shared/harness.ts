@@ -359,8 +359,9 @@ function readBuild(buildJson: string): Build {
 /** Compiles the fake `bun` (and copies the fake ccusage) into `dir`; returns `dir`. */
 /**
  * The fake `bun` scheduled runs find first on PATH. On macOS/Linux it is a
- * shell script that execs node in place, like real `bun x`; Windows has no
- * exec, so there it is fake-bun.ts compiled to bun.exe.
+ * shell script that execs node in place, like real `bun x`, next to a fake
+ * `npx` for the runs that fall back to it; Windows has no exec, so there it
+ * is fake-bun.ts compiled to bun.exe.
  */
 function buildFakeBin(dir: string): string {
   mkdirSync(dir, { recursive: true });
@@ -382,8 +383,10 @@ function buildFakeBin(dir: string): string {
       throw new Error("could not compile the fake bun");
     }
   } else {
-    copyFileSync(join(sharedDir, "fakes", "fake-bun.sh"), join(dir, "bun"));
-    chmodSync(join(dir, "bun"), 0o755);
+    for (const name of ["bun", "npx"]) {
+      copyFileSync(join(sharedDir, "fakes", `fake-${name}.sh`), join(dir, name));
+      chmodSync(join(dir, name), 0o755);
+    }
   }
   copyFileSync(join(sharedDir, "fakes", "fake-ccusage.mjs"), join(dir, "fake-ccusage.mjs"));
   return dir;
