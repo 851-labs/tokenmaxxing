@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.6 - 2026-10-02
+
 ### Fixed
 
 - Scheduled syncs work again for Node installed through asdf or mise when no global Node version
