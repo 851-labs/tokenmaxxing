@@ -13,8 +13,8 @@ import { type CcusageEnv, ccusageSourceArgs, ccusageSourceEnv } from "./source-e
 
 /**
  * Shells out to `bun x ccusage@^20.0.22 <source> daily --json --breakdown`, falling back to
- * npx when bun is missing or cannot be started. Runner and report failures stay typed so the
- * sync layer can distinguish them from valid empty reports.
+ * npx when bun is missing, cannot be started or does not take `bun x`. Runner and report
+ * failures stay typed so the sync layer can distinguish them from valid empty reports.
  */
 
 // 20.0.21 added the Antigravity and ZCode adapters; 20.0.22 stopped dropping
@@ -28,6 +28,13 @@ const KILL_GRACE_MS = 2_000;
 const MAX_STDOUT_BYTES = 256 * 1024 * 1024;
 const STDERR_MAX_LINES = 5;
 const STDERR_MAX_CHARS = 500;
+/**
+ * What a bun that took the `x` of `bun x` for a script to run prints, and nothing else:
+ * `error: Script not found "x"` (Bun 1.0.19 and later) or `error: missing script "x"`
+ * (earlier). Every Bun release since 0.4 takes `bun x`, yet one Linux device's bun printed the
+ * former for every run, so this goes by what bun says rather than by its version.
+ */
+const BUN_X_REJECTED = /^error: (?:script not found|missing script) "x"$/im;
 const ANSI_ESCAPE_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
 /** What ccusage prints for a source with no logs; used when there is nothing to point it at. */
 const EMPTY_REPORTS: Record<CcusageReportKind, string> = {
@@ -42,6 +49,10 @@ class CcusageRunError extends Data.TaggedError("CcusageRunError")<{
   readonly source: string;
   /** Runners tried before this one that could not be started (`ccusageRunDiagnostic`s). */
   readonly earlier?: readonly string[] | undefined;
+  /** Runners tried after this one that were not on PATH, e.g. `npx`. */
+  readonly missing?: readonly string[] | undefined;
+  /** What a bun that does not take `bun x` printed instead of running ccusage; see BUN_X_REJECTED. */
+  readonly rejected?: string | undefined;
   /** What ran ccusage: `bun`, `npx`, or on Windows `bun.exe`, `bun.cmd` or `npx.cmd`. */
   readonly runner?: string | undefined;
   /** Why the runner could not be started at all, e.g. `EINVAL`; unset once it ran. */
@@ -219,7 +230,7 @@ function execCcusage(
       Effect.timeout(`${Math.max(1, options.timeoutMs ?? RUN_TIMEOUT_MS)} millis`),
       Effect.mapError((error) =>
         error instanceof CcusageRunError
-          ? withRunner(error, invocation.runner)
+          ? bunXRejection(withRunner(error, invocation.runner))
           : new CcusageRunError({
               cause: error,
               code: "command_timed_out",
@@ -229,9 +240,10 @@ function execCcusage(
             }),
       ),
     );
-  // The next runner gets a turn only when this one never ran: missing, or refused by the OS or
-  // the runtime (Bun 1.4 throws for a .cmd it cannot quote). A ccusage that ran and failed is
-  // reported as is, never hidden behind another runner's attempt.
+  // The next runner gets a turn only when this one never ran ccusage: missing, refused by the OS
+  // or the runtime (Bun 1.4 throws for a .cmd it cannot quote), or a bun that does not take
+  // `bun x`. A ccusage that ran and failed is reported as is, never hidden behind another
+  // runner's attempt.
   const runInvocations = (
     invocations: readonly CcusageCommandInvocation[],
     env: CcusageEnv,
@@ -243,7 +255,7 @@ function execCcusage(
     }
     return runInvocation(invocation, env).pipe(
       Effect.catch((error: CcusageRunError) =>
-        rest.length > 0 && (error.code === "command_not_found" || error.startError !== undefined)
+        rest.length > 0 && neverRanCcusage(error)
           ? runInvocations(rest, env, [...tried, error])
           : Effect.fail(reportedFailure([...tried, error])),
       ),
@@ -272,24 +284,55 @@ function execCcusage(
 }
 
 function withRunner(error: CcusageRunError, runner: string): CcusageRunError {
-  return error.runner === undefined
-    ? new CcusageRunError({
-        cause: error.cause,
-        code: error.code,
-        earlier: error.earlier,
-        report: error.report,
-        runner,
-        source: error.source,
-        startError: error.startError,
-        stderr: error.stderr,
-      })
-    : error;
+  return error.runner === undefined ? withFields(error, { runner }) : error;
+}
+
+function withFields(
+  error: CcusageRunError,
+  fields: Partial<Pick<CcusageRunError, "earlier" | "missing" | "rejected" | "runner" | "stderr">>,
+): CcusageRunError {
+  return new CcusageRunError({
+    cause: error.cause,
+    code: error.code,
+    earlier: error.earlier,
+    missing: error.missing,
+    rejected: error.rejected,
+    report: error.report,
+    runner: error.runner,
+    source: error.source,
+    startError: error.startError,
+    stderr: error.stderr,
+    ...fields,
+  });
+}
+
+/**
+ * A bun that exited printing BUN_X_REJECTED's line never got to ccusage: it is no more use than a
+ * missing one, so npx gets its turn. Any other failure of a bun that ran is ccusage's own.
+ */
+function bunXRejection(error: CcusageRunError): CcusageRunError {
+  const rejected =
+    error.runner?.startsWith("bun") === true &&
+    error.code === "command_failed" &&
+    error.startError === undefined
+      ? error.stderr?.match(BUN_X_REJECTED)?.[0]
+      : undefined;
+  return rejected === undefined ? error : withFields(error, { rejected, stderr: undefined });
+}
+
+function neverRanCcusage(error: CcusageRunError): boolean {
+  return (
+    error.code === "command_not_found" ||
+    error.startError !== undefined ||
+    error.rejected !== undefined
+  );
 }
 
 /**
  * The failure to report once no runner is left: the last one that was there to run, since
  * "not found" from the npx fallback would hide a bun that exists but cannot start. It names
- * the runners that could not be started before it.
+ * the runners that could not be started before it and, after a bun that does not take
+ * `bun x`, the ones that were not on PATH.
  */
 function reportedFailure(tried: readonly CcusageRunError[]): CcusageRunError {
   const found = tried.filter((error) => error.code !== "command_not_found");
@@ -297,24 +340,23 @@ function reportedFailure(tried: readonly CcusageRunError[]): CcusageRunError {
   const earlier = found
     .filter((error) => error !== reported)
     .flatMap((error) => ccusageRunDiagnostic(error) ?? []);
-  return earlier.length === 0
+  const missing =
+    reported.rejected === undefined
+      ? []
+      : tried.slice(tried.indexOf(reported) + 1).flatMap((error) => error.runner ?? []);
+  return earlier.length === 0 && missing.length === 0
     ? reported
-    : new CcusageRunError({
-        cause: reported.cause,
-        code: reported.code,
-        earlier,
-        report: reported.report,
-        runner: reported.runner,
-        source: reported.source,
-        startError: reported.startError,
-        stderr: reported.stderr,
+    : withFields(reported, {
+        ...(earlier.length === 0 ? {} : { earlier }),
+        ...(missing.length === 0 ? {} : { missing }),
       });
 }
 
 /**
  * One line on how the runner ended, for a failure without stderr: `bun.cmd could not be
  * started (EINVAL)`, `npx.cmd exited with code 1; tried first: bun.exe could not be started
- * (EACCES)`. It names runners and error codes only, never a path.
+ * (EACCES)`, `bun does not support \`bun x\` (error: Script not found "x") and npx is not on
+ * PATH; update Bun or install Node.js`. It names runners and error codes only, never a path.
  */
 function ccusageRunDiagnostic(error: CcusageRunError): string | undefined {
   const runner = error.runner ?? "ccusage";
@@ -322,19 +364,31 @@ function ccusageRunDiagnostic(error: CcusageRunError): string | undefined {
   const ended =
     error.startError !== undefined
       ? `${runner} could not be started (${error.startError})`
-      : error.code !== "command_failed"
-        ? undefined
-        : typeof exit?.signal === "string"
-          ? `${runner} was stopped by ${exit.signal}`
-          : typeof exit?.code === "number"
-            ? `${runner} exited with code ${exit.code}`
-            : undefined;
+      : error.rejected !== undefined
+        ? bunXRejectedDiagnostic(runner, error.rejected, error.missing ?? [])
+        : error.code !== "command_failed"
+          ? undefined
+          : typeof exit?.signal === "string"
+            ? `${runner} was stopped by ${exit.signal}`
+            : typeof exit?.code === "number"
+              ? `${runner} exited with code ${exit.code}`
+              : undefined;
   const earlier = error.earlier ?? [];
   if (earlier.length === 0) {
     return ended;
   }
 
   return `${ended ?? `${runner} failed`}; tried first: ${earlier.join("; ")}`;
+}
+
+function bunXRejectedDiagnostic(runner: string, rejected: string, missing: readonly string[]) {
+  const rejection = `${runner} does not support \`bun x\` (${rejected})`;
+  if (missing.length === 0) {
+    return rejection;
+  }
+
+  const notOnPath = `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} not on PATH`;
+  return `${rejection} and ${notOnPath}; update Bun or install Node.js`;
 }
 
 function makeCcusageCommandRunner(source: string, report: CcusageReportKind): CcusageCommandRunner {
