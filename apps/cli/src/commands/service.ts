@@ -86,6 +86,7 @@ import {
 } from "./sync";
 import { removeNpmStagingDirs } from "./npm-staging";
 import {
+  claimServiceRunnersDir,
   removeRetiredServiceRunners,
   removeServiceRunnersDir,
   type RunnersRemoval,
@@ -921,6 +922,9 @@ function serviceInstallProgram(
     const runner = yield* Effect.gen(function* () {
       const runnerSpinner = yield* humanSpinner("Installing service runner", options);
       yield* removeRetiredServiceRunners(paths.runnersDir, platform);
+      // An uninstall whose runners dir could not be retired aside left a
+      // cleanup pending on it; cancel it before a runner goes in.
+      yield* claimServiceRunnersDir(paths.runnersDir, platform);
       const installedRunner = yield* (
         runtime.installServiceRunner ??
         ((servicePaths) =>
@@ -1064,6 +1068,12 @@ function serviceUninstallEffect(options: { json?: boolean | undefined } = {}) {
         yield* humanLog(
           "info",
           `Runner still running; removed once it exits: ${runners.path}`,
+          options,
+        );
+      } else if (runners._tag === "deferred") {
+        yield* humanLog(
+          "info",
+          `Runner dir still in use; removed once it is released: ${runners.path}`,
           options,
         );
       } else if (runners._tag === "left") {

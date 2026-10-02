@@ -5,6 +5,16 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Windows: `service uninstall` no longer leaves the service runners dir (about 78 MB) behind when
+  Windows will not let it be renamed aside either, say because antivirus keeps the running runner
+  open for longer than the uninstall's retries. The same hidden cleanup that deletes a renamed-aside
+  dir now deletes `service-runners` where it is, once whatever holds it lets go. Before, it was
+  left for the next install or uninstall, which after an uninstall might never come. A
+  `service install` while that cleanup is still pending cancels it first, so it never deletes the
+  new runner.
+
 ## 0.7.3 - 2026-10-01
 
 ### Added

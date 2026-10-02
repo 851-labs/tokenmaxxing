@@ -17,6 +17,12 @@
 #   uninstall from the runner
 #                   install and uninstall run by the service runner exe itself: the task
 #                   goes, the running runner is deleted by a hidden cleanup once it exits
+#   uninstall from a held runners dir
+#                   as above with a file in the runners dir held open past the CLI's
+#                   retries: the dir cannot be renamed aside, and is deleted in place
+#   reinstall during a pending runner cleanup
+#                   as above, then `service install` before the held file is released:
+#                   the install cancels the cleanup and its runner survives
 #
 # -Only <scenario>,... runs just those scenarios (for a local VM run).
 # -WatcherTask <name> starts each window watcher through that scheduled task
@@ -846,58 +852,115 @@ function Invoke-LegacyUpgrade {
 # `service install` and `uninstall` run by the service runner exe itself, as a
 # user who found it in the config dir would. Windows never deletes the image of
 # a running process, so uninstall retires the runners dir aside and a hidden
-# wscript.exe deletes it once the exe exits.
-function Invoke-UninstallFromRunner {
-  $scenario = "uninstall from the runner"
-  New-Profile (Join-Path $Root "cfg-uninstall-runner")
-  if (-not (Install-Service $scenario)) { return }
+# wscript.exe deletes it once the exe exits. When Windows will not let the dir
+# be renamed either (a handle held in it for longer than the CLI's ~2 s of
+# retries, as on the hosted ARM runner), the same hidden cleanup deletes it in
+# place, under a `service-runners.pending-<id>` marker.
+#
+# -HoldOpen holds a file in the runners dir open, without share-delete, from
+# before the uninstall until it has exited and at least 5 s have passed, so
+# uninstall must take the in-place path. -Reinstall then runs `service install`
+# while the cleanup is still pending: the install claims the dir and its fresh
+# runner outlives the cleanup.
+function Invoke-UninstallFromRunner([string]$Scenario, [string]$ProfileName, [switch]$HoldOpen, [switch]$Reinstall) {
+  New-Profile (Join-Path $Root $ProfileName)
+  if (-not (Install-Service $Scenario)) { return }
   $runner = (Get-Content -LiteralPath (Config-File "service-runner-current") -Raw).Trim()
+  $runnersDir = Config-File "service-runners"
+  $pendingName = '^service-runners\.pending-[0-9a-f]{8}(\.vbs)?$'
+  function Get-PendingCleanups { @(Get-ChildItem -LiteralPath $env:TOKENMAXXING_CONFIG_DIR -Force -File | Where-Object { $_.Name -match $pendingName } | ForEach-Object Name) }
 
-  # A reinstall from the runner keeps the running exe: it is already the current runner.
-  $reinstall = Invoke-Logged "runner: service install --json" { & $runner service install --json }
-  $pointer = (Get-Content -LiteralPath (Config-File "service-runner-current") -Raw).Trim()
-  Add-Check $scenario "service install from the runner over its own service" ($reinstall.code -eq 0 -and $pointer -eq $runner) "exit $($reinstall.code) runner=$pointer; $(Format-OneLine $reinstall.out)"
+  if (-not $HoldOpen) {
+    # A reinstall from the runner keeps the running exe: it is already the current runner.
+    $runnerInstall = Invoke-Logged "runner: service install --json" { & $runner service install --json }
+    $pointer = (Get-Content -LiteralPath (Config-File "service-runner-current") -Raw).Trim()
+    Add-Check $Scenario "service install from the runner over its own service" ($runnerInstall.code -eq 0 -and $pointer -eq $runner) "exit $($runnerInstall.code) runner=$pointer; $(Format-OneLine $runnerInstall.out)"
+  }
 
-  # Started through Start-Process so its pid roots the process tree the
-  # watcher attributes windows to, as for the watcher's own controls.
-  $label = "uninstall-from-runner"
-  $watcher = Start-Watcher $label
-  $stdout = Join-Path $OutDir "$label.stdout.txt"
-  $stderr = Join-Path $OutDir "$label.stderr.txt"
-  $uninstallProcess = Start-Process -FilePath $runner -ArgumentList "service uninstall --json" -NoNewWindow -PassThru `
-    -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-  $null = $uninstallProcess.Handle # keeps ExitCode readable after the exit
-  $uninstallProcess.WaitForExit()
-  $uninstallOut = "$(Get-Content -LiteralPath $stdout -Raw)$(Get-Content -LiteralPath $stderr -Raw)".Trim()
-  Write-E2ELog "---- runner: service uninstall --json (exit $($uninstallProcess.ExitCode))`n$uninstallOut"
-  $json = ConvertFrom-CliJson $uninstallOut
-  Add-Check $scenario "service uninstall from the runner" ($uninstallProcess.ExitCode -eq 0 -and $json.status -eq "ok") "exit $($uninstallProcess.ExitCode): $(Format-OneLine $uninstallOut)"
-  $pending = @($json.pendingRemoval)
-  Add-Check $scenario "the running runner is retired aside" ($pending.Count -eq 1 -and $pending[0] -match '\\service-runners\.retired-[0-9a-f]{8}$' -and -not (Test-Path -LiteralPath (Config-File "service-runners"))) "pendingRemoval=$($pending -join ', ')"
-  $task = Get-Task
-  Add-Check $scenario "task removed" ($task._exit -ne 0) (Format-OneLine $task._raw 200)
+  # Holding a handle without share-delete on a file in the dir makes Windows
+  # refuse both its delete and its rename until the handle is closed.
+  $hold = @{ stream = $null; at = $null }
+  if ($HoldOpen) {
+    $hold.stream = [System.IO.File]::Open((Join-Path $runnersDir "held-by-e2e.txt"), "Create", "ReadWrite", "None")
+    $hold.at = Get-Date
+  }
+  function Close-Held {
+    if ($null -eq $hold.stream) { return }
+    $remaining = 5000 - ((Get-Date) - $hold.at).TotalMilliseconds
+    if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int]$remaining) }
+    $hold.stream.Dispose()
+    $hold.stream = $null
+  }
 
-  $status = ConvertFrom-CliJson (Tmx @("service", "status", "--json")).out
-  Add-Check $scenario "status: not installed, no runner issue" ($status.installed -eq $false -and $null -eq $status.runnerIssue -and $null -eq $status.runnerPath) "installed=$($status.installed) runnerIssue=$($status.runnerIssue) runnerPath=$($status.runnerPath)"
-  $doctor = Tmx @("service", "doctor")
-  $problems = @($doctor.out -split "\r?\n" | Where-Object { $_ -match '^\s*(WARN|FAIL)\s' })
-  Add-Check $scenario "doctor: not installed is its only problem" ($problems.Count -eq 1 -and $problems[0] -match '^\s*FAIL\s+scheduler\s+not installed') "exit $($doctor.code): $(Format-OneLine ($problems -join ' | ') 600)"
+  try {
+    # Started through Start-Process so its pid roots the process tree the
+    # watcher attributes windows to, as for the watcher's own controls.
+    $label = "$(Get-ScenarioLabel $Scenario)-uninstall"
+    $watcher = Start-Watcher $label
+    $stdout = Join-Path $OutDir "$label.stdout.txt"
+    $stderr = Join-Path $OutDir "$label.stderr.txt"
+    $uninstallProcess = Start-Process -FilePath $runner -ArgumentList "service uninstall --json" -NoNewWindow -PassThru `
+      -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $null = $uninstallProcess.Handle # keeps ExitCode readable after the exit
+    $uninstallProcess.WaitForExit()
+    $uninstallOut = "$(Get-Content -LiteralPath $stdout -Raw)$(Get-Content -LiteralPath $stderr -Raw)".Trim()
+    Write-E2ELog "---- runner: service uninstall --json (exit $($uninstallProcess.ExitCode))`n$uninstallOut"
+    $json = ConvertFrom-CliJson $uninstallOut
+    Add-Check $Scenario "service uninstall from the runner" ($uninstallProcess.ExitCode -eq 0 -and $json.status -eq "ok") "exit $($uninstallProcess.ExitCode): $(Format-OneLine $uninstallOut)"
+    $pending = @($json.pendingRemoval)
+    $cleanups = Get-PendingCleanups
+    $retiredAside = $pending.Count -eq 1 -and $pending[0] -match '\\service-runners\.retired-[0-9a-f]{8}$' -and -not (Test-Path -LiteralPath $runnersDir)
+    $cleanedInPlace = $pending.Count -eq 1 -and $pending[0] -eq $runnersDir -and $cleanups.Count -eq 2
+    $detail = "pendingRemoval=$($pending -join ', ') pending cleanups=[$($cleanups -join ', ')]"
+    if ($HoldOpen) {
+      Add-Check $Scenario "the held runners dir is left to a cleanup in place" $cleanedInPlace $detail
+    } else {
+      Add-Check $Scenario "the running runner is retired aside, or left to a cleanup in place" ($retiredAside -or $cleanedInPlace) $detail
+    }
+    $task = Get-Task
+    Add-Check $Scenario "task removed" ($task._exit -ne 0) (Format-OneLine $task._raw 200)
 
-  $cleaned = Wait-Until { @(Get-ChildItem -LiteralPath $env:TOKENMAXXING_CONFIG_DIR -Force -Filter "service-runners*").Count -eq 0 } 30
-  $left = @(Get-ChildItem -LiteralPath $env:TOKENMAXXING_CONFIG_DIR -Force | ForEach-Object Name)
-  Add-Check $scenario "no runner files left after a short wait" $cleaned "config dir: $($left -join ', ')"
-  $extra = @($left | Where-Object { $_ -notmatch '^(config\.json|service\.log(\.\d+)?)$' })
-  Add-Check $scenario "only config.json and the service log remain" ($extra.Count -eq 0) "left: $($left -join ', ')"
-  $watch = Stop-Watcher $watcher
-  if ($null -eq $watch) { Add-Check $scenario "no window or focus change ($label)" $false "window watcher wrote no summary"; return }
-  $processes = @($watch.processes)
-  # The cleanup is a wscript.exe the runner started; its command line is read
-  # only if a source reported the start while it still ran, which its 1 s wait allows.
-  $cleanup = @($processes | Where-Object { $_.name -eq "wscript.exe" -and (Get-ParentProcess $processes $_).pid -eq $uninstallProcess.Id })
-  $cleanupScript = @($cleanup | Where-Object { $null -eq $_.commandLine -or $_.commandLine -match 'service-runners\.retired-[0-9a-f]{8}\.vbs"?$' })
-  Add-Check $scenario "cleanup ran through a wscript.exe started by the runner" ((Test-WatcherLive $watch) -and $cleanupScript.Count -gt 0) "$(Format-WatchSources $watch) runner=#$($uninstallProcess.Id) seen=[$(Format-WatchedProcesses $processes)]"
-  $seen = Get-RunWindows ([pscustomobject]@{ watch = $watch; rootPids = @($uninstallProcess.Id) })
-  Add-Check $scenario "no window or focus change ($label)" ($seen.windows.Count -eq 0 -and $seen.focus.Count -eq 0) $seen.detail
+    if ($Reinstall) {
+      # The cleanup is still waiting on the held file: the install must claim
+      # the dir (the script stops and deletes itself) before writing its runner.
+      if (-not (Install-Service $Scenario)) { Stop-Watcher $watcher | Out-Null; return }
+      $cleanups = Get-PendingCleanups
+      Add-Check $Scenario "the install cancelled the pending cleanup" ($cleanups.Count -eq 0) "pending cleanups=[$($cleanups -join ', ')]"
+      $newRunner = (Get-Content -LiteralPath (Config-File "service-runner-current") -Raw).Trim()
+      Close-Held
+      # Long enough for a cleanup that missed the claim to delete the dir.
+      Start-Sleep -Seconds 5
+      $version = Invoke-Logged "reinstalled runner: --version" { & $newRunner --version }
+      $status = ConvertFrom-CliJson (Tmx @("service", "status", "--json")).out
+      Add-Check $Scenario "the reinstalled runner outlives the cancelled cleanup" ($version.code -eq 0 -and $status.installed -eq $true -and $null -eq $status.runnerIssue) "runner=$newRunner --version exit $($version.code): $(Format-OneLine $version.out 100); installed=$($status.installed) runnerIssue=$($status.runnerIssue)"
+      Assert-Uninstall $Scenario
+    } else {
+      Close-Held
+      $status = ConvertFrom-CliJson (Tmx @("service", "status", "--json")).out
+      Add-Check $Scenario "status: not installed, no runner issue" ($status.installed -eq $false -and $null -eq $status.runnerIssue -and $null -eq $status.runnerPath) "installed=$($status.installed) runnerIssue=$($status.runnerIssue) runnerPath=$($status.runnerPath)"
+      $doctor = Tmx @("service", "doctor")
+      $problems = @($doctor.out -split "\r?\n" | Where-Object { $_ -match '^\s*(WARN|FAIL)\s' })
+      Add-Check $Scenario "doctor: not installed is its only problem" ($problems.Count -eq 1 -and $problems[0] -match '^\s*FAIL\s+scheduler\s+not installed') "exit $($doctor.code): $(Format-OneLine ($problems -join ' | ') 600)"
+    }
+
+    $cleaned = Wait-Until { @(Get-ChildItem -LiteralPath $env:TOKENMAXXING_CONFIG_DIR -Force -Filter "service-runners*").Count -eq 0 } 30
+    $left = @(Get-ChildItem -LiteralPath $env:TOKENMAXXING_CONFIG_DIR -Force | ForEach-Object Name)
+    Add-Check $Scenario "no runner files left after a short wait" $cleaned "config dir: $($left -join ', ')"
+    $extra = @($left | Where-Object { $_ -notmatch '^(config\.json|service\.log(\.\d+)?)$' })
+    Add-Check $Scenario "only config.json and the service log remain" ($extra.Count -eq 0) "left: $($left -join ', ')"
+    $watch = Stop-Watcher $watcher
+    if ($null -eq $watch) { Add-Check $Scenario "no window or focus change ($label)" $false "window watcher wrote no summary"; return }
+    $processes = @($watch.processes)
+    # The cleanup is a wscript.exe the runner started; its command line is read
+    # only if a source reported the start while it still ran, which its 1 s wait allows.
+    $cleanup = @($processes | Where-Object { $_.name -eq "wscript.exe" -and (Get-ParentProcess $processes $_).pid -eq $uninstallProcess.Id })
+    $cleanupScript = @($cleanup | Where-Object { $null -eq $_.commandLine -or $_.commandLine -match 'service-runners\.(retired|pending)-[0-9a-f]{8}\.vbs"?$' })
+    Add-Check $Scenario "cleanup ran through a wscript.exe started by the runner" ((Test-WatcherLive $watch) -and $cleanupScript.Count -gt 0) "$(Format-WatchSources $watch) runner=#$($uninstallProcess.Id) seen=[$(Format-WatchedProcesses $processes)]"
+    $seen = Get-RunWindows ([pscustomobject]@{ watch = $watch; rootPids = @($uninstallProcess.Id) })
+    Add-Check $Scenario "no window or focus change ($label)" ($seen.windows.Count -eq 0 -and $seen.focus.Count -eq 0) $seen.detail
+  } finally {
+    if ($null -ne $hold.stream) { $hold.stream.Dispose() }
+  }
 }
 
 # A scenario that throws records a FAIL and the next scenario still runs.
@@ -943,7 +1006,11 @@ if ($LegacyBin) {
   Add-Check "legacy upgrade" "legacy release available" $false "no -LegacyBin"
 }
 Use-Cli $TmxBin
-Invoke-Scenario "uninstall from the runner" { Invoke-UninstallFromRunner }
+Invoke-Scenario "uninstall from the runner" { Invoke-UninstallFromRunner "uninstall from the runner" "cfg-uninstall-runner" }
+Use-Cli $TmxBin
+Invoke-Scenario "uninstall from a held runners dir" { Invoke-UninstallFromRunner "uninstall from a held runners dir" "cfg-uninstall-held" -HoldOpen }
+Use-Cli $TmxBin
+Invoke-Scenario "reinstall during a pending runner cleanup" { Invoke-UninstallFromRunner "reinstall during a pending runner cleanup" "cfg-reinstall-pending" -HoldOpen -Reinstall }
 schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null
 # run-service-e2e.ps1 fails the job if this marker is missing.
 Add-Check "service" "all scenarios ran" $true "$((Get-Content -LiteralPath $script:E2EResults).Count) checks recorded"
