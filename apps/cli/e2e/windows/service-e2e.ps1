@@ -5,6 +5,7 @@
 #   core            install -> task + launcher -> scheduled run (no window) ->
 #                   error paths -> status/doctor/repair -> deferred repairs -> uninstall
 #   npx fallback    no bun on PATH: scheduled runs sync through npm's npx.cmd shim
+#   bun shim        bun only as npm's bun.cmd shim (`npm i -g bun`): scheduled runs sync through it
 #   version-manager node
 #                   node only from an fnm per-shell junction: install keeps fnm's default alias,
 #                   and a 0.6.0-style wrapper whose junction is gone is repaired back to it
@@ -505,6 +506,42 @@ function Invoke-NpxFallback {
   Assert-Uninstall $scenario
 }
 
+# `npm i -g bun` puts bun on PATH as a bun.cmd batch shim, with bun.exe in node_modules\bun\bin.
+# 0.7.3 spawned a bare `bun`: Bun 1.4 resolves that to bun.cmd and runs it through its own cmd.exe
+# line, but refuses the ^ in `ccusage@^...` (ERR_INVALID_ARG_VALUE). Every source failed with no
+# stderr, and since bun was "found", npx was never tried. The fake npx.cmd next to the shim records
+# any fallback, which must not be needed.
+function Invoke-BunShim {
+  $scenario = "bun shim"
+  $npmDir = Join-Path $Root "bunshim"
+  $bunBin = Join-Path $npmDir "node_modules\bun\bin"
+  New-Item -ItemType Directory -Force -Path $bunBin | Out-Null
+  Copy-Item -LiteralPath (Join-Path $FakeBin "bun.exe"), (Join-Path $FakeBin "fake-ccusage.mjs") -Destination $bunBin -Force
+  Copy-Item -LiteralPath "$PSScriptRoot\..\shared\fakes\fake-npx.mjs", "$PSScriptRoot\..\shared\fakes\fake-ccusage.mjs" -Destination $npmDir -Force
+  # npm's own bun.cmd (cmd-shim), byte for byte apart from line endings.
+  $shim = "@ECHO off`r`nGOTO start`r`n:find_dp0`r`nSET dp0=%~dp0`r`nEXIT /b`r`n:start`r`nSETLOCAL`r`nCALL :find_dp0`r`n`"%dp0%\node_modules\bun\bin\bun.exe`"   %*`r`n"
+  Set-Content -LiteralPath (Join-Path $npmDir "bun.cmd") -Value $shim -Encoding ascii -NoNewline
+  Set-Content -LiteralPath (Join-Path $npmDir "npx.cmd") -Value "@echo off`r`nnode `"%~dp0fake-npx.mjs`" %*`r`n" -Encoding ascii -NoNewline
+  $withoutBun = @($BasePath -split ";" | Where-Object { $_ -and -not (Test-Path -LiteralPath (Join-Path $_ "bun.exe")) -and -not (Test-Path -LiteralPath (Join-Path $_ "bun.cmd")) })
+  $env:PATH = (@($npmDir, $TmxBin) + $withoutBun) -join ";"
+  $bun = @(Get-Command bun -All -ErrorAction SilentlyContinue | ForEach-Object Source)
+  Add-Check $scenario "bun on PATH only as npm's bun.cmd" ($bun.Count -eq 1 -and $bun[0] -like "*\bun.cmd") "bun: $($bun -join ', ')"
+  New-Profile (Join-Path $Root "cfg-bun-shim")
+  if (-not (Install-Service $scenario)) { return }
+
+  $run = Invoke-TaskRun "bun-shim-run"
+  Assert-SuccessfulRun $scenario $run
+  Assert-NoWindow $scenario $run
+  $usage = @((Invoke-RestMethod -Uri "$Api/__sandbox/usage?userId=$script:UserId").rows)
+  Add-Check $scenario "ingested usage stored in the sandbox" ($usage.Count -gt 0) "$($usage.Count) usage_days rows"
+  $calls = @(Get-Content -LiteralPath (Join-Path $bunBin "calls.log") -ErrorAction SilentlyContinue | Where-Object { $_ -match " bun pid=" })
+  Copy-Item -LiteralPath (Join-Path $bunBin "calls.log") -Destination (Join-Path $OutDir "bun-shim-calls.log") -ErrorAction SilentlyContinue
+  Add-Check $scenario "ccusage ran through bun.cmd with its version range intact" ($calls.Count -gt 0 -and @($calls | Where-Object { $_ -notmatch " x ccusage@\^" }).Count -eq 0) "$($calls.Count) calls; first: $($calls | Select-Object -First 1)"
+  $npx = @(Get-Content -LiteralPath (Join-Path $npmDir "calls.log") -ErrorAction SilentlyContinue | Where-Object { $_ -match " npx pid=" })
+  Add-Check $scenario "no npx fallback" ($npx.Count -eq 0) "$($npx.Count) npx calls"
+  Assert-Uninstall $scenario
+}
+
 # Node only from a version manager: fnm puts each shell's node on PATH through a junction under
 # %LOCALAPPDATA%\fnm_multishells\<id> and drops it with the shell, so a wrapper must keep fnm's
 # default alias instead. 0.6.0 wrappers baked the junction in; the reload-required repair that
@@ -981,6 +1018,8 @@ schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null
 Invoke-Scenario "window watcher" { Invoke-WatcherControls }
 Invoke-Scenario "core" { Invoke-Core }
 Invoke-Scenario "npx fallback" { Invoke-NpxFallback }
+Use-Cli $TmxBin
+Invoke-Scenario "bun shim" { Invoke-BunShim }
 Use-Cli $TmxBin
 Invoke-Scenario "version-manager node" { Invoke-VersionManagerNode }
 Use-Cli $TmxBin

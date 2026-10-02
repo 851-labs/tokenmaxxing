@@ -18,6 +18,7 @@ import {
   type CcusageReportKind,
   CcusageRunError,
   type CcusageRunErrorCode,
+  ccusageRunDiagnostic,
   dailyCcusageCommand,
   runCcusageDailyReport,
   runCcusageSessionReport,
@@ -319,7 +320,10 @@ type SyncSourceSummary = SourceSummary & { sessions: number | null };
 
 interface SyncSourceIssue {
   code: CcusageRunErrorCode;
-  /** The end of ccusage's stderr, when it printed any. */
+  /**
+   * The end of ccusage's stderr; without any, how the runner ended (`ccusageRunDiagnostic`:
+   * `bun.cmd could not be started (EINVAL)`, `npx.cmd exited with code 1`).
+   */
   detail?: string | undefined;
   message: string;
   report: CcusageReportKind;
@@ -790,9 +794,10 @@ function syncSourceIssue(error: CcusageRunError): SyncSourceIssue {
             ? "ccusage returned invalid JSON"
             : `ccusage returned an invalid ${error.report} report`;
 
+  const detail = error.stderr ?? ccusageRunDiagnostic(error);
   return {
     code: error.code,
-    ...(error.stderr === undefined ? {} : { detail: error.stderr }),
+    ...(detail === undefined ? {} : { detail }),
     message,
     report: error.report,
   };
