@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.4 - 2026-10-01
+
 ### Fixed
 
 - Windows: `service uninstall` no longer leaves the service runners dir (about 78 MB) behind when
