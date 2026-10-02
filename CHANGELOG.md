@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.5 - 2026-10-01
+
 ### Fixed
 
 - Syncs no longer fail on every run when `bun` is on `PATH` but takes the `x` of `bun x` for a
