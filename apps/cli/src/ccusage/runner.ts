@@ -12,9 +12,9 @@ import type { CcusageSource } from "./sources";
 import { type CcusageEnv, ccusageSourceArgs, ccusageSourceEnv } from "./source-env";
 
 /**
- * Shells out to `bun x ccusage@^20.0.22 <source> daily --json --breakdown` (npx
- * fallback only when bun itself is missing). Runner and report failures stay
- * typed so the sync layer can distinguish them from valid empty reports.
+ * Shells out to `bun x ccusage@^20.0.22 <source> daily --json --breakdown`, falling back to
+ * npx when bun is missing or cannot be started. Runner and report failures stay typed so the
+ * sync layer can distinguish them from valid empty reports.
  */
 
 // 20.0.21 added the Antigravity and ZCode adapters; 20.0.22 stopped dropping
@@ -22,6 +22,8 @@ import { type CcusageEnv, ccusageSourceArgs, ccusageSourceEnv } from "./source-e
 const CCUSAGE_SPEC = "ccusage@^20.0.22";
 const RUN_TIMEOUT_MS = 180_000;
 const WINDOWS_NPX_SHIM = "npx.cmd";
+/** What `npm i -g bun` and pnpm put on PATH instead of bun.exe; cmd.exe has to run them. */
+const WINDOWS_BUN_SHIMS = ["bun.cmd", "bun.bat"] as const;
 const KILL_GRACE_MS = 2_000;
 const MAX_STDOUT_BYTES = 256 * 1024 * 1024;
 const STDERR_MAX_LINES = 5;
@@ -38,6 +40,12 @@ class CcusageRunError extends Data.TaggedError("CcusageRunError")<{
   readonly code: CcusageRunErrorCode;
   readonly report: CcusageReportKind;
   readonly source: string;
+  /** Runners tried before this one that could not be started (`ccusageRunDiagnostic`s). */
+  readonly earlier?: readonly string[] | undefined;
+  /** What ran ccusage: `bun`, `npx`, or on Windows `bun.exe`, `bun.cmd` or `npx.cmd`. */
+  readonly runner?: string | undefined;
+  /** Why the runner could not be started at all, e.g. `EINVAL`; unset once it ran. */
+  readonly startError?: string | undefined;
   /** The end of what the command wrote to stderr, e.g. `env: node: No such file or directory`. */
   readonly stderr?: string | undefined;
 }> {}
@@ -51,10 +59,15 @@ interface RunOptions {
 interface CcusageCommandInvocation {
   args: string[];
   command: string;
+  /** The runner's name in diagnostics: `bun`, `npx`, `bun.exe`, `bun.cmd`, `npx.cmd`. */
+  runner: string;
   /** The Windows command shim that `cmd.exe` runs; missing from PATH means command_not_found. */
   shim?: string | undefined;
   windowsVerbatimArguments?: boolean | undefined;
 }
+
+/** The bun a Windows PATH offers: bun.exe itself, or only a batch shim that starts it. */
+type WindowsBun = { kind: "exe"; path: string } | { kind: "shim"; name: string };
 
 interface CcusageSpawnOptions {
   /** Hand `args` to CreateProcess as written: the `cmd.exe /d /s /c` line quotes itself. */
@@ -183,7 +196,9 @@ function execCcusage(
   const platform = options.platform ?? process.platform;
   const runInvocation = (invocation: CcusageCommandInvocation, env: CcusageEnv) =>
     Effect.promise(() =>
-      invocation.shim === undefined ? Promise.resolve(true) : isOnWindowsPath(invocation.shim, env),
+      invocation.shim === undefined
+        ? Promise.resolve(true)
+        : findOnWindowsPath(invocation.shim, env).then((found) => found !== undefined),
     ).pipe(
       Effect.flatMap((found) =>
         found
@@ -204,15 +219,36 @@ function execCcusage(
       Effect.timeout(`${Math.max(1, options.timeoutMs ?? RUN_TIMEOUT_MS)} millis`),
       Effect.mapError((error) =>
         error instanceof CcusageRunError
-          ? error
+          ? withRunner(error, invocation.runner)
           : new CcusageRunError({
               cause: error,
               code: "command_timed_out",
               report,
+              runner: invocation.runner,
               source,
             }),
       ),
     );
+  // The next runner gets a turn only when this one never ran: missing, or refused by the OS or
+  // the runtime (Bun 1.4 throws for a .cmd it cannot quote). A ccusage that ran and failed is
+  // reported as is, never hidden behind another runner's attempt.
+  const runInvocations = (
+    invocations: readonly CcusageCommandInvocation[],
+    env: CcusageEnv,
+    tried: readonly CcusageRunError[] = [],
+  ): Effect.Effect<string, CcusageRunError> => {
+    const [invocation, ...rest] = invocations;
+    if (invocation === undefined) {
+      return Effect.fail(reportedFailure(tried));
+    }
+    return runInvocation(invocation, env).pipe(
+      Effect.catch((error: CcusageRunError) =>
+        rest.length > 0 && (error.code === "command_not_found" || error.startError !== undefined)
+          ? runInvocations(rest, env, [...tried, error])
+          : Effect.fail(reportedFailure([...tried, error])),
+      ),
+    );
+  };
 
   return Effect.promise(() => ccusageSourceEnv(source, options.env ?? process.env, platform)).pipe(
     Effect.flatMap((env) => {
@@ -221,20 +257,90 @@ function execCcusage(
         return Effect.succeed(EMPTY_REPORTS[report]);
       }
 
-      const [primary, fallback] = ccusageCommandInvocations([...args, ...sourceArgs], platform);
-      return runInvocation(primary, env).pipe(
-        Effect.catch((error: CcusageRunError) =>
-          error.code === "command_not_found" ? runInvocation(fallback, env) : Effect.fail(error),
+      return Effect.promise(() =>
+        platform === "win32" ? findWindowsBun(env) : Promise.resolve(undefined),
+      ).pipe(
+        Effect.flatMap((bun) =>
+          runInvocations(
+            ccusageCommandInvocations([...args, ...sourceArgs], platform, env, bun),
+            env,
+          ),
         ),
       );
     }),
   );
 }
 
+function withRunner(error: CcusageRunError, runner: string): CcusageRunError {
+  return error.runner === undefined
+    ? new CcusageRunError({
+        cause: error.cause,
+        code: error.code,
+        earlier: error.earlier,
+        report: error.report,
+        runner,
+        source: error.source,
+        startError: error.startError,
+        stderr: error.stderr,
+      })
+    : error;
+}
+
+/**
+ * The failure to report once no runner is left: the last one that was there to run, since
+ * "not found" from the npx fallback would hide a bun that exists but cannot start. It names
+ * the runners that could not be started before it.
+ */
+function reportedFailure(tried: readonly CcusageRunError[]): CcusageRunError {
+  const found = tried.filter((error) => error.code !== "command_not_found");
+  const reported = found.at(-1) ?? tried.at(-1)!;
+  const earlier = found
+    .filter((error) => error !== reported)
+    .flatMap((error) => ccusageRunDiagnostic(error) ?? []);
+  return earlier.length === 0
+    ? reported
+    : new CcusageRunError({
+        cause: reported.cause,
+        code: reported.code,
+        earlier,
+        report: reported.report,
+        runner: reported.runner,
+        source: reported.source,
+        startError: reported.startError,
+        stderr: reported.stderr,
+      });
+}
+
+/**
+ * One line on how the runner ended, for a failure without stderr: `bun.cmd could not be
+ * started (EINVAL)`, `npx.cmd exited with code 1; tried first: bun.exe could not be started
+ * (EACCES)`. It names runners and error codes only, never a path.
+ */
+function ccusageRunDiagnostic(error: CcusageRunError): string | undefined {
+  const runner = error.runner ?? "ccusage";
+  const exit = error.cause as { code?: unknown; signal?: unknown } | undefined;
+  const ended =
+    error.startError !== undefined
+      ? `${runner} could not be started (${error.startError})`
+      : error.code !== "command_failed"
+        ? undefined
+        : typeof exit?.signal === "string"
+          ? `${runner} was stopped by ${exit.signal}`
+          : typeof exit?.code === "number"
+            ? `${runner} exited with code ${exit.code}`
+            : undefined;
+  const earlier = error.earlier ?? [];
+  if (earlier.length === 0) {
+    return ended;
+  }
+
+  return `${ended ?? `${runner} failed`}; tried first: ${earlier.join("; ")}`;
+}
+
 function makeCcusageCommandRunner(source: string, report: CcusageReportKind): CcusageCommandRunner {
   return (command, commandArgs, env, spawnOptions) =>
     Effect.callback<string, CcusageRunError>((resume) => {
-      const fail = (cause: unknown, stderr?: string) =>
+      const fail = (cause: unknown, stderr?: string, started = true) =>
         resume(
           Effect.fail(
             new CcusageRunError({
@@ -242,6 +348,7 @@ function makeCcusageCommandRunner(source: string, report: CcusageReportKind): Cc
               code: isMissingCommand(cause) ? "command_not_found" : "command_failed",
               report,
               source,
+              startError: started ? undefined : spawnErrorCode(cause),
               stderr: stderrTail(stderr),
             }),
           ),
@@ -262,7 +369,7 @@ function makeCcusageCommandRunner(source: string, report: CcusageReportKind): Cc
       } catch (cause) {
         // spawn throws for some commands (EINVAL for a .cmd without a shell). Thrown out of this
         // callback it became a defect that ended the whole run with nothing logged or reported.
-        fail(cause);
+        fail(cause, undefined, false);
         return;
       }
       const stdout: Buffer[] = [];
@@ -280,7 +387,10 @@ function makeCcusageCommandRunner(source: string, report: CcusageReportKind): Cc
       child.stderr.on("data", (chunk: Buffer) => {
         stderr.push(chunk);
       });
-      child.on("error", (error) => fail(error, Buffer.concat(stderr).toString("utf8")));
+      // A child that never got a pid was never started (ENOENT, EACCES).
+      child.on("error", (error) =>
+        fail(error, Buffer.concat(stderr).toString("utf8"), child.pid !== undefined),
+      );
       child.on("close", (code, signal) => {
         if (code === 0) {
           resume(Effect.succeed(Buffer.concat(stdout).toString("utf8")));
@@ -353,48 +463,111 @@ function ccusageCommandInvocations(
   args: string[],
   platform: NodeJS.Platform = process.platform,
   env: Record<string, string | undefined> = process.env,
-): [CcusageCommandInvocation, CcusageCommandInvocation] {
-  const primary = { args: ["x", CCUSAGE_SPEC, ...args], command: "bun" };
+  windowsBun?: WindowsBun,
+): CcusageCommandInvocation[] {
+  const bunArgs = ["x", CCUSAGE_SPEC, ...args];
+  const npxArgs = ["-y", CCUSAGE_SPEC, ...args];
   if (platform !== "win32") {
-    return [primary, { args: ["-y", CCUSAGE_SPEC, ...args], command: "npx" }];
+    return [
+      { args: bunArgs, command: "bun", runner: "bun" },
+      { args: npxArgs, command: "npx", runner: "npx" },
+    ];
   }
 
-  // npm's npx.cmd is a batch file, which Node and Bun (since 1.4) refuse to start without a shell
-  // (EINVAL), so it runs through cmd.exe. The arguments are quoted: cmd reads the ^ in the version
-  // range as its escape character anywhere outside quotes. The shim's name is not: a batch file
-  // that cmd finds on PATH by a quoted name gets the current directory as %~dp0, which is where
-  // npm's shim looks for npx-cli.js. Every word is fixed, apart from OMP session paths, which
-  // `ompSessionDirs` only passes without `%` or `"`.
-  const quoted = ["-y", CCUSAGE_SPEC, ...args].map((word) => `"${word}"`);
-  return [
-    primary,
-    {
-      args: ["/d", "/s", "/c", `"${[WINDOWS_NPX_SHIM, ...quoted].join(" ")}"`],
-      command: env["ComSpec"] ?? "cmd.exe",
-      shim: WINDOWS_NPX_SHIM,
-      windowsVerbatimArguments: true,
-    },
-  ];
+  // A bare `bun` would be resolved by the runtime, which takes the first bun.exe, bun.cmd or
+  // bun.bat on PATH and, for a batch file, refuses the ^ in the version range
+  // (ERR_INVALID_ARG_VALUE). So bun.exe runs by its path, and a shim the way npx.cmd does.
+  const bun =
+    windowsBun === undefined
+      ? []
+      : windowsBun.kind === "exe"
+        ? [{ args: bunArgs, command: windowsBun.path, runner: "bun.exe" }]
+        : [windowsShimInvocation(windowsBun.name, bunArgs, env)];
+  return [...bun, windowsShimInvocation(WINDOWS_NPX_SHIM, npxArgs, env)];
 }
 
-/** Whether `name` is in a directory on the Windows PATH that `env` gives the child. */
-async function isOnWindowsPath(name: string, env: CcusageEnv): Promise<boolean> {
-  // Windows spells it Path; a copied environment keeps whatever case it had.
-  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
-  const dirs = (pathKey === undefined ? "" : (env[pathKey] ?? ""))
-    .split(";")
-    .map((dir) => dir.trim().replace(/^"(.*)"$/, "$1"))
-    .filter((dir) => dir.length > 0);
-  for (const dir of dirs) {
-    try {
-      await access(join(dir, name));
-      return true;
-    } catch {
-      // Try the next PATH entry.
+/**
+ * Runs a batch-file shim like npm's npx.cmd through cmd.exe: Node and Bun (since 1.4) refuse
+ * to start one without a shell (EINVAL), and Bun's own shell quoting rejects the ^ in the
+ * version range. The arguments are quoted: cmd reads ^ as its escape character anywhere outside
+ * quotes. The shim's name is not: a batch file that cmd finds on PATH by a quoted name gets the
+ * current directory as %~dp0, which is where npm's shims look for what they start. Every word
+ * is fixed, apart from OMP session paths, which `ompSessionDirs` only passes without `%` or `"`.
+ */
+function windowsShimInvocation(
+  shim: string,
+  args: readonly string[],
+  env: Record<string, string | undefined>,
+): CcusageCommandInvocation {
+  const quoted = args.map((word) => `"${word}"`);
+  return {
+    args: ["/d", "/s", "/c", `"${[shim, ...quoted].join(" ")}"`],
+    command: windowsEnvValue(env, "ComSpec") ?? "cmd.exe",
+    runner: shim,
+    shim,
+    windowsVerbatimArguments: true,
+  };
+}
+
+/**
+ * The bun to run on Windows: bun.exe anywhere on PATH (the official installer, Scoop's shim
+ * exe, or npm's package binary when its folder is on PATH) over a batch shim that sits earlier,
+ * since only the exe starts without cmd.exe; otherwise the first bun.cmd or bun.bat.
+ */
+async function findWindowsBun(env: CcusageEnv): Promise<WindowsBun | undefined> {
+  const exe = await findOnWindowsPath("bun.exe", env);
+  if (exe !== undefined) {
+    return { kind: "exe", path: exe };
+  }
+  for (const dir of windowsPathDirs(env)) {
+    for (const name of WINDOWS_BUN_SHIMS) {
+      if (await isFile(join(dir, name))) {
+        return { kind: "shim", name };
+      }
     }
   }
 
-  return false;
+  return undefined;
+}
+
+/** Where `name` is in the first directory on the Windows PATH that `env` gives the child. */
+async function findOnWindowsPath(name: string, env: CcusageEnv): Promise<string | undefined> {
+  for (const dir of windowsPathDirs(env)) {
+    const path = join(dir, name);
+    if (await isFile(path)) {
+      return path;
+    }
+  }
+
+  return undefined;
+}
+
+function windowsPathDirs(env: CcusageEnv): string[] {
+  return (windowsEnvValue(env, "PATH") ?? "")
+    .split(";")
+    .map((dir) => dir.trim().replace(/^"(.*)"$/, "$1"))
+    .filter((dir) => dir.length > 0);
+}
+
+/** Windows spells it Path or ComSpec; a copied environment keeps whatever case it had. */
+function windowsEnvValue(env: Record<string, string | undefined>, name: string) {
+  const key = Object.keys(env).find((candidate) => candidate.toUpperCase() === name.toUpperCase());
+  return key === undefined ? undefined : env[key];
+}
+
+async function isFile(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The code a refused spawn carries (`EINVAL`, `ERR_INVALID_ARG_VALUE`), safe to report. */
+function spawnErrorCode(cause: unknown): string {
+  const code = (cause as { code?: unknown } | undefined)?.code;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]*$/.test(code) ? code : "unknown error";
 }
 
 function isMissingCommand(cause: unknown): boolean {
@@ -404,8 +577,10 @@ function isMissingCommand(cause: unknown): boolean {
 export {
   CcusageRunError,
   ccusageCommandInvocations,
+  ccusageRunDiagnostic,
   dailyCcusageCommand,
   execCcusage,
+  findWindowsBun,
   killProcessTree,
   runCcusageDailyReport,
   runCcusageSessionReport,
@@ -413,4 +588,4 @@ export {
   stderrTail,
 };
 
-export type { CcusageReportKind, CcusageRunErrorCode, RunOptions };
+export type { CcusageReportKind, CcusageRunErrorCode, RunOptions, WindowsBun };

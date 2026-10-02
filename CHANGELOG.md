@@ -14,6 +14,17 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   left for the next install or uninstall, which after an uninstall might never come. A
   `service install` while that cleanup is still pending cancels it first, so it never deletes the
   new runner.
+- Windows with Bun installed through npm (`npm i -g bun`, or another tool that puts a `bun.cmd`
+  shim on `PATH` instead of `bun.exe`): syncs work again. Since 0.7.0, every agent failed with
+  "ccusage command failed" and no further detail: Bun 1.4, which the CLI is built with, refuses
+  to start the shim with the `^` in ccusage's version range, and npx was never tried because bun
+  had been found. The CLI now runs `bun.exe` by its path wherever it is on `PATH`, and a
+  `bun.cmd`/`bun.bat` shim through `cmd.exe` the way it runs `npx.cmd`.
+- When bun is there but cannot be started at all, ccusage falls back to npx, as it already did
+  when bun was missing. A ccusage that ran and failed is still reported as such.
+- When ccusage fails without printing an error, the reason now says which runner ran it and how it
+  ended, e.g. `bun.cmd could not be started (EINVAL)` or `npx.cmd exited with code 1`, in
+  `sync`, `service status`, the service log and the device's reported error.
 
 ## 0.7.3 - 2026-10-01
 

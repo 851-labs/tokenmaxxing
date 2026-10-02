@@ -43,6 +43,7 @@ import {
   SyncPushError,
   SyncSourcesFailedError,
   sourcesWithoutLogs,
+  syncSourceIssue,
   type SyncAuth,
   type SyncSourceIssue,
   uploadUsageReports,
@@ -1364,6 +1365,51 @@ describe("SyncSourcesFailedError", () => {
       new SyncSourcesFailedError({ failures: failures.slice(0, 3), withoutLogs: ["gemini"] })
         .message,
     ).toContain("ccusage failed for claude, codex and 1 agent without logs\n");
+  });
+
+  // 0.7.3 on Windows with only npm's bun.cmd: Bun refused to start it, nothing reached stderr,
+  // and prod saw a bare "ccusage command failed" for every agent.
+  it("says which runner failed and how when ccusage printed nothing", () => {
+    const startFailure = (runner: string, startError: string) =>
+      new CcusageRunError({
+        cause: Object.assign(new Error("spawn failed"), { code: startError }),
+        code: "command_failed",
+        report: "daily",
+        runner,
+        source: "claude",
+        startError,
+      });
+    const npxExit = (stderr?: string) =>
+      new CcusageRunError({
+        cause: Object.assign(new Error("npx.cmd exited with code 1"), { code: 1, signal: null }),
+        code: "command_failed",
+        earlier: ["bun.cmd could not be started (EINVAL)"],
+        report: "daily",
+        runner: "npx.cmd",
+        source: "codex",
+        stderr,
+      });
+
+    expect(syncSourceIssue(startFailure("bun.cmd", "ERR_INVALID_ARG_VALUE"))).toEqual({
+      code: "command_failed",
+      detail: "bun.cmd could not be started (ERR_INVALID_ARG_VALUE)",
+      message: "ccusage command failed",
+      report: "daily",
+    });
+    expect(
+      describeSyncSourcesFailure({
+        failures: [
+          { issue: syncSourceIssue(startFailure("bun.exe", "EACCES")), source: "claude" },
+          { issue: syncSourceIssue(npxExit()), source: "codex" },
+        ],
+      }).lines,
+    ).toEqual([
+      "no usage synced; ccusage failed for claude, codex",
+      "claude: ccusage command failed: bun.exe could not be started (EACCES)",
+      "codex: ccusage command failed: npx.cmd exited with code 1; tried first: bun.cmd could not be started (EINVAL)",
+    ]);
+    // stderr, when there is any, still says it best.
+    expect(syncSourceIssue(npxExit("npm error code E404")).detail).toBe("npm error code E404");
   });
 
   it("tells agents with logs from those without", async () => {

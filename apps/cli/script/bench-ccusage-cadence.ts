@@ -250,7 +250,8 @@ async function measure(
 }
 
 function ccusageArgv(args: string[], pin: string | undefined): string[] {
-  const [invocation] = ccusageCommandInvocations(args);
+  // `bun x`, as on macOS and Linux (bench runs there).
+  const invocation = ccusageCommandInvocations(args, "linux")[0]!;
   if (pin !== undefined) {
     // Pin a specific release instead of the runner's semver range.
     invocation.args[1] = `ccusage@${pin}`;
