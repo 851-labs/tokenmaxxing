@@ -14,6 +14,10 @@
  *                   run syncs the rest
  *   bun without bun x  a bun that prints `Script not found "x"` for `bun x`:
  *                   every source falls back to npx and the run syncs
+ *   version manager shims  a fake asdf whose node shim needs a version the job does not
+ *                   have: the wrapper leads to the installed node, and a 0.7.5
+ *                   wrapper (shims only) fails with asdf's reason until its
+ *                   reload repair restores that
  *   path cases      install -> run -> reload-required repair -> run -> uninstall
  *                   under config dirs with spaces, (), &, ', ", \, $, % and
  *                   non-ASCII (Linux: with a daemon-reload while the repair
@@ -33,6 +37,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -1022,6 +1027,110 @@ async function bunWithoutBunX() {
   }
 }
 
+// 0.7.0's migration rewrote a wrapper's `~/.asdf/installs/nodejs/<v>/bin` (which `asdf exec`
+// prepends when the CLI runs through asdf's npx) to `~/.asdf/shims`. Those pick a version from
+// the job's working directory, and a node set only for a project failed every run with "No
+// version is set for command node". This fake asdf's node shim works only with
+// ASDF_NODEJS_VERSION set, as in the installing shell and never in the job; it sits ahead of
+// the fake bun, whose `bun x` execs `node`.
+async function versionManagerShims() {
+  const name = "version manager shims";
+  const asdf = join(root, "asdf");
+  const nodeBin = join(asdf, "installs", "nodejs", "24.11.0", "bin");
+  const shims = join(asdf, "shims");
+  const realNode = (context.baseEnv.PATH ?? "")
+    .split(":")
+    .map((dir) => join(dir, "node"))
+    .find((path) => {
+      try {
+        accessSync(path, constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  if (!check(name, "a real node on PATH", realNode !== undefined, context.baseEnv.PATH ?? "")) {
+    return;
+  }
+  rmSync(asdf, { force: true, recursive: true });
+  mkdirSync(nodeBin, { recursive: true });
+  mkdirSync(shims, { recursive: true });
+  symlinkSync(realNode!, join(nodeBin, "node"));
+  writeFileSync(
+    join(shims, "node"),
+    [
+      "#!/bin/sh",
+      'if [ -n "${ASDF_NODEJS_VERSION:-}" ]; then',
+      `  exec "${join(asdf, "installs", "nodejs")}/$ASDF_NODEJS_VERSION/bin/node" "$@"`,
+      "fi",
+      'echo "No version is set for command node" >&2',
+      'echo "Consider adding one of the following versions in your config file at $HOME/.tool-versions" >&2',
+      'echo "nodejs 24.11.0" >&2',
+      "exit 126",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const wrapperPathOrder = (profile: Profile) => {
+    const entries = (wrapperEnv(readText(wrapperPath(profile))).PATH ?? "").split(":");
+    return { entries, ok: entries.indexOf(nodeBin) === 0 && entries.indexOf(shims) === 1 };
+  };
+
+  const configDir = join(root, "cfg-asdf");
+  run("remove old config dir", "rm", ["-rf", configDir], { quiet: true });
+  const profile = await newProfile(context, configDir, [shims, fakeBin, tmxBin], {
+    ASDF_NODEJS_VERSION: "24.11.0",
+  });
+  if (!install(name, profile)) {
+    return;
+  }
+  if (backend === "systemd") {
+    await waitForSystemdRun(60_000);
+  }
+  const installed = wrapperPathOrder(profile);
+  check(
+    name,
+    "the wrapper puts asdf's newest node ahead of its shims",
+    installed.ok,
+    installed.entries.slice(0, 4).join(":"),
+  );
+  // A full run, as after every CLI update, so every source runs ccusage.
+  rmSync(configFile(profile, "service-sources.json"), { force: true });
+  assertSuccessfulRun(name, await scheduledRun(profile, "asdf-run"), { allowCooldown: true });
+
+  // A 0.7.5 wrapper: only the shims, on the template before this fix.
+  const wrapper = readText(wrapperPath(profile));
+  writeFileSync(wrapperPath(profile), wrapper.replace(`${nodeBin}:`, ""));
+  setTemplateVersion(profile, templateVersion - 1);
+  rmSync(configFile(profile, "service-sources.json"), { force: true });
+  const before = serviceState(profile)?.lastRepairAttemptAt as string | undefined;
+  const broken = await scheduledRun(profile, "asdf-0.7.5-wrapper");
+  check(
+    name,
+    "a 0.7.5 wrapper fails with asdf's reason and reports reloadRequired",
+    broken.line?.reloadRequired === true &&
+      typeof broken.line.error === "string" &&
+      broken.line.error.includes(": ccusage command failed: No version is set for command node"),
+    oneLine(JSON.stringify(broken.line), 900),
+  );
+  const state = await waitForRepair(profile, before);
+  const repaired = wrapperPathOrder(profile);
+  check(
+    name,
+    "its reload-required repair puts asdf's node back ahead of the shims",
+    state?.lastRepairStatus === "success" &&
+      state.lastRepairReason === "reload-required" &&
+      serviceJson(profile)?.templateVersion === templateVersion &&
+      repaired.ok,
+    `status=${state?.lastRepairStatus} reason=${state?.lastRepairReason} error=${state?.lastRepairError ?? ""} PATH=${repaired.entries.slice(0, 4).join(":")}`,
+  );
+  rmSync(configFile(profile, "service-sources.json"), { force: true });
+  assertSuccessfulRun(name, await scheduledRun(profile, "asdf-after-repair"), {
+    allowCooldown: true,
+  });
+  assertUninstall(name, profile);
+}
+
 async function pathCase(name: string, configDir: string) {
   const keepAs = label(name);
   const profile = await profileFor(configDir);
@@ -1363,6 +1472,7 @@ try {
     await scenario("core", core);
     await scenario("hanging ccusage", hangingCcusage);
     await scenario("bun without bun x", bunWithoutBunX);
+    await scenario("version manager shims", versionManagerShims);
     const pathCases: Record<string, string> =
       backend === "launchd"
         ? {

@@ -106,7 +106,11 @@ const SERVICE_LABEL = "sh.tokenmaxxing.sync";
 // repair rewrite them once.
 // 8: the Windows wrapper falls back to a side log when another run holds
 // service.log, instead of exiting without running or logging anything.
-const SERVICE_TEMPLATE_VERSION = 8;
+// 9: a wrapper PATH whose asdf, mise or nodenv entries lead to the newest
+// installed Node rather than to shims that need a version set for the job's
+// working directory (0.7.0's migration turned a working asdf install dir into
+// shims that failed every run). The reload repair re-captures it once.
+const SERVICE_TEMPLATE_VERSION = 9;
 // A scheduled run's worst case is the jitter, an auto-update, sources up to
 // SERVICE_SOURCE_DEADLINE_MS plus the one still running (its daily and session
 // timeouts), and three upload attempts: about 20 minutes. systemd stops one
@@ -2660,7 +2664,7 @@ function serviceRunSuccessState(
  * What went wrong in a sync that ran: sources left for the next run by the
  * run's limits (even when others synced, so doctor shows it), or every
  * source failing. The latter carries the per-source reasons the console
- * shows (stderr's last line included), so the check-in's `error` says why;
+ * shows (stderr's reason line included), so the check-in's `error` says why;
  * its first line stays a summary for doctor and status.
  */
 function serviceSyncError(

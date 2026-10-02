@@ -11,12 +11,14 @@ import {
   CcusageRunError,
   ccusageCommandInvocations,
   ccusageRunDiagnostic,
+  ccusageStderrReason,
   dailyCcusageCommand,
   execCcusage,
   findWindowsBun,
   runCcusageDailyReport,
   runCcusageSessionReport,
   sessionCcusageCommand,
+  stderrTail,
 } from "./runner";
 import type { CcusageSource } from "./sources";
 
@@ -707,6 +709,133 @@ describe("execCcusage", () => {
     expect(run).toHaveBeenCalledWith("bun", expect.any(Array), env, {
       windowsVerbatimArguments: false,
     });
+  });
+});
+
+// What prod saw as the reason was stderr's last line: an installed version after asdf's
+// message, or the middle of dyld's `Reason: tried: …` with the missing library cut off.
+describe("ccusage stderr", () => {
+  const dyld = [
+    "dyld[48213]: Library not loaded: /usr/local/opt/simdutf/lib/libsimdutf.26.dylib",
+    "  Referenced from: <6B4A2D1E-0F6B-3C3B-9A4E-0C6D8E1F2A3B> /usr/local/Cellar/node/24.9.0/bin/node",
+    `  Reason: tried: ${Array.from({ length: 6 }, (_, index) => `'/usr/local/opt/simdutf/lib/libsimdutf.${index}.dylib' (no such file)`).join(", ")}`,
+  ].join("\n");
+  const asdfPreset = [
+    "No preset version installed for command node",
+    "Please install a version by running one of the following:",
+    "",
+    "asdf install nodejs 22.21.0",
+    "",
+    "or add one of the following versions in your config file at /Users/alex/.tool-versions",
+    "nodejs 26.3.0",
+  ].join("\n");
+  const asdfUnset = [
+    "No version is set for command node",
+    "Consider adding one of the following versions in your config file at //.tool-versions",
+    "nodejs 24.11.0",
+    "nodejs 22.21.0",
+  ].join("\n");
+  const mise = [
+    "mise ERROR No version is set for shim: node",
+    "Set a global default version with one of the following:",
+    "mise use -g node@22.21.0",
+    "mise use -g node@24.11.0",
+    "mise ERROR Version: 2026.9.18 linux-arm64 (2026-09-30)",
+    "mise ERROR Run with --verbose or MISE_VERBOSE=1 for more information",
+  ].join("\n");
+  const nodenv = [
+    "nodenv: node: command not found",
+    "",
+    "The `node' command exists in these Node versions:",
+    "  22.21.0",
+    "  24.11.0",
+  ].join("\n");
+  const npm = [
+    "npm warn exec The following package was not found and will be installed: ccusage@20.0.22",
+    "npm error code E401",
+    "npm error 401 Unauthorized - GET https://registry.corp/ccusage",
+    "npm error A complete log of this run can be found in: /Users/alex/.npm/_logs/debug-0.log",
+  ].join("\n");
+  const nodeStack = [
+    "node:internal/modules/cjs/loader:1228",
+    "  throw err;",
+    "  ^",
+    "",
+    "Error: Cannot find module '/Users/alex/.bun/install/cache/ccusage/dist/index.js'",
+    "    at Module._resolveFilename (node:internal/modules/cjs/loader:1225:15)",
+    "    at node:internal/main/run_main_module:28:49 {",
+    "  code: 'MODULE_NOT_FOUND',",
+    "  requireStack: []",
+    "}",
+    "",
+    "Node.js v22.21.0",
+  ].join("\n");
+
+  it.each([
+    [
+      "dyld",
+      dyld,
+      "dyld[48213]: Library not loaded: /usr/local/opt/simdutf/lib/libsimdutf.26.dylib",
+    ],
+    [
+      "asdf without the version asked for",
+      asdfPreset,
+      "No preset version installed for command node",
+    ],
+    ["asdf without a version", asdfUnset, "No version is set for command node"],
+    ["mise", mise, "mise ERROR No version is set for shim: node"],
+    ["nodenv", nodenv, "nodenv: node: command not found"],
+    [
+      "nodenv with a missing version",
+      "nodenv: version `25.0.0' is not installed (set by NODENV_VERSION environment variable)",
+      "nodenv: version `25.0.0' is not installed (set by NODENV_VERSION environment variable)",
+    ],
+    ["npm", npm, "npm error 401 Unauthorized - GET https://registry.corp/ccusage"],
+    [
+      "a node stack",
+      nodeStack,
+      "Error: Cannot find module '/Users/alex/.bun/install/cache/ccusage/dist/index.js'",
+    ],
+    [
+      "env",
+      "noise\n/usr/bin/env: 'node': No such file or directory",
+      "/usr/bin/env: 'node': No such file or directory",
+    ],
+    [
+      "a plain error",
+      "\u001b[31merror\u001b[0m: could not determine executable to run for package ccusage\n",
+      "error: could not determine executable to run for package ccusage",
+    ],
+    ["sh", "sh: 1: node: not found", "sh: 1: node: not found"],
+    ["no known pattern", "first\nsecond\n\n", "second"],
+    [
+      "only noise",
+      "npm error A complete log of this run can be found in: /x.log",
+      "npm error A complete log of this run can be found in: /x.log",
+    ],
+  ])("picks the line that says why for %s", (_, stderr, reason) => {
+    expect(ccusageStderrReason(stderr)).toBe(reason);
+    // The source's detail keeps that line, and picking from it gives the same one.
+    expect(ccusageStderrReason(stderrTail(stderr))).toBe(reason);
+  });
+
+  it("keeps the reason line ahead of the last lines, within the length cap", () => {
+    const detail = stderrTail(dyld)!;
+
+    expect(detail.length).toBeLessThanOrEqual(500);
+    expect(detail.split("\n")).toEqual([
+      "dyld[48213]: Library not loaded: /usr/local/opt/simdutf/lib/libsimdutf.26.dylib",
+      "Referenced from: <6B4A2D1E-0F6B-3C3B-9A4E-0C6D8E1F2A3B> /usr/local/Cellar/node/24.9.0/bin/node",
+      expect.stringMatching(
+        /^Reason: tried: '\/usr\/local\/opt\/simdutf\/lib\/libsimdutf\.0\.dylib'.*…$/,
+      ),
+    ]);
+
+    const many = ["error: the reason", ...Array.from({ length: 8 }, (_, index) => `line ${index}`)];
+    expect(stderrTail(many.join("\n"))).toBe(
+      ["error: the reason", "…", "line 3", "line 4", "line 5", "line 6", "line 7"].join("\n"),
+    );
+    expect(stderrTail("\n \n")).toBeUndefined();
   });
 });
 

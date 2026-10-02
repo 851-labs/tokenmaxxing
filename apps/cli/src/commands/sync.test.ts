@@ -11,7 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ccusageDailyFixture } from "../../../api/src/testing/ccusage-fixtures";
 import { SCHEDULED_ME_RETRY_POLICY } from "../api-failure";
-import { CcusageRunError } from "../ccusage/runner";
+import { CcusageRunError, stderrTail } from "../ccusage/runner";
 import {
   ApiClientService,
   BrowserService,
@@ -1365,6 +1365,43 @@ describe("SyncSourcesFailedError", () => {
       new SyncSourcesFailedError({ failures: failures.slice(0, 3), withoutLogs: ["gemini"] })
         .message,
     ).toContain("ccusage failed for claude, codex and 1 agent without logs\n");
+  });
+
+  // 0.7.5 reported stderr's last line: an installed version after asdf's message, and the
+  // middle of dyld's `Reason: tried: …` instead of the library it could not load.
+  it("reports the stderr line that says why, not the last one", () => {
+    const failed = (source: "claude" | "codex", stderr: string) => ({
+      issue: syncSourceIssue(
+        new CcusageRunError({
+          cause: Object.assign(new Error("bun exited with code 126"), { code: 126, signal: null }),
+          code: "command_failed",
+          report: "daily",
+          runner: "bun",
+          source,
+          stderr: stderrTail(stderr),
+        }),
+      ),
+      source,
+    });
+
+    expect(
+      describeSyncSourcesFailure({
+        failures: [
+          failed(
+            "claude",
+            "No preset version installed for command node\nPlease install a version by running one of the following:\n\nasdf install nodejs 22.21.0\n\nor add one of the following versions in your config file at /Users/alex/.tool-versions\nnodejs 26.3.0",
+          ),
+          failed(
+            "codex",
+            `dyld[48213]: Library not loaded: /usr/local/opt/simdutf/lib/libsimdutf.26.dylib\n  Referenced from: <6B4A2D1E> /usr/local/Cellar/node/24.9.0/bin/node\n  Reason: tried: ${"'/usr/local/opt/simdutf/lib/libsimdutf.26.dylib' (no such file), ".repeat(8)}`,
+          ),
+        ],
+      }).lines,
+    ).toEqual([
+      "no usage synced; ccusage failed for claude, codex",
+      "claude: ccusage command failed: No preset version installed for command node",
+      "codex: ccusage command failed: dyld[48213]: Library not loaded: /usr/local/opt/simdutf/lib/libsimdutf.26.dylib",
+    ]);
   });
 
   // 0.7.3 on Windows with only npm's bun.cmd: Bun refused to start it, nothing reached stderr,

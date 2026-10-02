@@ -1111,7 +1111,7 @@ describe("unchanged service refresh", () => {
     commandPath: "/Users/alex/.config/tokenmaxxing/service-runners/0.7.0/tokenmaxxing",
     installedAt: "2026-09-28T09:00:00.000Z",
     schedule: "syncs every 5 minutes",
-    templateVersion: 8,
+    templateVersion: 9,
     version: 1,
   };
   const wrapper = "#!/bin/sh\nexport PATH='/usr/bin:/bin'\n";
@@ -1774,7 +1774,7 @@ describe("Windows hidden launcher", () => {
         commandPath: join(paths.runnersDir, "tokenmaxxing.exe"),
         installedAt: "2026-06-16T09:00:00.000Z",
         schedule: "syncs every 5 minutes",
-        templateVersion: 8,
+        templateVersion: 9,
         version: 1,
       };
 
@@ -1864,10 +1864,10 @@ describe("Windows hidden launcher", () => {
     };
 
     expect(serviceReloadRequired(metadata)).toBe(true);
-    expect(serviceReloadRequired({ ...metadata, templateVersion: 7 })).toBe(true);
-    expect(serviceReloadRequired({ ...metadata, templateVersion: 8 })).toBe(false);
-    // A newer runner wrote a newer template: not this CLI's to reload.
+    expect(serviceReloadRequired({ ...metadata, templateVersion: 8 })).toBe(true);
     expect(serviceReloadRequired({ ...metadata, templateVersion: 9 })).toBe(false);
+    // A newer runner wrote a newer template: not this CLI's to reload.
+    expect(serviceReloadRequired({ ...metadata, templateVersion: 10 })).toBe(false);
     expect(
       serviceRepairNeedsSchedulerInstall({
         reason: serviceRepairReason({ reloadRequired: true, schedulerActive: true })!,
@@ -4656,7 +4656,7 @@ describe("serviceInstallProgram", () => {
       installedAt: "2026-06-16T12:00:00.000Z",
       runnerTarget: "darwin-arm64",
       runnerVersion: "0.4.17",
-      templateVersion: 8,
+      templateVersion: 9,
     });
     expect(written[0]?.metadata).not.toHaveProperty("autoUpdate");
     expect(state.logs).toContain("Automatic sync installed");
@@ -4737,7 +4737,7 @@ describe("serviceInstallProgram", () => {
         commandPath: "/tmp/old-runner",
         installedAt: "2026-06-01T08:00:00.000Z",
         schedule: "syncs every 5 minutes",
-        templateVersion: 8,
+        templateVersion: 9,
         version: 1,
       },
     });
@@ -5175,7 +5175,7 @@ describe("a service newer than this CLI", () => {
     runnerTarget: "darwin-arm64",
     runnerVersion: "0.7.0",
     schedule: "syncs every 5 minutes",
-    templateVersion: 8,
+    templateVersion: 9,
     version: 1,
   };
 
@@ -5187,22 +5187,22 @@ describe("a service newer than this CLI", () => {
       template: undefined,
     });
     const newer = serviceNewerThanCli(
-      { ...metadata, runnerVersion: "0.8.0", templateVersion: 9 },
+      { ...metadata, runnerVersion: "0.8.0", templateVersion: 10 },
       "0.7.0",
     );
     expect(newer).toEqual({
       runner: { cli: "0.7.0", installed: "0.8.0" },
-      template: { cli: 8, installed: 9 },
+      template: { cli: 9, installed: 10 },
     });
     expect(new ServiceNewerThanCliError({ command: "repair", newer: newer! }).message).toBe(
-      "error: the service is newer than this CLI (template 9 vs 8, runner 0.8.0 vs 0.7.0)\nhint: upgrade the CLI with tokenmaxxing upgrade, then run tokenmaxxing service repair again if it is still needed",
+      "error: the service is newer than this CLI (template 10 vs 9, runner 0.8.0 vs 0.7.0)\nhint: upgrade the CLI with tokenmaxxing upgrade, then run tokenmaxxing service repair again if it is still needed",
     );
   });
 
   it("doctor says to upgrade the CLI, not to reload", () => {
-    expect(doctorTemplateCheck({ ...metadata, templateVersion: 9 }, false)).toEqual({
+    expect(doctorTemplateCheck({ ...metadata, templateVersion: 10 }, false)).toEqual({
       detail:
-        "the service is newer than this CLI (template 9 vs 8); upgrade the CLI with tokenmaxxing upgrade",
+        "the service is newer than this CLI (template 10 vs 9); upgrade the CLI with tokenmaxxing upgrade",
       fix: "upgrade the CLI with tokenmaxxing upgrade",
       label: "template",
       status: "warn",
@@ -5368,7 +5368,7 @@ describe("service doctor", () => {
       runnerTarget: "target",
       runnerVersion: "0.7.0",
       schedule: "syncs every 5 minutes",
-      templateVersion: 8,
+      templateVersion: 9,
       version: 1,
     };
     const launcherPath = windowsLauncherPath(paths);
