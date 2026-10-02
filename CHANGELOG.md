@@ -41,6 +41,13 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
   `CLAUDE_CONFIG_DIR` is unset. The service didn't capture these variables, so a foreground `sync`
   honoured them while scheduled runs read the default locations. `service doctor` now warns when
   they drift; run `tokenmaxxing service repair` once if you set any of them.
+- Windows: `service uninstall` run from the service runner exe failed now and then with "failed to
+  uninstall tokenmaxxing service" after the scheduled task was already gone, and left the runner
+  behind. Windows refuses to delete or rename a dir for a moment while antivirus, the indexer or a
+  process that just exited still has a file in it open. Service file deletes and renames now retry
+  for about 2 s. A runners dir that still cannot be removed no longer fails the uninstall: it is
+  listed in `pendingRemoval` with a warning, and the next `service install` or `service uninstall`
+  removes it.
 
 ### Server
 

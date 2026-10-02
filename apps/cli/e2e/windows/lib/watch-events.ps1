@@ -1,21 +1,29 @@
-# Event sources for window-watch.ps1 (dot-source this file). Nothing here
-# polls:
+# Event sources for window-watch.ps1 (dot-source this file):
 #
-#   processes  WMI Win32_ProcessStartTrace / Win32_ProcessStopTrace, backed by
-#              the kernel's process trace, so every start is delivered however
-#              short-lived the process, with its pid, parent pid and image
-#              name. WMI hands them over in batches about a second apart, so
-#              the command line (read on the event thread with
-#              NtQueryInformationProcess) is only there for processes that
-#              are still running by then. Needs an administrator token, which
-#              the hosted runners have.
+#   processes  Two sources, merged by the watcher:
+#              - WMI Win32_ProcessStartTrace / Win32_ProcessStopTrace, backed
+#                by the kernel's process trace, so a start is reported however
+#                short-lived the process, with its pid, parent pid and image
+#                name. WMI hands them over in batches about a second apart, and
+#                under load (a run starting dozens of bun/node pairs) it has
+#                dropped a start now and then, while still delivering that
+#                process's exit. Needs an administrator token, which the hosted
+#                runners have.
+#              - A snapshot of every process (NtQuerySystemInformation) every
+#                20 ms, which sees any process that lives longer than that,
+#                with its exact creation time, whatever WMI drops.
+#              The command line (NtQueryInformationProcess) is read as soon as
+#              a source reports the process, so it is there for processes
+#              still running by then.
 #   windows    SetWinEventHook (out of context) for EVENT_OBJECT_SHOW,
 #              EVENT_OBJECT_UNCLOAKED and EVENT_SYSTEM_FOREGROUND, on a thread
 #              that pumps messages. Each window is described in the callback,
 #              before it can close.
 #
-# Both queue events that the watcher drains. Timestamps are seconds since
-# Start() at delivery: exact for windows, up to a second late for processes.
+# All of them queue events that the watcher drains. Timestamps are seconds
+# since Start(): the moment a window event fires, and a process's creation time
+# (exact unless WMI reported a process that was gone by then: Exact = false,
+# and T is when WMI delivered it, up to about a second late).
 if (-not ("TmxE2EWatch" -as [type])) {
   Add-Type -AssemblyName System.Management
   # Naming any reference drops Add-Type's defaults, so list them all.
@@ -36,7 +44,7 @@ using System.Threading;
 public class TmxE2EWatchEvent {
   public double T; public string Kind; public string Source;
   // process-start / process-stop
-  public uint Pid; public uint Ppid; public string Name; public uint SessionId; public string CommandLine; public string CommandLineError; public uint? ExitCode;
+  public uint Pid; public uint Ppid; public string Name; public uint SessionId; public string CommandLine; public string CommandLineError; public uint? ExitCode; public bool Exact;
   // window-show / window-uncloaked / foreground
   public long Hwnd; public string Class; public string Title; public string Rect; public bool Visible; public bool Iconic; public bool Cloaked; public string Process;
 }
@@ -66,6 +74,8 @@ public static class TmxE2EWatch {
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref int size);
   [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr process, int infoClass, IntPtr info, int length, out int returned);
+  [DllImport("ntdll.dll")] static extern int NtQuerySystemInformation(int infoClass, IntPtr info, int length, out int returned);
+  [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
 
   [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int x; public int y; }
   [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
@@ -79,6 +89,9 @@ public static class TmxE2EWatch {
   const uint WM_CLOSE = 0x0010;
   const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
   const int ProcessCommandLineInformation = 60;
+  const int SystemProcessInformation = 5;
+  const int STATUS_INFO_LENGTH_MISMATCH = unchecked((int)0xC0000004);
+  const int PollIntervalMs = 20;
 
   public static readonly ConcurrentQueue<TmxE2EWatchEvent> Events = new ConcurrentQueue<TmxE2EWatchEvent>();
   static DateTime startedUtc;
@@ -88,8 +101,15 @@ public static class TmxE2EWatch {
   static WinEventProc hookProc;
   static readonly ManualResetEvent hookReady = new ManualResetEvent(false);
   public static string ProcessSource = "not started";
+  public static string PollSource = "not started";
   public static string WindowSource = "not started";
   public static long SelfTestHwnd;
+  // Snapshots the poll has taken, and errors a WMI callback threw (each one a lost event).
+  public static long PollSnapshots;
+  public static long HandlerErrors;
+  public static string LastHandlerError;
+  static Thread pollThread;
+  static volatile bool polling;
 
   static double Now() { return Math.Round((DateTime.UtcNow - startedUtc).TotalSeconds, 3); }
 
@@ -109,6 +129,16 @@ public static class TmxE2EWatch {
       ProcessSource = "error: " + e.GetType().Name + ": " + e.Message;
     }
 
+    if (IntPtr.Size != 8) {
+      PollSource = "error: the process snapshot layout is only known for 64-bit";
+    } else {
+      PollSource = "NtQuerySystemInformation";
+      polling = true;
+      pollThread = new Thread(PollLoop);
+      pollThread.IsBackground = true;
+      pollThread.Start();
+    }
+
     hookThread = new Thread(HookLoop);
     hookThread.IsBackground = true;
     hookThread.SetApartmentState(ApartmentState.STA);
@@ -119,32 +149,119 @@ public static class TmxE2EWatch {
   public static void Stop() {
     try { if (startWatcher != null) startWatcher.Stop(); } catch { }
     try { if (stopWatcher != null) stopWatcher.Stop(); } catch { }
+    polling = false;
+    if (pollThread != null) pollThread.Join(3000);
     if (hookThreadId != 0) PostThreadMessage(hookThreadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
     if (hookThread != null) hookThread.Join(3000);
   }
 
+  static double SinceStart(long fileTimeUtc) {
+    return Math.Round((DateTime.FromFileTimeUtc(fileTimeUtc) - startedUtc).TotalSeconds, 4);
+  }
+
+  // A process's creation time, while it runs. Zero once it is gone.
+  static long CreationTime(uint pid) {
+    var handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+    if (handle == IntPtr.Zero) return 0;
+    try {
+      long creation, exit, kernel, user;
+      return GetProcessTimes(handle, out creation, out exit, out kernel, out user) ? creation : 0;
+    } finally { CloseHandle(handle); }
+  }
+
+  static void HandlerFailed(Exception e) {
+    Interlocked.Increment(ref HandlerErrors);
+    LastHandlerError = e.GetType().Name + ": " + e.Message;
+  }
+
   static void OnProcessStart(object sender, EventArrivedEventArgs args) {
-    var e = args.NewEvent;
-    var ev = new TmxE2EWatchEvent { Kind = "process-start", Source = "Win32_ProcessStartTrace", T = Now() };
-    ev.Pid = Convert.ToUInt32(e["ProcessID"]);
-    ev.Ppid = Convert.ToUInt32(e["ParentProcessID"]);
-    ev.SessionId = Convert.ToUInt32(e["SessionID"]);
-    ev.Name = (string)e["ProcessName"];
-    string error;
-    ev.CommandLine = CommandLine(ev.Pid, out error);
-    ev.CommandLineError = error;
-    Events.Enqueue(ev);
+    try {
+      var e = args.NewEvent;
+      var delivered = DateTime.UtcNow.ToFileTimeUtc();
+      var ev = new TmxE2EWatchEvent { Kind = "process-start", Source = "Win32_ProcessStartTrace", T = Now() };
+      ev.Pid = Convert.ToUInt32(e["ProcessID"]);
+      ev.Ppid = Convert.ToUInt32(e["ParentProcessID"]);
+      ev.SessionId = Convert.ToUInt32(e["SessionID"]);
+      ev.Name = (string)e["ProcessName"];
+      // WMI's own TIME_CREATED is when it delivered the start, not when the
+      // process started. A process still running has the real one; a pid
+      // reused since then has a later one, and is someone else.
+      var creation = CreationTime(ev.Pid);
+      var name = ProcessName(ev.Pid);
+      var same = creation != 0 && creation <= delivered && name != null && string.Equals(name, ev.Name, StringComparison.OrdinalIgnoreCase);
+      if (same) { ev.T = SinceStart(creation); ev.Exact = true; }
+      string error = "gone before the start was delivered";
+      if (same) ev.CommandLine = CommandLine(ev.Pid, out error);
+      ev.CommandLineError = error;
+      Events.Enqueue(ev);
+    } catch (Exception e) { HandlerFailed(e); }
   }
 
   static void OnProcessStop(object sender, EventArrivedEventArgs args) {
-    var e = args.NewEvent;
-    var ev = new TmxE2EWatchEvent { Kind = "process-stop", Source = "Win32_ProcessStopTrace", T = Now() };
-    ev.Pid = Convert.ToUInt32(e["ProcessID"]);
-    ev.Ppid = Convert.ToUInt32(e["ParentProcessID"]);
-    ev.SessionId = Convert.ToUInt32(e["SessionID"]);
-    ev.Name = (string)e["ProcessName"];
-    ev.ExitCode = Convert.ToUInt32(e["ExitStatus"]);
-    Events.Enqueue(ev);
+    try {
+      var e = args.NewEvent;
+      var ev = new TmxE2EWatchEvent { Kind = "process-stop", Source = "Win32_ProcessStopTrace", T = Now() };
+      ev.Pid = Convert.ToUInt32(e["ProcessID"]);
+      ev.Ppid = Convert.ToUInt32(e["ParentProcessID"]);
+      ev.SessionId = Convert.ToUInt32(e["SessionID"]);
+      ev.Name = (string)e["ProcessName"];
+      ev.ExitCode = Convert.ToUInt32(e["ExitStatus"]);
+      Events.Enqueue(ev);
+    } catch (Exception e) { HandlerFailed(e); }
+  }
+
+  // Every PollIntervalMs, every process on the machine (SYSTEM_PROCESS_INFORMATION,
+  // 64-bit layout): a pid with a creation time not seen before is a start. The
+  // first snapshot is the baseline.
+  static void PollLoop() {
+    var known = new Dictionary<uint, long>();
+    var size = 1 << 20;
+    var buffer = Marshal.AllocHGlobal(size);
+    var first = true;
+    try {
+      while (polling) {
+        int returned;
+        var status = NtQuerySystemInformation(SystemProcessInformation, buffer, size, out returned);
+        if (status == STATUS_INFO_LENGTH_MISMATCH) {
+          Marshal.FreeHGlobal(buffer);
+          size = Math.Max(size * 2, returned + (64 << 10));
+          buffer = Marshal.AllocHGlobal(size);
+          continue;
+        }
+        if (status != 0) { PollSource = "error: NtQuerySystemInformation 0x" + status.ToString("X8"); return; }
+        var current = new Dictionary<uint, long>();
+        var offset = 0;
+        while (true) {
+          var entry = IntPtr.Add(buffer, offset);
+          var pid = (uint)Marshal.ReadIntPtr(entry, 80).ToInt64();
+          var creation = Marshal.ReadInt64(entry, 32);
+          current[pid] = creation;
+          long seen;
+          if (!first && pid != 0 && !(known.TryGetValue(pid, out seen) && seen == creation)) {
+            var nameLength = (ushort)Marshal.ReadInt16(entry, 56);
+            var namePtr = Marshal.ReadIntPtr(entry, 64);
+            var ev = new TmxE2EWatchEvent { Kind = "process-start", Source = "NtQuerySystemInformation", T = SinceStart(creation), Exact = true };
+            ev.Pid = pid;
+            ev.Ppid = (uint)Marshal.ReadIntPtr(entry, 88).ToInt64();
+            ev.SessionId = (uint)Marshal.ReadInt32(entry, 100);
+            ev.Name = namePtr == IntPtr.Zero ? null : Marshal.PtrToStringUni(namePtr, nameLength / 2);
+            string error;
+            ev.CommandLine = CommandLine(pid, out error);
+            ev.CommandLineError = error;
+            Events.Enqueue(ev);
+          }
+          var next = Marshal.ReadInt32(entry, 0);
+          if (next == 0) break;
+          offset += next;
+        }
+        known = current;
+        first = false;
+        Interlocked.Increment(ref PollSnapshots);
+        Thread.Sleep(PollIntervalMs);
+      }
+    } catch (Exception e) {
+      PollSource = "error: " + e.GetType().Name + ": " + e.Message;
+    } finally { Marshal.FreeHGlobal(buffer); }
   }
 
   public static string CommandLine(uint pid, out string error) {

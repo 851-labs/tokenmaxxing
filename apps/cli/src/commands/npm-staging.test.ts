@@ -17,15 +17,23 @@ const liveExe = `${scope}\\tokenmaxxing\\bin\\tokenmaxxing.exe`;
 type Entry = { kind: "dir" | "file" | "link"; name: string };
 
 // A Windows filesystem: directory listings, the files that exist, the
-// staging dirs with a running exe, and the ones whose delete fails.
+// staging dirs with a running exe, and the ones whose delete fails (always,
+// or the first few times, the way a handle antivirus holds goes away).
 function fakeFs(options: {
   dirs: Record<string, Entry[]>;
   files?: string[];
   readdirFails?: boolean;
   rmFails?: string[];
+  rmFailsTimes?: Record<string, number>;
   running?: string[];
 }) {
-  const calls = { exists: [] as string[], readdir: [] as string[], rm: [] as string[] };
+  const calls = {
+    exists: [] as string[],
+    readdir: [] as string[],
+    rm: [] as string[],
+    sleep: [] as number[],
+  };
+  const rmFailuresLeft = new Map(Object.entries(options.rmFailsTimes ?? {}));
   const fs: NpmStagingFs = {
     exists: async (path) => {
       calls.exists.push(path);
@@ -48,11 +56,18 @@ function fakeFs(options: {
     },
     rm: async (path) => {
       calls.rm.push(path);
-      if (options.rmFails?.includes(path)) {
+      const failuresLeft = rmFailuresLeft.get(path) ?? 0;
+      if (failuresLeft > 0) {
+        rmFailuresLeft.set(path, failuresLeft - 1);
+      }
+      if (options.rmFails?.includes(path) || failuresLeft > 0) {
         throw Object.assign(new Error(`EPERM: operation not permitted, unlink '${path}'`), {
           code: "EPERM",
         });
       }
+    },
+    sleep: async (ms) => {
+      calls.sleep.push(ms);
     },
   };
   return { calls, fs };
@@ -186,7 +201,7 @@ describe("removeNpmStagingDirs", () => {
 
   it("reports a staging dir it could not delete and carries on", async () => {
     const stuck = `${scope}\\.tokenmaxxing-9vyC6HBb`;
-    const { fs } = fakeFs({
+    const { calls, fs } = fakeFs({
       dirs: {
         [scope]: [
           { kind: "dir", name: ".tokenmaxxing-9vyC6HBb" },
@@ -204,6 +219,24 @@ describe("removeNpmStagingDirs", () => {
       inUse: [],
       removed: [`${scope}\\.tokenmaxxing-pth6Tsaq`],
     });
+    // Five attempts over about 2 s, then it is left for a later run.
+    expect(calls.rm.filter((path) => path === stuck)).toHaveLength(5);
+    expect(calls.sleep).toEqual([100, 250, 500, 1000]);
+  });
+
+  it("retries a delete that antivirus holds up for a moment", async () => {
+    const staging = `${scope}\\.tokenmaxxing-9vyC6HBb`;
+    const { calls, fs } = fakeFs({
+      dirs: { [scope]: [{ kind: "dir", name: ".tokenmaxxing-9vyC6HBb" }] },
+      files: live,
+      rmFailsTimes: { [staging]: 2 },
+    });
+
+    const cleanup = await Effect.runPromise(removeNpmStagingDirs([liveExe], "win32", fs));
+
+    expect(cleanup).toEqual({ failed: [], inUse: [], removed: [staging] });
+    expect(calls.rm).toEqual([staging, staging, staging]);
+    expect(calls.sleep).toHaveLength(2);
   });
 
   it("never touches a dir that holds no npm install of the CLI", async () => {
@@ -239,7 +272,7 @@ describe("removeNpmStagingDirs", () => {
       const cleanup = await Effect.runPromise(removeNpmStagingDirs([liveExe], platform, fs));
       expect(cleanup).toEqual({ failed: [], inUse: [], removed: [] });
     }
-    expect(calls).toEqual({ exists: [], readdir: [], rm: [] });
+    expect(calls).toEqual({ exists: [], readdir: [], rm: [], sleep: [] });
   });
 
   it("never fails", async () => {
@@ -255,6 +288,7 @@ describe("removeNpmStagingDirs", () => {
       hasRunningExe: async () => false,
       readdir: async () => [],
       rm: async () => {},
+      sleep: async () => {},
     };
     expect(await Effect.runPromise(removeNpmStagingDirs([liveExe], "win32", throwing))).toEqual({
       failed: [],
