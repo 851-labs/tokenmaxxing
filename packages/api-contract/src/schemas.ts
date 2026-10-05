@@ -774,6 +774,10 @@ type AdminDeviceUpdateStatus = typeof AdminDeviceUpdateStatus.Type;
 const AdminLatestDevice = DeviceSummary.mapFields(
   Struct.assign({
     lastCheckInAt: Schema.NullOr(Schema.String),
+    /** When the device last uploaded a row outside the ingest plausibility limits. */
+    lastRejectedUsageAt: Schema.NullOr(Schema.String),
+    /** Usage rows dropped at ingest for exceeding the plausibility limits. */
+    rejectedUsageRows: Schema.Number,
     serviceAutoUpdateAttemptedAt: Schema.NullOr(Schema.String),
     serviceAutoUpdateCompletedAt: Schema.NullOr(Schema.String),
     serviceAutoUpdateCurrentVersion: Schema.NullOr(Schema.String),

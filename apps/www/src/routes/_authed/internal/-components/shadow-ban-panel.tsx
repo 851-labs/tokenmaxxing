@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { AdminUsersResponse } from "@tokenmaxxing/api-contract";
 
 import { errorMessage, runApi } from "../../../../lib/api";
-import { formatInteger, formatUsd } from "../../../../lib/format";
+import { formatInteger, formatTokens, formatUsd } from "../../../../lib/format";
 import { invalidatePublicViews, queryKeys } from "../../../../lib/queries";
 import { LocalDateTime } from "../../../../components/local-date-time";
 import { Avatar } from "../../../../components/ui/avatar";
@@ -69,7 +69,7 @@ function ShadowBanPanel({ users }: { users: AdminUsersData["users"] }) {
                   </span>
                 </td>
                 <td className="p-3 align-top">
-                  <div>{formatInteger(row.totalTokens)} tokens</div>
+                  <div>{formatTokens(row.totalTokens)} tokens</div>
                   <div className="mt-1 font-mono text-xs text-muted-foreground">
                     {formatUsd(row.spendUsd)} · {formatInteger(row.activeDays)} days
                   </div>

@@ -11,7 +11,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
 import { buildService } from "../testing/effect";
 import { makeMemoryBucket, type MemoryBucket } from "../testing/r2";
-import { seedUsage } from "../testing/seed";
+import { makeTestLogger } from "../testing/logger";
+import { seedDevice, seedUsage, seedUser } from "../testing/seed";
 import { UsageRepositoryLive } from "./d1";
 import { makeUsageService, type StoredRawUsageReport, UsageRepository } from "./service";
 
@@ -163,9 +164,9 @@ describe("D1 usage repository", () => {
             date,
             modelBreakdowns: models.map(([modelName, cost]) => ({
               cost,
-              inputTokens: 10,
+              inputTokens: 1_000_000,
               modelName,
-              outputTokens: 20,
+              outputTokens: 2_000_000,
             })),
           })),
         },
@@ -393,6 +394,163 @@ describe("D1 usage repository", () => {
         { costUsd: 753.12, date: "2026-05-06", model: "gpt-5.5", totalTokens: 335_307_056 },
         { costUsd: 12, date: "2026-09-23", model: "gpt-5.5", totalTokens: 1_000 },
       ]);
+    });
+
+    it("never freezes in a stored cost above the plausibility ceiling", async () => {
+      // Stored before ingest had limits (2026-10-05 in prod).
+      seedUsage(database.sqlite, {
+        ...gpt55Tokens,
+        costUsd: 2.7397e296,
+        date: "2026-05-06",
+        deviceId: "device",
+        model: "gpt-5.5",
+        userId: "user",
+      });
+
+      const later = await makeService("2026-10-06T12:00:00.000Z");
+      await Effect.runPromise(
+        later.ingestRaw(identity, device, [
+          codexReport([["2026-05-06", 301.25, { "gpt-5.5": gpt55Tokens }]]),
+        ]),
+      );
+
+      expect(costs()).toEqual([
+        { costUsd: 301.25, date: "2026-05-06", model: "gpt-5.5", totalTokens: 335_307_056 },
+      ]);
+    });
+  });
+
+  describe("plausibility limits at ingest", () => {
+    const identity = {
+      deviceId: DeviceId.make("device"),
+      tokenId: TokenId.make("token"),
+      user: { avatarUrl: null, id: UserId.make("user"), login: "alex", name: null },
+    };
+    const device = { name: "Mac.localdomain", platform: "darwin" };
+    const real = { inputTokens: 1_000_000, outputTokens: 50_000, totalTokens: 1_050_000 };
+
+    async function makeService(at: string) {
+      return Effect.runPromise(
+        makeUsageService({ now: () => new Date(at) }).pipe(
+          Effect.provide(UsageRepositoryLive),
+          Effect.provide(Layer.merge(database.drizzleLayer, bucket.layer)),
+        ),
+      );
+    }
+
+    function deviceCounter() {
+      return database.sqlite
+        .prepare(
+          `select rejected_usage_rows as rejectedUsageRows,
+             last_rejected_usage_at as lastRejectedUsageAt
+           from devices where id = 'device'`,
+        )
+        .get();
+    }
+
+    beforeEach(() => {
+      seedUser(database.sqlite, { id: "user" });
+      seedDevice(database.sqlite, { id: "device", userId: "user" });
+    });
+
+    it("drops implausible raw rows, prunes their stored copy and counts them", async () => {
+      // An earlier fabricated upload of the same day and model.
+      seedUsage(database.sqlite, {
+        costUsd: 1e296,
+        date: "2026-10-03",
+        deviceId: "device",
+        model: "fake",
+        totalTokens: 8_590_000_000_000_000,
+        userId: "user",
+      });
+      const logger = makeTestLogger();
+      const service = await makeService("2026-10-05T12:00:00.000Z");
+
+      const result = await Effect.runPromise(
+        service
+          .ingestRaw(identity, device, [
+            {
+              command: ["ccusage@^20", "codex", "daily", "--json", "--breakdown"],
+              payload: {
+                daily: [
+                  {
+                    costUSD: 12,
+                    date: "2026-10-03",
+                    models: {
+                      fake: {
+                        inputTokens: 8_590_000_000_000_000,
+                        totalTokens: 8_590_000_000_000_000,
+                      },
+                      "gpt-5.5": real,
+                    },
+                  },
+                  { costUSD: 2.7397e296, date: "2026-10-04", models: { "gpt-5.5": real } },
+                  { costUSD: 3, date: "2026-10-05", models: { "gpt-5.5": real } },
+                ],
+              },
+              reportKind: "daily",
+              source: "codex",
+            },
+          ])
+          .pipe(Effect.provide(logger.layer)),
+      );
+
+      expect(result.upserted).toBe(2);
+      expect(
+        usageRows().map(({ costUsd, date, model }) => ({
+          costUsd: Math.round(Number(costUsd)),
+          date,
+          model,
+        })),
+      ).toEqual([
+        { costUsd: 0, date: "2026-10-03", model: "gpt-5.5" },
+        { costUsd: 3, date: "2026-10-05", model: "gpt-5.5" },
+      ]);
+      expect(deviceCounter()).toEqual({
+        lastRejectedUsageAt: Date.parse("2026-10-05T12:00:00.000Z"),
+        rejectedUsageRows: 2,
+      });
+      expect(logger.entries.map((entry) => [entry.level, entry.message])).toEqual([
+        ["Warn", "Dropped implausible usage rows"],
+      ]);
+      expect(logger.entries[0]?.args).toEqual([
+        expect.objectContaining({
+          deviceId: "device",
+          rejected: 2,
+          sample: [
+            expect.objectContaining({ date: "2026-10-03", model: "fake", reason: "tokens" }),
+            expect.objectContaining({ date: "2026-10-04", model: "gpt-5.5", reason: "cost" }),
+          ],
+          userId: "user",
+        }),
+      ]);
+    });
+
+    it("drops implausible legacy sync rows and accumulates the device counter", async () => {
+      const logger = makeTestLogger();
+      const service = await makeService("2026-10-05T12:00:00.000Z");
+      const day = {
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        costUsd: 1,
+        date: "2026-10-04",
+        model: "gpt-5.5",
+        source: "codex",
+        ...real,
+      };
+
+      for (const costUsd of [1e12, 5e6]) {
+        const result = await Effect.runPromise(
+          service
+            .syncBatch(identity, device, [day, { ...day, costUsd, model: "fake" }])
+            .pipe(Effect.provide(logger.layer)),
+        );
+        expect(result).toMatchObject({ received: 2, upserted: 1 });
+      }
+
+      expect(usageRows().map((row) => row.model)).toEqual(["gpt-5.5"]);
+      expect(deviceCounter()).toMatchObject({ rejectedUsageRows: 2 });
+      expect(logger.entries).toHaveLength(2);
     });
   });
 

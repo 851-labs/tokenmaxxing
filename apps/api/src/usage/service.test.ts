@@ -82,6 +82,7 @@ interface RepositoryOptions {
 function makeRepository(options: RepositoryOptions = {}) {
   const checkInDevice = vi.fn(() => Effect.succeed(undefined));
   const pruneChunk = vi.fn(() => Effect.succeed(undefined));
+  const recordRejectedUsage = vi.fn(() => Effect.succeed(undefined));
   const upsertChunk = vi.fn(() => Effect.succeed(undefined));
   const touchDevice = vi.fn(() => Effect.succeed(undefined));
   const upsertSourceStats = vi.fn(() => Effect.succeed(undefined));
@@ -94,6 +95,7 @@ function makeRepository(options: RepositoryOptions = {}) {
   const repository: UsageRepositoryShape = {
     checkInDevice,
     pruneChunk,
+    recordRejectedUsage,
     touchDevice,
     upsertChunk,
     upsertRawReports,
@@ -103,6 +105,7 @@ function makeRepository(options: RepositoryOptions = {}) {
   return {
     checkInDevice,
     pruneChunk,
+    recordRejectedUsage,
     repository,
     touchDevice,
     upsertChunk,

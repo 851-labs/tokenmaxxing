@@ -9,6 +9,7 @@ import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { Effect, Layer } from "effect";
 
 import { batchNonEmpty, Drizzle } from "../database";
+import { maxCostUsdSql } from "./plausibility";
 import { RawUsageObjectStore } from "./raw-store";
 import {
   makeUsageService,
@@ -72,6 +73,18 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
           );
           return batchNonEmpty(db, statements);
         });
+      }),
+    recordRejectedUsage: (deviceId, count, rejectedAt) =>
+      Effect.gen(function* () {
+        yield* database.use((db) =>
+          db
+            .update(devices)
+            .set({
+              lastRejectedUsageAt: rejectedAt,
+              rejectedUsageRows: sql`${devices.rejectedUsageRows} + ${count}`,
+            })
+            .where(eq(devices.id, deviceId)),
+        );
       }),
     pruneChunk: (deviceId, scopes, syncedAt) =>
       Effect.gen(function* () {
@@ -229,13 +242,22 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
  * unmarked Codex history with the device's *current* speed tier, so a
  * re-upload of unchanged token counts is a pure re-price and keeps the
  * stored cost; any token change (new or corrected usage) takes the incoming
- * cost, as does a row stored unpriced (0) whose model is now priced.
- * `usage_days.*` is the stored row and `excluded.*` the incoming one; SQLite
- * evaluates every SET expression before assigning, so the token columns
- * updated alongside never leak into the comparison.
+ * cost, as does a row stored unpriced (0) whose model is now priced, and so
+ * does a stored cost above the plausibility ceiling for those tokens: an
+ * absurd cost is never frozen in. `usage_days.*` is the stored row and
+ * `excluded.*` the incoming one; SQLite evaluates every SET expression before
+ * assigning, so the token columns updated alongside never leak into the
+ * comparison.
  */
 const frozenCostUsd = sql`case
   when ${usageDays.costUsd} > 0
+    and ${usageDays.costUsd} <= ${maxCostUsdSql({
+      cacheCreationTokens: sql`excluded.cache_creation_tokens`,
+      cacheReadTokens: sql`excluded.cache_read_tokens`,
+      inputTokens: sql`excluded.input_tokens`,
+      outputTokens: sql`excluded.output_tokens`,
+      totalTokens: sql`excluded.total_tokens`,
+    })}
     and ${usageDays.inputTokens} = excluded.input_tokens
     and ${usageDays.outputTokens} = excluded.output_tokens
     and ${usageDays.cacheCreationTokens} = excluded.cache_creation_tokens

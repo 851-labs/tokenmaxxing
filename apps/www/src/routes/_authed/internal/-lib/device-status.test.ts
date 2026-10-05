@@ -100,6 +100,8 @@ function device(overrides: Partial<AdminDevice> = {}): AdminDevice {
     createdAt: "2026-01-01T00:00:00.000Z",
     id: DeviceId.make("device_1"),
     lastCheckInAt: null,
+    lastRejectedUsageAt: null,
+    rejectedUsageRows: 0,
     lastSyncAt: null,
     name: "laptop",
     platform: "darwin",

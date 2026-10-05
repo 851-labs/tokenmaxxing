@@ -22,6 +22,7 @@ import {
   type PersistableDailyReport,
 } from "./ccusage";
 import { normalizeUsageDays } from "./models";
+import { implausibleUsageReason, type ImplausibleUsageReason } from "./plausibility";
 import type { RawUsageStorageError } from "./raw-store";
 
 /**
@@ -31,7 +32,10 @@ import type { RawUsageStorageError } from "./raw-store";
  * deviceId always comes from the presenting token, so payloads cannot write
  * into another device's history. Days later than UTC today + 1 are dropped
  * (not rejected): a skewed device clock should not block its real history.
- * Legacy sync rows that fail to decode are dropped the same way, one by one.
+ * Legacy sync rows that fail to decode are dropped the same way, one by one,
+ * and so are rows outside the plausibility limits (see `./plausibility`):
+ * those are logged with the user and device for moderation and counted on
+ * the device, while the rest of the sync goes through.
  */
 
 type SyncResult = typeof SyncUsageResponse.Type;
@@ -96,6 +100,12 @@ interface UsageRepositoryShape {
     rows: readonly UsageDayInput[],
     syncedAt: Date,
   ): Effect.Effect<void, DatabaseError>;
+  /** Adds `count` to the device's implausible-row counter for moderation. */
+  recordRejectedUsage(
+    deviceId: string,
+    count: number,
+    rejectedAt: Date,
+  ): Effect.Effect<void, DatabaseError>;
   /** Removes models omitted by an authoritative raw daily report. */
   pruneChunk(
     deviceId: string,
@@ -130,6 +140,9 @@ class UsageRepository extends Context.Service<UsageRepository, UsageRepositorySh
 ) {}
 
 const UPSERT_CHUNK_SIZE = 40;
+
+/** Rejected rows echoed in the moderation log; the count covers the rest. */
+const REJECTED_LOG_SAMPLE_SIZE = 5;
 
 /** Strict like every CLI payload: a row with undeclared fields is dropped too. */
 const decodeUsageDay = Schema.decodeUnknownEffect(UsageDayInput, { onExcessProperty: "error" });
@@ -319,7 +332,16 @@ function writeStructuredUsage(
   coveredDays: readonly CoveredUsageDay[] = [],
 ) {
   return Effect.gen(function* () {
-    const normalizedDays = normalizeUsageDays(days);
+    const { accepted: normalizedDays, rejected } = partitionPlausible(normalizeUsageDays(days));
+    if (rejected.length > 0) {
+      yield* Effect.logWarning("Dropped implausible usage rows", {
+        deviceId,
+        rejected: rejected.length,
+        sample: rejected.slice(0, REJECTED_LOG_SAMPLE_SIZE),
+        userId,
+      });
+      yield* repository.recordRejectedUsage(deviceId, rejected.length, syncedAt).pipe(Effect.orDie);
+    }
     for (let offset = 0; offset < normalizedDays.length; offset += UPSERT_CHUNK_SIZE) {
       yield* repository
         .upsertChunk(
@@ -341,6 +363,46 @@ function writeStructuredUsage(
 
     return normalizedDays.length;
   });
+}
+
+interface RejectedUsageDay {
+  costUsd: number;
+  date: string;
+  model: string;
+  reason: ImplausibleUsageReason;
+  source: UsageSource;
+  totalTokens: number;
+}
+
+/**
+ * Splits normalized rows by the plausibility limits. Runs after
+ * normalization, so rows merged under one model are judged as stored.
+ * A rejected model counts as absent: a raw report covering its day prunes
+ * any earlier stored copy, so an implausible upload never leaves one behind.
+ */
+function partitionPlausible(days: readonly UsageDayInput[]): {
+  accepted: UsageDayInput[];
+  rejected: RejectedUsageDay[];
+} {
+  const accepted: UsageDayInput[] = [];
+  const rejected: RejectedUsageDay[] = [];
+  for (const day of days) {
+    const reason = implausibleUsageReason(day);
+    if (reason === null) {
+      accepted.push(day);
+    } else {
+      rejected.push({
+        costUsd: day.costUsd,
+        date: day.date,
+        model: day.model,
+        reason,
+        source: day.source,
+        totalTokens: day.totalTokens,
+      });
+    }
+  }
+
+  return { accepted, rejected };
 }
 
 function buildReplacementScopes(
