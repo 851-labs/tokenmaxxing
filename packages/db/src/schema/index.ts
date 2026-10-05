@@ -155,6 +155,9 @@ const devices = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     lastSyncAt: integer("last_sync_at", { mode: "timestamp_ms" }),
     lastCheckInAt: integer("last_check_in_at", { mode: "timestamp_ms" }),
+    /** Usage rows dropped at ingest for exceeding the plausibility limits. */
+    rejectedUsageRows: integer("rejected_usage_rows").notNull().default(0),
+    lastRejectedUsageAt: integer("last_rejected_usage_at", { mode: "timestamp_ms" }),
     serviceAutoUpdateAttemptedAt: integer("service_auto_update_attempted_at", {
       mode: "timestamp_ms",
     }),

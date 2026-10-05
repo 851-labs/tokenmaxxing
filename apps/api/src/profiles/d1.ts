@@ -6,7 +6,7 @@ import { DEFAULT_LEADERBOARD_METRIC } from "@tokenmaxxing/api-contract";
 
 import { Drizzle, firstRow } from "../database";
 import { authUserColumns, toAuthUser } from "../public-user";
-import { singleAggregateRow, usageAggregates } from "../usage/aggregates";
+import { singleAggregateRow, sumOf, usageAggregates } from "../usage/aggregates";
 import { userRank } from "../usage/ranking";
 import { makeProfilesService, ProfilesRepository, ProfilesService } from "./service";
 import { usageStreaks } from "./streaks";
@@ -62,7 +62,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
                 .where(userUsage),
               db
                 .select({
-                  sessionCount: sql<number>`coalesce(sum(${usageSourceStats.sessionCount}), 0)`,
+                  sessionCount: sumOf(usageSourceStats.sessionCount),
                 })
                 .from(usageSourceStats)
                 .where(eq(usageSourceStats.userId, userId)),
@@ -146,9 +146,9 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
             .select({
               date: usageDays.date,
               key: sql<string>`${key}`.as("group_key"),
-              outputTokens: sql<number>`sum(${usageDays.outputTokens})`,
-              spendUsd: sql<number>`sum(${usageDays.costUsd})`,
-              totalTokens: sql<number>`sum(${usageDays.totalTokens})`,
+              outputTokens: usageAggregates.outputTokens(),
+              spendUsd: usageAggregates.spendUsd(),
+              totalTokens: usageAggregates.totalTokens(),
             })
             .from(usageDays)
             .where(

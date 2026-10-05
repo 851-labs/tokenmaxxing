@@ -24,30 +24,67 @@ const compact = new Intl.NumberFormat("en-US", {
   notation: "compact",
 });
 
-/** Whole dollars from $100 up, cents below. */
+const usdCompact = new Intl.NumberFormat("en-US", {
+  currency: "USD",
+  maximumFractionDigits: 1,
+  minimumFractionDigits: 0,
+  notation: "compact",
+  style: "currency",
+});
+
+/**
+ * Compact notation tops out at "T", so anything this large (or non-finite)
+ * would print as a run of digits and break the layout. Real usage is nowhere
+ * near it; such values are fabricated, so they render as a fixed-width cap.
+ */
+const DISPLAY_CEILING = 1e15;
+
+/** Whole dollars from $100, compact from $1M ("$1.2M"), capped at ">$999T". */
 function formatUsd(value: number): string {
-  return value >= 100 ? usd0.format(value) : usd2.format(value);
+  if (Number.isNaN(value)) {
+    return "—";
+  }
+  const magnitude = Math.abs(value);
+  if (magnitude >= DISPLAY_CEILING) {
+    return value < 0 ? "<-$999T" : ">$999T";
+  }
+  if (magnitude >= 1e6) {
+    return usdCompact.format(value);
+  }
+
+  return magnitude >= 100 ? usd0.format(value) : usd2.format(value);
 }
 
 function formatTokens(value: number): string {
-  if (value >= 1e12) {
-    return `${(value / 1e12).toFixed(2)}T`;
+  if (Number.isNaN(value)) {
+    return "—";
   }
-  if (value >= 1e9) {
-    return `${(value / 1e9).toFixed(2)}B`;
+  const magnitude = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (magnitude >= DISPLAY_CEILING) {
+    return value < 0 ? "<-999T" : ">999T";
   }
-  if (value >= 1e6) {
-    return `${(value / 1e6).toFixed(1)}M`;
+  if (magnitude >= 1e12) {
+    return `${sign}${(magnitude / 1e12).toFixed(2)}T`;
   }
-  if (value >= 1e3) {
-    return `${(value / 1e3).toFixed(1)}K`;
+  if (magnitude >= 1e9) {
+    return `${sign}${(magnitude / 1e9).toFixed(2)}B`;
+  }
+  if (magnitude >= 1e6) {
+    return `${sign}${(magnitude / 1e6).toFixed(1)}M`;
+  }
+  if (magnitude >= 1e3) {
+    return `${sign}${(magnitude / 1e3).toFixed(1)}K`;
   }
 
   return value.toFixed(0);
 }
 
+/** Grouped digits for counts; values past the display ceiling go compact. */
 function formatInteger(value: number): string {
-  return integer.format(value);
+  return Math.abs(value) >= DISPLAY_CEILING || Number.isNaN(value)
+    ? formatCompact(value)
+    : integer.format(value);
 }
 
 /** "1 user", "2 users": the formatted count plus the singular or plural noun. */
@@ -66,6 +103,13 @@ function percentOf(part: number, total: number): number {
 }
 
 function formatCompact(value: number): string {
+  if (Number.isNaN(value)) {
+    return "—";
+  }
+  if (Math.abs(value) >= DISPLAY_CEILING) {
+    return value < 0 ? "<-999T" : ">999T";
+  }
+
   return compact.format(value);
 }
 

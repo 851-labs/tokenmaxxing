@@ -53,6 +53,45 @@ describe("number formatters", () => {
   it("compacts large counts", () => {
     expect(formatCompact(1_234)).toBe("1.2K");
   });
+
+  it("compacts dollars from $1M", () => {
+    expect(formatUsd(999_999.4)).toBe("$999,999");
+    expect(formatUsd(1_000_000)).toBe("$1M");
+    expect(formatUsd(1_234_567)).toBe("$1.2M");
+    expect(formatUsd(4_500_000_000)).toBe("$4.5B");
+    expect(formatUsd(7_800_000_000_000)).toBe("$7.8T");
+  });
+
+  // 2026-10-05: fabricated uploads reached $2.7e296 and 8.6e15 tokens per day.
+  it("caps absurd values at a fixed width instead of printing every digit", () => {
+    for (const value of [1e15, 8e76, 2.7397e296, Number.MAX_VALUE, Number.POSITIVE_INFINITY]) {
+      expect(formatUsd(value)).toBe(">$999T");
+      expect(formatTokens(value)).toBe(">999T");
+      expect(formatCompact(value)).toBe(">999T");
+      expect(formatInteger(value)).toBe(">999T");
+    }
+    expect(formatTokens(8.59e15)).toBe(">999T");
+    expect(formatUsd(Number.NEGATIVE_INFINITY)).toBe("<-$999T");
+    expect(formatTokens(-1e16)).toBe("<-999T");
+  });
+
+  it("renders NaN as a dash and keeps the sign of negative values", () => {
+    expect(formatUsd(Number.NaN)).toBe("—");
+    expect(formatTokens(Number.NaN)).toBe("—");
+    expect(formatCompact(Number.NaN)).toBe("—");
+    expect(formatInteger(Number.NaN)).toBe("—");
+    expect(formatTokens(-2_570_685)).toBe("-2.6M");
+    expect(formatUsd(-5)).toBe("-$5.00");
+  });
+
+  it("stays short at every magnitude", () => {
+    for (let exponent = 0; exponent <= 308; exponent += 1) {
+      const value = 9.99 * 10 ** exponent;
+      expect(formatUsd(value).length).toBeLessThanOrEqual(10);
+      expect(formatTokens(value).length).toBeLessThanOrEqual(8);
+      expect(formatCompact(value).length).toBeLessThanOrEqual(8);
+    }
+  });
 });
 
 describe("date formatters", () => {

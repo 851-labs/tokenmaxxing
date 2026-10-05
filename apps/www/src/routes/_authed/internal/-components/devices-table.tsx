@@ -12,6 +12,7 @@ import {
 } from "../-lib/device-status";
 import { Avatar } from "../../../../components/ui/avatar";
 import { Badge } from "../../../../components/ui/badge";
+import { formatCount } from "../../../../lib/format";
 
 type AdminUsersData = typeof AdminUsersResponse.Type;
 type DeviceRow = AdminUsersData["devices"][number];
@@ -69,6 +70,18 @@ function DevicesTable({ data }: { data: AdminUsersData }) {
                   <div className="truncate font-medium" title={row.device.name}>
                     {row.device.name}
                   </div>
+                  {row.device.rejectedUsageRows > 0 ? (
+                    <div
+                      className="truncate text-xs text-red-600 dark:text-red-400"
+                      title={
+                        row.device.lastRejectedUsageAt === null
+                          ? undefined
+                          : `Last rejected ${row.device.lastRejectedUsageAt}`
+                      }
+                    >
+                      {formatCount(row.device.rejectedUsageRows, "implausible row")} dropped
+                    </div>
+                  ) : null}
                 </td>
                 <td className="p-3 align-top">
                   {bannedUserIds.has(row.user.id) ? (

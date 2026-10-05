@@ -25,6 +25,8 @@ function device(
     createdAt: "2026-06-19T18:00:00.000Z",
     id: DeviceId.make(id),
     lastCheckInAt: null,
+    lastRejectedUsageAt: null,
+    rejectedUsageRows: 0,
     lastSyncAt: "2026-06-19T19:30:00.000Z",
     name: "Mac.localdomain",
     platform: "darwin",

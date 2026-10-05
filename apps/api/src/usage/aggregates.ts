@@ -5,13 +5,16 @@ import { Effect } from "effect";
 import { DatabaseError } from "../database";
 
 /**
- * Aggregate SQL fragments over `usage_days`. Sums always coalesce to 0 in SQL
- * so callers never patch nulls in JS. Each accessor builds a fresh fragment,
- * so the result can be `.as(...)`-aliased per query without sharing state.
+ * Aggregate SQL fragments over `usage_days`. Sums use SQLite's `total()`, not
+ * `sum()`: `sum()` over integer columns throws "integer overflow" once the
+ * result passes int64 (fabricated rows took `/internal` down that way), while
+ * `total()` sums as a float that cannot overflow and is 0.0 over no rows, so
+ * callers never patch nulls in JS. Each accessor builds a fresh fragment, so
+ * the result can be `.as(...)`-aliased per query without sharing state.
  */
 
 function sumOf(column: AnyColumn): SQL<number> {
-  return sql<number>`coalesce(sum(${column}), 0)`;
+  return sql<number>`total(${column})`;
 }
 
 function countDistinct(column: AnyColumn): SQL<number> {
@@ -46,4 +49,4 @@ function singleAggregateRow<A>(rows: readonly A[]): Effect.Effect<A, DatabaseErr
     : Effect.succeed(row);
 }
 
-export { singleAggregateRow, usageAggregates, usageMetric };
+export { singleAggregateRow, sumOf, usageAggregates, usageMetric };
