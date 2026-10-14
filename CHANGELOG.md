@@ -5,6 +5,12 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Codex usage sync now requires ccusage 20.0.33 or newer to read Zstandard-compressed
+  `.jsonl.zst` session logs. Scheduled syncs detect changes to compressed logs in active
+  sessions, archives, and custom `CODEX_HOME` locations instead of treating them as unchanged.
+
 ### Server
 
 - The API now rejects implausible usage at ingest, for every CLI version. A row (device, day,

@@ -30,8 +30,8 @@ function digest(source: Parameters<typeof fingerprintSource>[0], env: Record<str
 }
 
 describe("fingerprintSource", () => {
-  it("is stable for untouched logs and changes when a rollout grows", async () => {
-    const rollout = join(home, ".codex", "sessions", "2026", "09", "25", "rollout-a.jsonl");
+  it.each(["jsonl", "jsonl.zst"])("detects changes to %s Codex rollouts", async (extension) => {
+    const rollout = join(home, ".codex", "sessions", "2026", "09", "25", `rollout-a.${extension}`);
     await write(rollout);
 
     const first = await digest("codex");
@@ -53,13 +53,13 @@ describe("fingerprintSource", () => {
     expect((await digest("codex"))?.digest).not.toBe(before?.digest);
   });
 
-  it("covers archived Codex sessions, so archiving a rollout is a change", async () => {
-    const live = join(home, ".codex", "sessions", "2026", "09", "20", "rollout-a.jsonl");
+  it.each(["jsonl", "jsonl.zst"])("detects archiving %s Codex rollouts", async (extension) => {
+    const live = join(home, ".codex", "sessions", "2026", "09", "20", `rollout-a.${extension}`);
     await write(live);
     await mkdir(join(home, ".codex", "archived_sessions"));
     const before = await digest("codex");
 
-    await rename(live, join(home, ".codex", "archived_sessions", "rollout-a.jsonl"));
+    await rename(live, join(home, ".codex", "archived_sessions", `rollout-a.${extension}`));
     const after = await digest("codex");
     expect(after?.digest).not.toBe(before?.digest);
     expect(after?.files).toBe(1);
@@ -70,6 +70,8 @@ describe("fingerprintSource", () => {
     const before = await digest("codex");
 
     await write(join(home, ".codex", "sessions", "notes.txt"), "scratch");
+    await write(join(home, ".codex", "sessions", "notes.zst"), "scratch");
+    await write(join(home, ".codex", "sessions", "rollout.jsonl.zst.tmp"), "scratch");
     await write(join(home, ".codex", "log", "codex-tui.log"), "log line");
     expect(await digest("codex")).toEqual(before);
   });
@@ -83,11 +85,11 @@ describe("fingerprintSource", () => {
     expect((await digest("gemini"))?.digest).not.toBe(empty?.digest);
   });
 
-  it("follows CODEX_HOME, including comma-separated homes", async () => {
+  it.each(["jsonl", "jsonl.zst"])("follows CODEX_HOME for %s rollouts", async (extension) => {
     const work = join(root, "work-codex");
     const personal = join(root, "personal-codex");
-    await write(join(work, "sessions", "rollout-a.jsonl"));
-    await write(join(personal, "archived_sessions", "rollout-b.jsonl"));
+    await write(join(work, "sessions", `rollout-a.${extension}`));
+    await write(join(personal, "archived_sessions", `rollout-b.${extension}`));
     await write(join(home, ".codex", "sessions", "rollout-default.jsonl"));
     const env = { CODEX_HOME: `${work}, ${personal}` };
 
@@ -95,13 +97,13 @@ describe("fingerprintSource", () => {
 
     await write(join(home, ".codex", "sessions", "rollout-other.jsonl"));
     const before = await digest("codex", env);
-    await appendFile(join(personal, "archived_sessions", "rollout-b.jsonl"), "{}\n");
+    await appendFile(join(personal, "archived_sessions", `rollout-b.${extension}`), "{}\n");
     expect((await digest("codex", env))?.digest).not.toBe(before?.digest);
   });
 
-  it("reads a Codex home without sessions directories directly, like ccusage", async () => {
+  it.each(["jsonl", "jsonl.zst"])("reads %s rollouts from a flat CODEX_HOME", async (extension) => {
     const codexHome = join(root, "flat-codex");
-    await write(join(codexHome, "rollout-a.jsonl"));
+    await write(join(codexHome, `rollout-a.${extension}`));
 
     expect(await digest("codex", { CODEX_HOME: codexHome })).toMatchObject({ files: 1 });
   });

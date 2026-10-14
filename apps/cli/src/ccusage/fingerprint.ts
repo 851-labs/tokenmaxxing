@@ -65,7 +65,7 @@ async function sourceLogRoots(
       return [...claudeProjectDirs(env, home).map((path) => tree(path, ["jsonl"])), ...configFiles];
     case "codex":
       return [
-        ...(await codexUsageDirs(env, home)).map((path) => tree(path, ["jsonl"])),
+        ...(await codexUsageDirs(env, home)).map((path) => tree(path, ["jsonl", "jsonl.zst"])),
         ...configFiles,
       ];
     case "copilot": {

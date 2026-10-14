@@ -380,9 +380,9 @@ describe("source cadence state file", () => {
     expect(await Effect.runPromise(readSourceCadenceState(path))).toBeNull();
   });
 
-  it("runs everything first, then only the sources whose logs changed", async () => {
+  it.each(["jsonl", "jsonl.zst"])("syncs changed %s rollouts", async (extension) => {
     const home = join(root, "home");
-    const rollout = join(home, ".codex", "sessions", "2026", "09", "25", "rollout-a.jsonl");
+    const rollout = join(home, ".codex", "sessions", "2026", "09", "25", `rollout-a.${extension}`);
     await mkdir(dirname(rollout), { recursive: true });
     await writeFile(rollout, "{}\n");
     const path = join(root, "service-sources.json");

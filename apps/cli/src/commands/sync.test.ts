@@ -834,7 +834,7 @@ describe("sync source outcomes", () => {
     expect(uploadPayload?.reports).toMatchObject([
       {
         command: [
-          "ccusage@^20.0.22",
+          "ccusage@^20.0.33",
           "codex",
           "daily",
           "--json",
@@ -997,7 +997,7 @@ describe("sync source outcomes", () => {
     ]);
     // OMP's session paths stay out of the uploaded command.
     const command = [
-      "ccusage@^20.0.22",
+      "ccusage@^20.0.33",
       "pi",
       "daily",
       "--json",

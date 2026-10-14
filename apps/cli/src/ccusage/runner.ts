@@ -12,14 +12,13 @@ import type { CcusageSource } from "./sources";
 import { type CcusageEnv, ccusageSourceArgs, ccusageSourceEnv } from "./source-env";
 
 /**
- * Shells out to `bun x ccusage@^20.0.22 <source> daily --json --breakdown`, falling back to
+ * Shells out to `bun x ccusage@^20.0.33 <source> daily --json --breakdown`, falling back to
  * npx when bun is missing, cannot be started or does not take `bun x`. Runner and report
  * failures stay typed so the sync layer can distinguish them from valid empty reports.
  */
 
-// 20.0.21 added the Antigravity and ZCode adapters; 20.0.22 stopped dropping
-// claude-fable-5-1 usage. Earlier v20 releases also carry the Codex replay fix.
-const CCUSAGE_SPEC = "ccusage@^20.0.22";
+// 20.0.33 reads Zstandard-compressed Codex rollouts (.jsonl.zst).
+const CCUSAGE_SPEC = "ccusage@^20.0.33";
 const RUN_TIMEOUT_MS = 180_000;
 const WINDOWS_NPX_SHIM = "npx.cmd";
 /** What `npm i -g bun` and pnpm put on PATH instead of bun.exe; cmd.exe has to run them. */
