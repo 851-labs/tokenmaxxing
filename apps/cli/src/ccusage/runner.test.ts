@@ -53,9 +53,9 @@ async function ccusageErrorFor<A>(effect: Effect.Effect<A, CcusageRunError>) {
 }
 
 describe("ccusage commands", () => {
-  it("uses the minimum v20 release that ships every supported adapter", () => {
+  it("requires the v20 release that reads compressed Codex rollouts", () => {
     expect(dailyCcusageCommand(codex)).toEqual([
-      "ccusage@^20.0.22",
+      "ccusage@^20.0.33",
       "codex",
       "daily",
       "--json",
@@ -64,7 +64,7 @@ describe("ccusage commands", () => {
       "calculate",
     ]);
     expect(sessionCcusageCommand(codex)).toEqual([
-      "ccusage@^20.0.22",
+      "ccusage@^20.0.33",
       "codex",
       "session",
       "--json",
@@ -75,7 +75,7 @@ describe("ccusage commands", () => {
 
   it("builds focused Pi daily and session commands", () => {
     expect(dailyCcusageCommand(pi)).toEqual([
-      "ccusage@^20.0.22",
+      "ccusage@^20.0.33",
       "pi",
       "daily",
       "--json",
@@ -84,7 +84,7 @@ describe("ccusage commands", () => {
       "calculate",
     ]);
     expect(sessionCcusageCommand(pi)).toEqual([
-      "ccusage@^20.0.22",
+      "ccusage@^20.0.33",
       "pi",
       "session",
       "--json",
@@ -95,7 +95,7 @@ describe("ccusage commands", () => {
 
   it("records Oh My Pi's pi commands without its local session paths", () => {
     expect(dailyCcusageCommand(omp, { since: "2026-09-10" })).toEqual([
-      "ccusage@^20.0.22",
+      "ccusage@^20.0.33",
       "pi",
       "daily",
       "--json",
@@ -110,7 +110,7 @@ describe("ccusage commands", () => {
 
   it("builds focused Hermes daily and session commands", () => {
     expect(dailyCcusageCommand(hermes)).toEqual([
-      "ccusage@^20.0.22",
+      "ccusage@^20.0.33",
       "hermes",
       "daily",
       "--json",
@@ -119,7 +119,7 @@ describe("ccusage commands", () => {
       "calculate",
     ]);
     expect(sessionCcusageCommand(hermes)).toEqual([
-      "ccusage@^20.0.22",
+      "ccusage@^20.0.33",
       "hermes",
       "session",
       "--json",
@@ -136,7 +136,7 @@ describe("ccusageCommandInvocations", () => {
       "/d",
       "/s",
       "/c",
-      '"npx.cmd "-y" "ccusage@^20.0.22" "codex" "daily" "--since" "20260910""',
+      '"npx.cmd "-y" "ccusage@^20.0.33" "codex" "daily" "--since" "20260910""',
     ],
     command: "C:\\WINDOWS\\system32\\cmd.exe",
     runner: "npx.cmd",
@@ -167,7 +167,7 @@ describe("ccusageCommandInvocations", () => {
       ),
     ).toEqual([
       {
-        args: ["x", "ccusage@^20.0.22", ...args],
+        args: ["x", "ccusage@^20.0.33", ...args],
         command: "C:\\Users\\a\\.bun\\bin\\bun.exe",
         runner: "bun.exe",
       },
@@ -192,7 +192,7 @@ describe("ccusageCommandInvocations", () => {
           "/d",
           "/s",
           "/c",
-          '"bun.cmd "x" "ccusage@^20.0.22" "codex" "daily" "--since" "20260910""',
+          '"bun.cmd "x" "ccusage@^20.0.33" "codex" "daily" "--since" "20260910""',
         ],
         command: "C:\\WINDOWS\\system32\\cmd.exe",
         runner: "bun.cmd",
@@ -205,8 +205,8 @@ describe("ccusageCommandInvocations", () => {
 
   it("keeps the POSIX npm fallback", () => {
     expect(ccusageCommandInvocations(["codex", "daily"], "linux")).toEqual([
-      { args: ["x", "ccusage@^20.0.22", "codex", "daily"], command: "bun", runner: "bun" },
-      { args: ["-y", "ccusage@^20.0.22", "codex", "daily"], command: "npx", runner: "npx" },
+      { args: ["x", "ccusage@^20.0.33", "codex", "daily"], command: "bun", runner: "bun" },
+      { args: ["-y", "ccusage@^20.0.33", "codex", "daily"], command: "npx", runner: "npx" },
     ]);
   });
 });
@@ -318,7 +318,7 @@ describe("execCcusage", () => {
       expect(run).toHaveBeenCalledOnce();
       expect(run).toHaveBeenCalledWith(
         join(dir, "bun.exe"),
-        ["x", "ccusage@^20.0.22", "codex", "daily"],
+        ["x", "ccusage@^20.0.33", "codex", "daily"],
         env,
         { windowsVerbatimArguments: false },
       );
@@ -338,7 +338,7 @@ describe("execCcusage", () => {
       expect(run).toHaveBeenCalledOnce();
       expect(run).toHaveBeenCalledWith(
         "C:\\WINDOWS\\system32\\cmd.exe",
-        ["/d", "/s", "/c", '"bun.cmd "x" "ccusage@^20.0.22" "codex" "daily""'],
+        ["/d", "/s", "/c", '"bun.cmd "x" "ccusage@^20.0.33" "codex" "daily""'],
         env,
         { windowsVerbatimArguments: true },
       );
@@ -359,7 +359,7 @@ describe("execCcusage", () => {
       expect(run).toHaveBeenCalledOnce();
       expect(run).toHaveBeenCalledWith(
         "cmd.exe",
-        ["/d", "/s", "/c", '"npx.cmd "-y" "ccusage@^20.0.22" "codex" "daily""'],
+        ["/d", "/s", "/c", '"npx.cmd "-y" "ccusage@^20.0.33" "codex" "daily""'],
         env,
         { windowsVerbatimArguments: true },
       );
@@ -403,7 +403,7 @@ describe("execCcusage", () => {
       expect(run).toHaveBeenCalledTimes(2);
       expect(run).toHaveBeenLastCalledWith(
         "cmd.exe",
-        ["/d", "/s", "/c", '"npx.cmd "-y" "ccusage@^20.0.22" "codex" "daily""'],
+        ["/d", "/s", "/c", '"npx.cmd "-y" "ccusage@^20.0.33" "codex" "daily""'],
         { PATH: dir },
         { windowsVerbatimArguments: true },
       );
@@ -480,7 +480,7 @@ describe("execCcusage", () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(run).toHaveBeenLastCalledWith(
       "npx",
-      ["-y", "ccusage@^20.0.22", "codex", "daily"],
+      ["-y", "ccusage@^20.0.33", "codex", "daily"],
       {},
       { windowsVerbatimArguments: false },
     );
@@ -505,7 +505,7 @@ describe("execCcusage", () => {
       expect(run).toHaveBeenCalledTimes(2);
       expect(run).toHaveBeenLastCalledWith(
         "cmd.exe",
-        ["/d", "/s", "/c", '"npx.cmd "-y" "ccusage@^20.0.22" "codex" "daily""'],
+        ["/d", "/s", "/c", '"npx.cmd "-y" "ccusage@^20.0.33" "codex" "daily""'],
         { PATH: dir },
         { windowsVerbatimArguments: true },
       );
@@ -632,10 +632,10 @@ describe("execCcusage", () => {
         dirs,
       ];
       const ompEnv = { ...env, PI_AGENT_DIR: dirs };
-      expect(run).toHaveBeenNthCalledWith(1, "bun", ["x", "ccusage@^20.0.22", ...args], ompEnv, {
+      expect(run).toHaveBeenNthCalledWith(1, "bun", ["x", "ccusage@^20.0.33", ...args], ompEnv, {
         windowsVerbatimArguments: false,
       });
-      expect(run).toHaveBeenNthCalledWith(2, "npx", ["-y", "ccusage@^20.0.22", ...args], ompEnv, {
+      expect(run).toHaveBeenNthCalledWith(2, "npx", ["-y", "ccusage@^20.0.33", ...args], ompEnv, {
         windowsVerbatimArguments: false,
       });
     } finally {
