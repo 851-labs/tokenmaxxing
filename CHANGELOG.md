@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.7 - 2026-10-14
+
 ### Fixed
 
 - Codex usage sync now requires ccusage 20.0.33 or newer to read Zstandard-compressed
