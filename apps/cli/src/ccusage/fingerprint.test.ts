@@ -101,6 +101,18 @@ describe("fingerprintSource", () => {
     expect((await digest("codex", env))?.digest).not.toBe(before?.digest);
   });
 
+  it("includes Codevisor's Codex homes when CODEX_HOME is unset", async () => {
+    const profile = join(home, ".codevisor", "data", "harness-profiles", "codex", "shared-a");
+    await write(join(home, ".codex", "sessions", "rollout-default.jsonl"));
+    await write(join(profile, "sessions", "2026", "10", "16", "rollout-a.jsonl.zst"));
+
+    const before = await digest("codex");
+    expect(before).toMatchObject({ files: 2 });
+
+    await appendFile(join(profile, "sessions", "2026", "10", "16", "rollout-a.jsonl.zst"), "{}\n");
+    expect((await digest("codex"))?.digest).not.toBe(before?.digest);
+  });
+
   it.each(["jsonl", "jsonl.zst"])("reads %s rollouts from a flat CODEX_HOME", async (extension) => {
     const codexHome = join(root, "flat-codex");
     await write(join(codexHome, `rollout-a.${extension}`));

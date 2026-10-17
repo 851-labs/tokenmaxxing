@@ -8,6 +8,7 @@ import {
   type SourceDiscoveryFs,
   ccusageSourceArgs,
   ccusageSourceEnv,
+  discoverCodexHomes,
   discoverHermesHomes,
   ompSessionDirs,
 } from "./source-env";
@@ -267,6 +268,125 @@ describe("discoverHermesHomes (Windows)", () => {
     };
 
     await expect(discoverHermesHomes({ USERPROFILE: home }, "win32", fs)).resolves.toBeUndefined();
+  });
+});
+
+describe("discoverCodexHomes (POSIX)", () => {
+  let home: string;
+  let profilesRoot: string;
+
+  beforeEach(async () => {
+    home = await realpath(await mkdtemp(join(tmpdir(), "tokenmaxxing-codex-")));
+    profilesRoot = join(home, ".codevisor", "data", "harness-profiles", "codex");
+  });
+
+  afterEach(async () => {
+    await rm(home, { force: true, recursive: true });
+  });
+
+  async function codexHome(path: string, logDir = "sessions") {
+    await mkdir(join(path, logDir), { recursive: true });
+    return path;
+  }
+
+  it("lists ~/.codex then Codevisor profiles with session logs in code-unit order", async () => {
+    const defaultHome = await codexHome(join(home, ".codex"));
+    const shared = await codexHome(join(profilesRoot, "shared-b"));
+    const archived = await codexHome(join(profilesRoot, "A-archived"), "archived_sessions");
+    await mkdir(join(profilesRoot, "empty"), { recursive: true });
+    await writeFile(join(profilesRoot, "notes.txt"), "not a profile");
+
+    await expect(discoverCodexHomes({ HOME: home }, "darwin")).resolves.toBe(
+      [defaultHome, archived, shared].join(","),
+    );
+  });
+
+  it("lists Codevisor profiles even without ~/.codex", async () => {
+    const shared = await codexHome(join(profilesRoot, "shared-a"));
+
+    await expect(discoverCodexHomes({ HOME: home }, "darwin")).resolves.toBe(shared);
+  });
+
+  it("leaves the environment alone without Codevisor profiles", async () => {
+    await codexHome(join(home, ".codex"));
+
+    await expect(discoverCodexHomes({ HOME: home }, "darwin")).resolves.toBeUndefined();
+    await expect(discoverCodexHomes({}, "darwin")).resolves.toBeUndefined();
+  });
+
+  it("keeps an explicit CODEX_HOME and discovers when it is empty", async () => {
+    const defaultHome = await codexHome(join(home, ".codex"));
+    const shared = await codexHome(join(profilesRoot, "shared-a"));
+
+    await expect(
+      discoverCodexHomes({ CODEX_HOME: `${shared}, /work/codex`, HOME: home }, "darwin"),
+    ).resolves.toBeUndefined();
+    await expect(discoverCodexHomes({ CODEX_HOME: "", HOME: home }, "darwin")).resolves.toBe(
+      `${defaultHome},${shared}`,
+    );
+  });
+
+  it("widens the profile-only CODEX_HOME Codevisor sets on its Codex sessions", async () => {
+    const defaultHome = await codexHome(join(home, ".codex"));
+    const shared = await codexHome(join(profilesRoot, "shared-a"));
+    const fresh = join(profilesRoot, "shared-b");
+    await mkdir(fresh, { recursive: true });
+
+    await expect(discoverCodexHomes({ CODEX_HOME: shared, HOME: home }, "darwin")).resolves.toBe(
+      `${defaultHome},${shared}`,
+    );
+    // A session in a profile without logs yet still syncs every home.
+    await expect(discoverCodexHomes({ CODEX_HOME: fresh, HOME: home }, "darwin")).resolves.toBe(
+      `${defaultHome},${shared}`,
+    );
+  });
+
+  it("skips profiles whose logs are ~/.codex's, through a symlinked home or log dir", async () => {
+    const defaultHome = await codexHome(join(home, ".codex"));
+    const shared = await codexHome(join(profilesRoot, "shared-a"));
+    await symlink(defaultHome, join(profilesRoot, "alias"));
+    await mkdir(join(profilesRoot, "linked"), { recursive: true });
+    await symlink(join(defaultHome, "sessions"), join(profilesRoot, "linked", "sessions"));
+    // A stray file named like a log dir is not one.
+    await mkdir(join(profilesRoot, "stray"), { recursive: true });
+    await writeFile(join(profilesRoot, "stray", "sessions"), "not a dir");
+
+    await expect(discoverCodexHomes({ HOME: home }, "darwin")).resolves.toBe(
+      `${defaultHome},${shared}`,
+    );
+  });
+
+  it("skips profiles whose paths ccusage cannot split back out", async () => {
+    const shared = await codexHome(join(profilesRoot, "shared-a"));
+    await codexHome(join(profilesRoot, "work,personal"));
+    await codexHome(join(profilesRoot, "padded "));
+
+    await expect(discoverCodexHomes({ HOME: home }, "darwin")).resolves.toBe(shared);
+  });
+});
+
+describe("discoverCodexHomes (Windows)", () => {
+  it("uses USERPROFILE and dedupes case aliases", async () => {
+    const profiles = "C:\\Users\\alex\\.codevisor\\data\\harness-profiles\\codex";
+    const fs = fakeWindowsFs({
+      dirs: {
+        "C:\\Users\\alex\\.codex": [],
+        [profiles]: ["Shared-A", "shared-a"],
+        [`${profiles}\\Shared-A`]: ["sessions"],
+        [`${profiles}\\Shared-A\\sessions`]: [],
+      },
+      files: [],
+    });
+
+    const env = { USERPROFILE: "C:\\Users\\alex" };
+    const codexHome = `C:\\Users\\alex\\.codex,${profiles}\\Shared-A`;
+
+    await expect(discoverCodexHomes(env, "win32", fs)).resolves.toBe(codexHome);
+    await expect(ccusageSourceEnv("codex", env, "win32", fs)).resolves.toEqual({
+      ...env,
+      CODEX_HOME: codexHome,
+    });
+    await expect(ccusageSourceEnv("claude", env, "win32", fs)).resolves.toBe(env);
   });
 });
 

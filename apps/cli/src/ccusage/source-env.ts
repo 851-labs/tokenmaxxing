@@ -14,6 +14,11 @@ import { posix, win32 } from "node:path";
  * (comma-separated). When `HERMES_HOME` is unset we discover the default root
  * and every profile with a readable state database.
  *
+ * Codex reads one `CODEX_HOME`, but Codevisor runs it with a home per harness
+ * profile under `~/.codevisor/data/harness-profiles/codex/<profile>`. ccusage
+ * reads a comma-separated `CODEX_HOME`, so when it is unset we hand it
+ * `~/.codex` plus every Codevisor profile that has session logs.
+ *
  * Oh My Pi (OMP) is a Pi fork that writes Pi-format sessions under its own
  * directories, so the `omp` source runs ccusage's `pi` adapter pointed at them
  * (see `ompSessionDirs`). The two sources never read each other's sessions:
@@ -45,6 +50,10 @@ async function ccusageSourceEnv(
   fs: SourceDiscoveryFs = nodeSourceDiscoveryFs,
 ): Promise<CcusageEnv> {
   switch (source) {
+    case "codex": {
+      const codexHomes = await discoverCodexHomes(env, platform, fs);
+      return codexHomes === undefined ? env : { ...env, CODEX_HOME: codexHomes };
+    }
     case "hermes": {
       const hermesHomes = await discoverHermesHomes(env, platform, fs);
       return hermesHomes === undefined ? env : { ...env, HERMES_HOME: hermesHomes };
@@ -306,10 +315,113 @@ async function discoverHermesHomes(
   }
 }
 
+/**
+ * Returns the comma-joined Codex homes to hand ccusage, or undefined to leave
+ * the environment alone. Like Hermes discovery, an explicit `CODEX_HOME`
+ * wins, except one naming only Codevisor profiles: Codevisor sets that on
+ * every Codex it launches, so a sync (or `service install`) run from one of
+ * those sessions would otherwise read that single profile. A profile that
+ * cannot be read is skipped so `~/.codex` keeps syncing.
+ */
+async function discoverCodexHomes(
+  env: CcusageEnv,
+  platform: NodeJS.Platform = process.platform,
+  fs: SourceDiscoveryFs = nodeSourceDiscoveryFs,
+): Promise<string | undefined> {
+  const home = platform === "win32" ? env["USERPROFILE"] : env["HOME"];
+  if (home === undefined || home === "") {
+    return undefined;
+  }
+
+  const path = platform === "win32" ? win32 : posix;
+  const pathKey = (value: string) => (platform === "win32" ? value.toLowerCase() : value);
+  const profilesRoot = path.join(home, ".codevisor", "data", "harness-profiles", "codex");
+  const explicit = (env["CODEX_HOME"] ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+  if (explicit.length > 0) {
+    const profilesKey = pathKey(await canonicalPath(profilesRoot, platform, fs));
+    const keys = await Promise.all(
+      explicit.map(async (entry) => pathKey(await canonicalPath(entry, platform, fs))),
+    );
+    if (!keys.every((key) => key.startsWith(`${profilesKey}${path.sep}`))) {
+      return undefined;
+    }
+  }
+
+  // ccusage reads each home's `sessions` and `archived_sessions` and dedupes
+  // them by literal path, so canonical log dirs catch a profile whose logs are
+  // symlinked into another home; listing both would double-count usage.
+  const logDirs = async (codexHome: string) => {
+    const dirs: string[] = [];
+    for (const name of ["sessions", "archived_sessions"]) {
+      const dir = await fs.realpath(path.join(codexHome, name)).catch(() => undefined);
+      if (
+        dir !== undefined &&
+        (await fs.readdir(dir).then(
+          () => true,
+          () => false,
+        ))
+      ) {
+        dirs.push(pathKey(dir));
+      }
+    }
+    return dirs;
+  };
+  const homes: string[] = [];
+  const seenLogDirs = new Set<string>();
+
+  const defaultHome = await fs.realpath(path.join(home, ".codex")).catch(() => undefined);
+  if (defaultHome !== undefined) {
+    // ccusage splits CODEX_HOME on commas and trims each entry; a default home
+    // that cannot round-trip stays on ccusage's own default.
+    if (defaultHome.includes(",") || defaultHome.trim() !== defaultHome) {
+      return undefined;
+    }
+
+    homes.push(defaultHome);
+    for (const dir of await logDirs(defaultHome)) {
+      seenLogDirs.add(dir);
+    }
+  }
+
+  const defaultCount = homes.length;
+  const profiles = await fs.readdir(profilesRoot).catch(() => [] as string[]);
+  for (const profile of profiles.toSorted(compareCodeUnits)) {
+    const resolved = await fs.realpath(path.join(profilesRoot, profile)).catch(() => undefined);
+    if (resolved === undefined || resolved.includes(",") || resolved.trim() !== resolved) {
+      continue;
+    }
+
+    const dirs = await logDirs(resolved);
+    if (dirs.some((dir) => !seenLogDirs.has(dir))) {
+      homes.push(resolved);
+      for (const dir of dirs) {
+        seenLogDirs.add(dir);
+      }
+    }
+  }
+
+  // No Codevisor profile means ccusage's default already covers it, unless a
+  // profile-only CODEX_HOME would hide that default.
+  if (homes.length === 0 || (explicit.length === 0 && homes.length === defaultCount)) {
+    return undefined;
+  }
+
+  return homes.join(",");
+}
+
 function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-export { ccusageSourceArgs, ccusageSourceEnv, discoverHermesHomes, ompSessionDirs };
+export {
+  ccusageSourceArgs,
+  ccusageSourceEnv,
+  discoverCodexHomes,
+  discoverHermesHomes,
+  ompSessionDirs,
+};
 
 export type { CcusageEnv, SourceDiscoveryFs };
