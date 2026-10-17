@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.8 - 2026-10-16
+
 ### Fixed
 
 - Codex usage from Codevisor now syncs. Codevisor runs Codex with its own home per harness profile
