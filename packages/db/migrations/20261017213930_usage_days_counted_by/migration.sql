@@ -1,0 +1,1 @@
+ALTER TABLE `usage_days` ADD `counted_by` text;

@@ -83,6 +83,7 @@ function makeRepository(options: RepositoryOptions = {}) {
   const checkInDevice = vi.fn(() => Effect.succeed(undefined));
   const pruneChunk = vi.fn(() => Effect.succeed(undefined));
   const recordRejectedUsage = vi.fn(() => Effect.succeed(undefined));
+  const storedUsage = vi.fn(() => Effect.succeed([]));
   const upsertChunk = vi.fn(() => Effect.succeed(undefined));
   const touchDevice = vi.fn(() => Effect.succeed(undefined));
   const upsertSourceStats = vi.fn(() => Effect.succeed(undefined));
@@ -96,6 +97,7 @@ function makeRepository(options: RepositoryOptions = {}) {
     checkInDevice,
     pruneChunk,
     recordRejectedUsage,
+    storedUsage,
     touchDevice,
     upsertChunk,
     upsertRawReports,
@@ -339,7 +341,7 @@ describe("UsageService.ingestRaw", () => {
     expect(upsertChunk).toHaveBeenCalledWith(
       "user_123",
       "device_123",
-      [usageDay],
+      [{ ...usageDay, countedBy: "ccusage-v20-raw-6" }],
       expect.any(Date),
     );
     expect(pruneChunk).toHaveBeenCalledWith(

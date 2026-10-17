@@ -55,6 +55,7 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
                 cacheReadTokens: row.cacheReadTokens,
                 totalTokens: row.totalTokens,
                 costUsd: row.costUsd,
+                countedBy: row.countedBy ?? null,
                 syncedAt,
               })
               .onConflictDoUpdate({
@@ -67,12 +68,43 @@ const makeD1UsageRepository = Effect.fn("makeD1UsageRepository")(function* () {
                   cacheReadTokens: row.cacheReadTokens,
                   totalTokens: row.totalTokens,
                   costUsd: frozenCostUsd,
+                  countedBy: row.countedBy ?? null,
                   syncedAt,
                 },
               }),
           );
           return batchNonEmpty(db, statements);
         });
+      }),
+    storedUsage: (deviceId, days) =>
+      Effect.gen(function* () {
+        if (days.length === 0) {
+          return [];
+        }
+
+        return yield* database.use((db) =>
+          db
+            .select({
+              countedBy: usageDays.countedBy,
+              date: usageDays.date,
+              model: usageDays.model,
+              source: usageDays.source,
+              totalTokens: usageDays.totalTokens,
+              userId: usageDays.userId,
+            })
+            .from(usageDays)
+            .where(
+              and(
+                eq(usageDays.deviceId, deviceId),
+                // One JSON parameter for the whole window: D1 caps a
+                // statement at 100 bound parameters.
+                sql`(${usageDays.date}, ${usageDays.source}) in (
+                  select json_extract(value, '$[0]'), json_extract(value, '$[1]')
+                  from json_each(${JSON.stringify(days.map((day) => [day.date, day.source]))})
+                )`,
+              ),
+            ),
+        );
       }),
     recordRejectedUsage: (deviceId, count, rejectedAt) =>
       Effect.gen(function* () {

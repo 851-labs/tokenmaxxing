@@ -46,6 +46,56 @@ describe("D1 usage repository", () => {
       .all();
   }
 
+  describe("storedUsage", () => {
+    it("reads the device's rows for the requested slices past D1's parameter cap", async () => {
+      const seed = (deviceId: string, date: string, source: string, model: string) =>
+        seedUsage(database.sqlite, {
+          countedBy: "tag",
+          date,
+          deviceId,
+          model,
+          source,
+          totalTokens: 10,
+          userId: "user",
+        });
+      seed("device", "2026-10-01", "codex", "a");
+      seed("device", "2026-10-01", "codex", "b");
+      seed("device", "2026-10-01", "claude", "other-source");
+      seed("device", "2026-10-02", "codex", "other-date");
+      seed("other-device", "2026-10-01", "codex", "other-device");
+
+      const repository = await makeRepository();
+      // 150 extra slices, as one JSON parameter.
+      const window = [
+        { date: "2026-10-01", source: "codex" as const },
+        ...Array.from({ length: 150 }, (_, day) => ({
+          date: `2025-01-${String(day).padStart(3, "0")}`,
+          source: "claude" as const,
+        })),
+      ];
+      const rows = await Effect.runPromise(repository.storedUsage("device", window));
+
+      expect([...rows].sort((left, right) => left.model.localeCompare(right.model))).toEqual([
+        {
+          countedBy: "tag",
+          date: "2026-10-01",
+          model: "a",
+          source: "codex",
+          totalTokens: 10,
+          userId: "user",
+        },
+        {
+          countedBy: "tag",
+          date: "2026-10-01",
+          model: "b",
+          source: "codex",
+          totalTokens: 10,
+          userId: "user",
+        },
+      ]);
+    });
+  });
+
   describe("pruneChunk", () => {
     it("prunes only older models omitted from covered device/day/source slices", async () => {
       const seed = (deviceId: string, date: string, source: string, model: string, at: number) =>
@@ -249,6 +299,213 @@ describe("D1 usage repository", () => {
     });
   });
 
+  describe("re-sends after lost logs", () => {
+    const identity = {
+      deviceId: DeviceId.make("device"),
+      tokenId: TokenId.make("token"),
+      user: { avatarUrl: null, id: UserId.make("user"), login: "alex", name: null },
+    };
+    const device = { name: "Mac.localdomain", platform: "darwin" };
+    const tag = "ccusage-v20-raw-6";
+
+    function codexReport(date: string, models: ReadonlyArray<[string, number, number]>) {
+      return {
+        command: ["ccusage@^20.0.33", "codex", "daily", "--json", "--breakdown"],
+        payload: {
+          daily: [
+            {
+              date,
+              modelBreakdowns: models.map(([modelName, inputTokens, cost]) => ({
+                cost,
+                inputTokens,
+                modelName,
+                outputTokens: 0,
+              })),
+            },
+          ],
+        },
+        reportKind: "daily",
+        source: "codex",
+      } satisfies RawUsageReportInput;
+    }
+
+    async function ingest(
+      at: string,
+      report: RawUsageReportInput,
+      options: { identity?: typeof identity; logger?: ReturnType<typeof makeTestLogger> } = {},
+    ) {
+      let clock = Date.parse(at);
+      const service = await Effect.runPromise(
+        makeUsageService({ now: () => new Date((clock += 60_000)) }).pipe(
+          Effect.provide(UsageRepositoryLive),
+          Effect.provide(Layer.merge(database.drizzleLayer, bucket.layer)),
+        ),
+      );
+      const ingested = service.ingestRaw(options.identity ?? identity, device, [report]);
+      await Effect.runPromise(
+        options.logger === undefined
+          ? ingested
+          : ingested.pipe(Effect.provide(options.logger.layer)),
+      );
+    }
+
+    function rows() {
+      return database.sqlite
+        .prepare(
+          `select user_id as userId, model, total_tokens as totalTokens, cost_usd as costUsd,
+             counted_by as countedBy
+           from usage_days order by model`,
+        )
+        .all();
+    }
+
+    // 2026-10-06 in prod: 13 Codex threads synced, then their rollouts were
+    // deleted and the trailing window re-sent the one thread left.
+    it("keeps a whole day re-counted lower the same way, and logs it", async () => {
+      await ingest(
+        "2026-10-06T23:00:00.000Z",
+        codexReport("2026-10-06", [
+          ["gpt-6-astra", 8_000_000, 9.5],
+          ["gpt-6-mini", 200_000, 0.4],
+        ]),
+      );
+      const before = rows();
+      const logger = makeTestLogger();
+      await ingest(
+        "2026-10-15T04:14:00.000Z",
+        codexReport("2026-10-06", [["gpt-6-astra", 18_113, 0.09]]),
+        {
+          logger,
+        },
+      );
+
+      expect(before).toEqual([
+        {
+          costUsd: 9.5,
+          countedBy: tag,
+          model: "gpt-6-astra",
+          totalTokens: 8_000_000,
+          userId: "user",
+        },
+        { costUsd: 0.4, countedBy: tag, model: "gpt-6-mini", totalTokens: 200_000, userId: "user" },
+      ]);
+      expect(rows()).toEqual(before);
+      expect(logger.entries).toMatchObject([
+        {
+          args: [{ days: ['["2026-10-06","codex"]'], deviceId: "device", kept: 1, userId: "user" }],
+          message: "Kept re-sent days counted lower the same way",
+        },
+      ]);
+    });
+
+    it("still replaces a same-way re-count that grew", async () => {
+      await ingest(
+        "2026-10-14T23:00:00.000Z",
+        codexReport("2026-10-14", [["gpt-6", 30_500, 46.72]]),
+      );
+      await ingest(
+        "2026-10-17T05:00:00.000Z",
+        codexReport("2026-10-14", [["gpt-6", 39_700, 11.48]]),
+      );
+
+      expect(rows()).toMatchObject([{ costUsd: 11.48, model: "gpt-6", totalTokens: 39_700 }]);
+    });
+
+    it("prunes a model relabeled within the same count instead of double-counting it", async () => {
+      await ingest(
+        "2026-10-10T23:00:00.000Z",
+        codexReport("2026-10-10", [["gpt-6", 8_000_000, 9.5]]),
+      );
+      await ingest(
+        "2026-10-11T05:00:00.000Z",
+        codexReport("2026-10-10", [["gpt-6-codex", 8_000_000, 9.5]]),
+      );
+
+      expect(rows()).toMatchObject([{ model: "gpt-6-codex", totalTokens: 8_000_000 }]);
+    });
+
+    it("still takes models a kept day lacks or that came back higher", async () => {
+      await ingest(
+        "2026-10-16T20:00:00.000Z",
+        codexReport("2026-10-16", [
+          ["gpt-6", 300_000_000, 150],
+          ["gpt-6-mini", 1_000, 0.01],
+        ]),
+      );
+      const logger = makeTestLogger();
+      await ingest(
+        "2026-10-16T21:00:00.000Z",
+        codexReport("2026-10-16", [
+          ["gpt-6-mini", 2_000, 0.02],
+          ["gpt-6-nano", 500, 0.005],
+        ]),
+        { logger },
+      );
+
+      expect(rows()).toMatchObject([
+        { model: "gpt-6", totalTokens: 300_000_000 },
+        { model: "gpt-6-mini", totalTokens: 2_000 },
+        { model: "gpt-6-nano", totalTokens: 500 },
+      ]);
+      expect(logger.entries).toHaveLength(1);
+    });
+
+    it("lets a parser bump re-count lower and drop models", async () => {
+      await ingest(
+        "2026-10-06T23:00:00.000Z",
+        codexReport("2026-10-06", [
+          ["gpt-6", 8_000_000, 9.5],
+          ["replayed", 200_000, 0.4],
+        ]),
+      );
+      database.sqlite.prepare("update usage_days set counted_by = 'ccusage-v20-raw-5'").run();
+      await ingest(
+        "2026-10-08T23:00:00.000Z",
+        codexReport("2026-10-06", [["gpt-6", 7_000_000, 8.25]]),
+      );
+
+      expect(rows()).toEqual([
+        { costUsd: 8.25, countedBy: tag, model: "gpt-6", totalTokens: 7_000_000, userId: "user" },
+      ]);
+    });
+
+    it("re-homes a lower day to the device's new owner", async () => {
+      await ingest(
+        "2026-10-06T23:00:00.000Z",
+        codexReport("2026-10-06", [["gpt-6", 8_000_000, 9.5]]),
+      );
+      await ingest(
+        "2026-10-07T23:00:00.000Z",
+        codexReport("2026-10-06", [["gpt-6", 18_113, 0.09]]),
+        {
+          identity: { ...identity, user: { ...identity.user, id: UserId.make("new-owner") } },
+        },
+      );
+
+      expect(rows()).toMatchObject([{ totalTokens: 18_113, userId: "new-owner" }]);
+    });
+
+    it("replaces and prunes rows stored before counts were tagged", async () => {
+      for (const model of ["gpt-6", "stale"]) {
+        seedUsage(database.sqlite, {
+          date: "2026-10-06",
+          deviceId: "device",
+          model,
+          source: "codex",
+          syncedAt: 1,
+          totalTokens: 8_000_000,
+          userId: "user",
+        });
+      }
+      await ingest(
+        "2026-10-15T04:14:00.000Z",
+        codexReport("2026-10-06", [["gpt-6", 18_113, 0.09]]),
+      );
+
+      expect(rows()).toMatchObject([{ countedBy: tag, model: "gpt-6", totalTokens: 18_113 }]);
+    });
+  });
+
   describe("cost freeze across re-syncs", () => {
     const identity = {
       deviceId: DeviceId.make("device"),
@@ -354,6 +611,8 @@ describe("D1 usage repository", () => {
       );
       const [, before] = costs() as { costUsd: number }[];
 
+      // Re-counted by a newer parser, which may drop models.
+      database.sqlite.prepare("update usage_days set counted_by = 'ccusage-v20-raw-5'").run();
       const later = await makeService("2026-09-23T12:00:00.000Z");
       const window = codexReport([["2026-05-06", 301.25, { "gpt-5.5": gpt55Tokens }]]);
       await Effect.runPromise(later.ingestRaw(identity, device, [window]));

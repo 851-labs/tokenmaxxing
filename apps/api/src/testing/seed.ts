@@ -41,6 +41,7 @@ interface SeedUsage {
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
   costUsd?: number;
+  countedBy?: string;
   date: string;
   deviceId: string;
   inputTokens?: number;
@@ -147,8 +148,8 @@ function seedUsage(sqlite: DatabaseSync, usage: SeedUsage): void {
     .prepare(
       `insert into usage_days (
         device_id, user_id, date, source, model, input_tokens, output_tokens,
-        cache_creation_tokens, cache_read_tokens, total_tokens, cost_usd, synced_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        cache_creation_tokens, cache_read_tokens, total_tokens, cost_usd, counted_by, synced_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       usage.deviceId,
@@ -162,6 +163,7 @@ function seedUsage(sqlite: DatabaseSync, usage: SeedUsage): void {
       usage.cacheReadTokens ?? 0,
       usage.totalTokens ?? 0,
       usage.costUsd ?? 0,
+      usage.countedBy ?? null,
       usage.syncedAt ?? 0,
     );
 }

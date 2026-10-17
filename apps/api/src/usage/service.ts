@@ -83,6 +83,19 @@ interface UsageReplacementScope {
   source: UsageSource;
 }
 
+/** A row to upsert, with what counted it (unset on the structured sync path). */
+type StoredUsageDay = UsageDayInput & { readonly countedBy?: string | undefined };
+
+/** A stored row as the re-send guard (`keptDays`) sees it. */
+interface StoredUsageRow {
+  countedBy: string | null;
+  date: string;
+  model: string;
+  source: string;
+  totalTokens: number;
+  userId: string;
+}
+
 interface UsageRepositoryShape {
   checkInDevice(
     deviceId: string,
@@ -97,7 +110,7 @@ interface UsageRepositoryShape {
   upsertChunk(
     userId: string,
     deviceId: string,
-    rows: readonly UsageDayInput[],
+    rows: readonly StoredUsageDay[],
     syncedAt: Date,
   ): Effect.Effect<void, DatabaseError>;
   /** Adds `count` to the device's implausible-row counter for moderation. */
@@ -106,6 +119,11 @@ interface UsageRepositoryShape {
     count: number,
     rejectedAt: Date,
   ): Effect.Effect<void, DatabaseError>;
+  /** The device's stored rows for the requested (day, source) slices. */
+  storedUsage(
+    deviceId: string,
+    days: readonly CoveredUsageDay[],
+  ): Effect.Effect<readonly StoredUsageRow[], DatabaseError>;
   /** Removes models omitted by an authoritative raw daily report. */
   pruneChunk(
     deviceId: string,
@@ -141,8 +159,8 @@ class UsageRepository extends Context.Service<UsageRepository, UsageRepositorySh
 
 const UPSERT_CHUNK_SIZE = 40;
 
-/** Rejected rows echoed in the moderation log; the count covers the rest. */
-const REJECTED_LOG_SAMPLE_SIZE = 5;
+/** Rows or days echoed in a log line; its count covers the rest. */
+const LOG_SAMPLE_SIZE = 5;
 
 /** Strict like every CLI payload: a row with undeclared fields is dropped too. */
 const decodeUsageDay = Schema.decodeUnknownEffect(UsageDayInput, { onExcessProperty: "error" });
@@ -194,6 +212,7 @@ const makeUsageService = Effect.fn("makeUsageService")(function* (
         mergeSourceStats(parsed.sourceStats, sourceStats),
         syncedAt,
         parsed.coveredDays,
+        PARSER_VERSION,
       );
 
       return {
@@ -330,18 +349,38 @@ function writeStructuredUsage(
   sourceStats: readonly SourceUsageStatsInput[],
   syncedAt: Date,
   coveredDays: readonly CoveredUsageDay[] = [],
+  countedBy?: string,
 ) {
   return Effect.gen(function* () {
-    const { accepted: normalizedDays, rejected } = partitionPlausible(normalizeUsageDays(days));
+    const { accepted, rejected } = partitionPlausible(normalizeUsageDays(days));
     if (rejected.length > 0) {
       yield* Effect.logWarning("Dropped implausible usage rows", {
         deviceId,
         rejected: rejected.length,
-        sample: rejected.slice(0, REJECTED_LOG_SAMPLE_SIZE),
+        sample: rejected.slice(0, LOG_SAMPLE_SIZE),
         userId,
       });
       yield* repository.recordRejectedUsage(deviceId, rejected.length, syncedAt).pipe(Effect.orDie);
     }
+    const kept =
+      countedBy === undefined
+        ? new Map<string, ReadonlyMap<string, number>>()
+        : yield* keptDays(repository, userId, deviceId, coveredDays, accepted, countedBy);
+    if (kept.size > 0) {
+      yield* Effect.logInfo("Kept re-sent days counted lower the same way", {
+        days: [...kept.keys()].slice(0, LOG_SAMPLE_SIZE),
+        deviceId,
+        kept: kept.size,
+        userId,
+      });
+    }
+    // A kept day only grows: models it lacks or that came back higher.
+    const normalizedDays: StoredUsageDay[] = accepted
+      .filter((day) => {
+        const stored = kept.get(dayKey(day.date, day.source))?.get(day.model);
+        return stored === undefined || day.totalTokens > stored;
+      })
+      .map((day) => ({ ...day, countedBy }));
     for (let offset = 0; offset < normalizedDays.length; offset += UPSERT_CHUNK_SIZE) {
       yield* repository
         .upsertChunk(
@@ -352,7 +391,10 @@ function writeStructuredUsage(
         )
         .pipe(Effect.orDie);
     }
-    const replacementScopes = buildReplacementScopes(coveredDays, normalizedDays);
+    const replacementScopes = buildReplacementScopes(
+      coveredDays.filter((day) => !kept.has(dayKey(day.date, day.source))),
+      normalizedDays,
+    );
     for (let offset = 0; offset < replacementScopes.length; offset += UPSERT_CHUNK_SIZE) {
       yield* repository
         .pruneChunk(deviceId, replacementScopes.slice(offset, offset + UPSERT_CHUNK_SIZE), syncedAt)
@@ -378,7 +420,10 @@ interface RejectedUsageDay {
  * Splits normalized rows by the plausibility limits. Runs after
  * normalization, so rows merged under one model are judged as stored.
  * A rejected model counts as absent: a raw report covering its day prunes
- * any earlier stored copy, so an implausible upload never leaves one behind.
+ * any earlier stored copy, so an implausible upload never leaves one behind
+ * (unless the day is kept as counted lower by the same parser, see
+ * `keptDays`: a limit change that should drop stored rows bumps
+ * `PARSER_VERSION`).
  */
 function partitionPlausible(days: readonly UsageDayInput[]): {
   accepted: UsageDayInput[];
@@ -405,20 +450,71 @@ function partitionPlausible(days: readonly UsageDayInput[]): {
   return { accepted, rejected };
 }
 
+/**
+ * Re-sent (day, source) slices that came back lower than stored although
+ * every stored row was counted by this parser (`countedBy`) for the same
+ * owner. Only a parser change may lower a day, so a lower count here means
+ * the device lost logs (deleted, pruned, a narrower source root); the day is
+ * never lowered or pruned, and maps to its stored per-model totals. Whole days
+ * decide, not rows: a model relabeled within the same parser keeps the day's
+ * total, so the day is replaced and the old label pruned.
+ */
+function keptDays(
+  repository: UsageRepositoryShape,
+  userId: string,
+  deviceId: string,
+  coveredDays: readonly CoveredUsageDay[],
+  days: readonly UsageDayInput[],
+  countedBy: string,
+) {
+  return Effect.gen(function* () {
+    const kept = new Map<string, ReadonlyMap<string, number>>();
+    if (coveredDays.length === 0) {
+      return kept;
+    }
+
+    const incoming = new Map<string, number>();
+    for (const day of days) {
+      const key = dayKey(day.date, day.source);
+      incoming.set(key, (incoming.get(key) ?? 0) + day.totalTokens);
+    }
+    const stored = new Map<string, StoredUsageRow[]>();
+    for (const row of yield* repository.storedUsage(deviceId, coveredDays).pipe(Effect.orDie)) {
+      const key = dayKey(row.date, row.source);
+      stored.set(key, [...(stored.get(key) ?? []), row]);
+    }
+    for (const [key, rows] of stored) {
+      const total = rows.reduce((sum, row) => sum + row.totalTokens, 0);
+      if (
+        rows.every((row) => row.countedBy === countedBy && row.userId === userId) &&
+        total > (incoming.get(key) ?? 0)
+      ) {
+        kept.set(key, new Map(rows.map((row) => [row.model, row.totalTokens])));
+      }
+    }
+
+    return kept;
+  });
+}
+
+function dayKey(date: string, source: string): string {
+  return JSON.stringify([date, source]);
+}
+
 function buildReplacementScopes(
   coveredDays: readonly CoveredUsageDay[],
   normalizedDays: readonly UsageDayInput[],
 ): UsageReplacementScope[] {
   const scopes = new Map<string, { date: string; models: Set<string>; source: UsageSource }>();
   for (const coveredDay of coveredDays) {
-    scopes.set(JSON.stringify([coveredDay.date, coveredDay.source]), {
+    scopes.set(dayKey(coveredDay.date, coveredDay.source), {
       date: coveredDay.date,
       models: new Set(),
       source: coveredDay.source,
     });
   }
   for (const day of normalizedDays) {
-    scopes.get(JSON.stringify([day.date, day.source]))?.models.add(day.model);
+    scopes.get(dayKey(day.date, day.source))?.models.add(day.model);
   }
 
   return [...scopes.values()].map((scope) => ({
@@ -434,6 +530,8 @@ export { makeUsageService, UsageRepository, UsageService };
 
 export type {
   StoredRawUsageReport,
+  StoredUsageDay,
+  StoredUsageRow,
   UsageDevice,
   UsageReplacementScope,
   UsageRepositoryShape,
