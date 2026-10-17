@@ -5,6 +5,16 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Codex usage from Codevisor now syncs. Codevisor runs Codex with its own home per harness profile
+  (`~/.codevisor/data/harness-profiles/codex/<profile>`), which ccusage never read. When
+  `CODEX_HOME` is unset, sync now reads `~/.codex` plus every Codevisor Codex profile that has
+  session logs, and scheduled syncs pick up changes there without a `service repair`. An explicit
+  `CODEX_HOME` still wins, except one naming only Codevisor profiles (Codevisor sets that on the
+  Codex sessions it launches), so syncing or installing the service from one of them no longer
+  narrows sync to that one profile.
+
 ## 0.7.7 - 2026-10-14
 
 ### Fixed
