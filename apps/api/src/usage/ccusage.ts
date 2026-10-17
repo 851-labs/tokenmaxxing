@@ -11,6 +11,13 @@ import {
 } from "@tokenmaxxing/api-contract";
 import { Effect, Option, Schema } from "effect";
 
+/**
+ * Stored as every raw-ingested row's `counted_by`. Bump it with any change
+ * to the rows a report yields (parsing, model labels, plausibility limits), or
+ * to let a ccusage or CLI counting fix lower stored usage: only a new value
+ * lets re-sent days come back lower or drop models (see `keptDays`). A bump
+ * re-counts every device's trailing window once, losses included.
+ */
 const PARSER_VERSION = "ccusage-v20-raw-6";
 
 const MAX_MODELS_PER_DAY = 256;

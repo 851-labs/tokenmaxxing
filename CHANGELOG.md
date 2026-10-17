@@ -5,6 +5,16 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Server
+
+- A re-send no longer lowers usage when local logs went missing. The CLI re-sends the last 21 days,
+  and the server used to replace each re-sent day with the new count, so deleted or pruned logs
+  (or a narrower `CODEX_HOME`) erased usage that was already synced. Each stored row now records
+  the server parser version that counted it. A re-sent day counted by the same parser for the same
+  owner can gain usage but never comes back lower; only a new parser version re-counts lower. This
+  covers every CLI since 0.3 (the raw-report upload), so no CLI update is needed. On 2026-10-15 a
+  re-send cut a user's Oct 6 Codex usage to $0.09 after their archived Codex sessions were deleted.
+
 ## 0.7.8 - 2026-10-16
 
 ### Fixed

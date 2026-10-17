@@ -148,6 +148,7 @@ const usageRepository = {
   checkInDevice: vi.fn(() => Effect.void),
   pruneChunk: vi.fn(() => Effect.void),
   recordRejectedUsage: vi.fn(() => Effect.void),
+  storedUsage: vi.fn(() => Effect.succeed([])),
   touchDevice: vi.fn(() => Effect.void),
   upsertChunk: vi.fn(() => Effect.void),
   upsertRawReports: vi.fn(() => Effect.void),

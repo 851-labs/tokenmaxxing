@@ -197,9 +197,13 @@ const devices = sqliteTable(
 
 /**
  * One row per (device, local day, agent, model); the sync endpoint upserts
- * on that key (last write wins). `date` is an opaque YYYY-MM-DD string in
- * the device's local time — zero-padded ISO compares lexicographically,
- * which is what the leaderboard window scans rely on.
+ * on that key. `date` is an opaque YYYY-MM-DD string in the device's local
+ * time — zero-padded ISO compares lexicographically, which is what the
+ * leaderboard window scans rely on. `counted_by` is the server parser
+ * version that produced the row: a re-sent (day, source) whose stored rows
+ * were all counted by the current parser for the same owner never comes back
+ * lower, since that means lost logs, not a correction. NULL (legacy rows, the
+ * structured sync path) never matches, so those days are always replaced.
  */
 const usageDays = sqliteTable(
   "usage_days",
@@ -215,6 +219,7 @@ const usageDays = sqliteTable(
     cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
     totalTokens: integer("total_tokens").notNull().default(0),
     costUsd: real("cost_usd").notNull().default(0),
+    countedBy: text("counted_by"),
     syncedAt: integer("synced_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
