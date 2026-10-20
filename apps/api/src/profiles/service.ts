@@ -14,6 +14,7 @@ import type {
   ProfileIdentityResponse,
   ProfileResponse,
   ProfileStats,
+  UsageSource,
   UserId,
 } from "@tokenmaxxing/api-contract";
 
@@ -33,6 +34,8 @@ const MAX_DAILY_RANGE_DAYS = 3 * 366;
 
 interface DailyQuery {
   groupBy: ProfileDailyGroupBy;
+  /** When set, only days from this agent count toward the daily rows. */
+  source?: UsageSource | undefined;
   since?: string | undefined;
   until?: string | undefined;
 }
@@ -136,9 +139,7 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
       const user = yield* requireUser(login, viewerUserId);
       const now = new Date();
       const bounds = yield* profileDailyBounds(query, now);
-      const days = yield* repository
-        .daily(user.id, { groupBy: query.groupBy, ...bounds })
-        .pipe(Effect.orDie);
+      const days = yield* repository.daily(user.id, { ...query, ...bounds }).pipe(Effect.orDie);
 
       return { days, range: profileDailyRange(query, bounds, days, now) };
     }),

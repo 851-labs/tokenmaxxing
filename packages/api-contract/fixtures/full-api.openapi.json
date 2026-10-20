@@ -4613,6 +4613,42 @@
             "required": false
           },
           {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "claude",
+                    "codex",
+                    "opencode",
+                    "gemini",
+                    "copilot",
+                    "hermes",
+                    "pi",
+                    "omp",
+                    "grok",
+                    "antigravity",
+                    "zcode",
+                    "amp",
+                    "qwen",
+                    "kimi",
+                    "kilo",
+                    "goose",
+                    "droid",
+                    "codebuff",
+                    "openclaw"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": false
+          },
+          {
             "name": "until",
             "in": "query",
             "schema": {

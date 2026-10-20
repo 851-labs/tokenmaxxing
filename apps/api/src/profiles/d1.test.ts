@@ -194,6 +194,24 @@ describe("D1 profiles repository", () => {
       ]);
     });
 
+    it("scopes the rows to one agent when a source is given", async () => {
+      usage("laptop", "2026-07-01", "opencode", "qwen-3.8-27b", 1);
+      usage("laptop", "2026-07-03", "opencode", "claude-sonnet-5-5", 2);
+      const repository = await makeRepository();
+
+      const rows = await Effect.runPromise(
+        repository.daily("user", { groupBy: "model", source: "opencode", since, until }),
+      );
+
+      expect(rows.map((row) => [row.date, row.key, row.spendUsd])).toEqual([
+        ["2026-07-01", "qwen-3.8-27b", 1],
+        ["2026-07-03", "claude-sonnet-5-5", 2],
+      ]);
+      expect(
+        rows.filter((row) => row.key === "gpt-5" || row.key === "opus" || row.key === "o3"),
+      ).toEqual([]);
+    });
+
     it("applies since and until as an inclusive window", async () => {
       const repository = await makeRepository();
 
