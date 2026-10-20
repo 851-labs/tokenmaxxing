@@ -47,6 +47,7 @@ import {
   StatsResponse,
   UsageCheckInInput,
   UsageCheckInResponse,
+  UsageSource,
   SyncUsageInput,
   SyncUsageResponse,
   TokenId,
@@ -222,6 +223,7 @@ class ProfilesGroup extends HttpApiGroup.make("profiles")
       query: {
         groupBy: Schema.optional(ProfileDailyGroupBy),
         since: Schema.optional(DateKey),
+        source: Schema.optional(UsageSource),
         until: Schema.optional(DateKey),
       },
       success: ProfileDailyResponse,
