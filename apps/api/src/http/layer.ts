@@ -360,6 +360,7 @@ const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (hand
           {
             groupBy: query.groupBy ?? "model",
             since: query.since,
+            source: query.source,
             until: query.until,
           },
           yield* viewerUserId,

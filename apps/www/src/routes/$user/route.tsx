@@ -1,8 +1,16 @@
 import { useMemo, useState } from "react";
 import { LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery, type QueryClient } from "@tanstack/react-query";
-import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  notFound,
+  redirect,
+  stripSearchParams,
+  useNavigate,
+} from "@tanstack/react-router";
+import { USAGE_SOURCES, UsageSource } from "@tokenmaxxing/api-contract";
 import type { ProfileResponse, UsageRangeId } from "@tokenmaxxing/api-contract";
+import * as Schema from "effect/Schema";
 
 import { AnimatedNumber, AnimatedText } from "../../components/animated-value";
 import { Heatmap } from "../../components/charts/heatmap";
@@ -15,8 +23,9 @@ import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { Code } from "../../components/ui/code";
 import { FilterBar } from "../../components/filter-bar";
-import { SegmentedControl } from "../../components/ui/segmented-control";
+import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
+import { agentLabel } from "../../lib/agents";
 import { isNotFoundApiError } from "../../lib/api";
 import { formatDayRange, formatInteger, formatTokens, formatUsd } from "../../lib/format";
 import { breadcrumbSchema, profilePageSchema } from "../../lib/jsonld";
@@ -37,13 +46,35 @@ import {
   type DailyRow,
 } from "./-lib/profile-charts";
 import { profileDailyQueryOptions, profileQueryOptions, queryKeys } from "../../lib/queries";
+import { optionalSearchParam } from "../../lib/search";
 import { pageHead } from "../../lib/seo";
 import { DEFAULT_USAGE_RANGE, USAGE_RANGE_OPTIONS, usageRangeWindow } from "../../lib/usage-ranges";
 
 type ProfileStats = (typeof ProfileResponse.Type)["stats"];
 
+/** The agent a profile's daily charts are scoped to; missing means all agents. */
+const profileSearchSchema = Schema.toStandardSchemaV1(
+  Schema.Struct({
+    source: optionalSearchParam(UsageSource),
+  }),
+);
+
+type ProfileSearch = typeof profileSearchSchema.Type;
+
+const DEFAULT_PROFILE_SEARCH = {
+  source: undefined,
+} as const satisfies ProfileSearch;
+
+const ALL_AGENT_SOURCE = "all";
+type ProfileSourceFilter = UsageSource | typeof ALL_AGENT_SOURCE;
+
 const Route = createFileRoute("/$user")({
-  loader: ({ context, params }) => loadProfile(context.queryClient, params.user),
+  validateSearch: profileSearchSchema,
+  search: {
+    middlewares: [stripSearchParams<ProfileSearch>(DEFAULT_PROFILE_SEARCH)],
+  },
+  loaderDeps: ({ search }) => search,
+  loader: ({ context, params, deps }) => loadProfile(context.queryClient, params.user, deps.source),
   head: ({ loaderData }) => {
     if (loaderData === undefined) {
       return {};
@@ -89,14 +120,14 @@ const Route = createFileRoute("/$user")({
  * (small) summary rides in loader data, for head tags and the favicon; the
  * daily rows reach the client once, via the dehydrated query cache.
  */
-async function loadProfile(queryClient: QueryClient, login: string) {
+async function loadProfile(queryClient: QueryClient, login: string, source?: UsageSource) {
   const [profile, daily] = await Promise.allSettled([
     queryClient.ensureQueryData(profileQueryOptions(login)),
-    queryClient.ensureQueryData(profileDailyQueryOptions(login)),
+    queryClient.ensureQueryData(profileDailyQueryOptions(login, source)),
   ]);
   if (profile.status === "rejected") {
     // The daily read fails alongside it and nothing on the error page reads it.
-    queryClient.removeQueries({ exact: true, queryKey: queryKeys.profileDaily(login) });
+    queryClient.removeQueries({ exact: true, queryKey: queryKeys.profileDaily(login, source) });
     if (isNotFoundApiError(profile.reason)) {
       throw notFound();
     }
@@ -114,6 +145,8 @@ async function loadProfile(queryClient: QueryClient, login: string) {
     throw redirect({
       headers: LOGIN_REDIRECT_HEADERS,
       params: { user: canonicalLogin },
+      // Keep the agent filter across the redirect.
+      search: source === undefined ? {} : { source },
       statusCode: 301,
       to: "/$user",
     });
@@ -122,20 +155,64 @@ async function loadProfile(queryClient: QueryClient, login: string) {
   return { profile: profile.value };
 }
 
+/**
+ * The agent segments for the daily charts: all agents plus every agent the
+ * profile has synced a day for. An active selection is kept even when the
+ * profile's agent list no longer contains it, so a stale filter stays visible
+ * and dismissable.
+ */
+function agentFilterOptions(
+  source: UsageSource | undefined,
+  sources: readonly string[],
+): readonly SegmentedOption<ProfileSourceFilter>[] {
+  const known = sources.filter((candidate): candidate is UsageSource =>
+    (USAGE_SOURCES as readonly string[]).includes(candidate),
+  );
+  const options: SegmentedOption<ProfileSourceFilter>[] = [
+    { label: "All agents", value: ALL_AGENT_SOURCE },
+    ...known.map((agent) => ({ label: agentLabel(agent), value: agent })),
+  ];
+  if (source !== undefined && !known.includes(source)) {
+    options.unshift({ label: agentLabel(source), value: source });
+  }
+
+  return options;
+}
+
 function ProfilePage() {
   const { user } = Route.useParams();
+  const { source } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
   const { data: profile } = useSuspenseQuery(profileQueryOptions(user));
-  const { data: daily } = useSuspenseQuery(profileDailyQueryOptions(user));
+  const { data: daily } = useSuspenseQuery(profileDailyQueryOptions(user, source));
   const owner = profile.user;
+  const agentOptions = agentFilterOptions(source, profile.stats.sources);
+  const activeSource = source === undefined ? ALL_AGENT_SOURCE : source;
+
+  const selectAgent = (value: ProfileSourceFilter) =>
+    navigate({
+      params: { user: owner.login },
+      search: { source: value === ALL_AGENT_SOURCE ? undefined : value },
+    });
 
   return (
     <>
-      <header className="flex items-center justify-between gap-4 px-4 py-8">
+      <header className="flex flex-wrap items-center justify-between gap-4 px-4 py-8">
         <div className="flex min-w-0 items-center gap-4">
           <Avatar alt={`${owner.login} avatar`} priority size={56} src={owner.avatarUrl} />
           <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{owner.login}</h1>
         </div>
-        <ProfileShareButton url={profileUrl(profile)} />
+        <div className="flex shrink-0 items-center gap-3">
+          {agentOptions.length > 1 && (
+            <SegmentedControl
+              label="Agent"
+              onChange={selectAgent}
+              options={agentOptions}
+              value={activeSource}
+            />
+          )}
+          <ProfileShareButton url={profileUrl(profile)} />
+        </div>
       </header>
 
       {daily.days.length === 0 ? (
