@@ -25,7 +25,8 @@ type DailyRange = DailyResponse["range"];
 interface ProfileCharts {
   /** The calendar year containing the range's last day, opened on that day. */
   heatmap: { first: string; focus: string; last: string };
-  months: MonthPoint[];
+  monthlySpend: MonthPoint[];
+  monthlyTokens: MonthPoint[];
   /** Per-day spend segments for the heatmap tooltip. */
   segmentsByDate: Map<string, ChartSegment[]>;
   spend: StackedSeriesChart;
@@ -60,17 +61,15 @@ function deriveProfileCharts(rows: readonly DailyRow[], range: DailyRange): Prof
     ]),
   );
 
-  const byMonth = bucketSeries(
-    rows,
-    spend.selection,
-    (row) => row.spendUsd,
-    (row) => row.date.slice(0, 7),
-  );
-  const months = enumerateMonths(range.firstDate, range.lastDate).map((month) => ({
-    month,
-    segments: buildSegments(spendOrder, colors, byMonth.values.get(month)),
-    value: byMonth.totals.get(month) ?? 0,
-  }));
+  const months = enumerateMonths(range.firstDate, range.lastDate);
+  function deriveMonths(chart: StackedSeriesChart, value: (row: DailyRow) => number): MonthPoint[] {
+    const byMonth = bucketSeries(rows, chart.selection, value, (row) => row.date.slice(0, 7));
+    return months.map((month) => ({
+      month,
+      segments: buildSegments(chart.selection.order, colors, byMonth.values.get(month)),
+      value: byMonth.totals.get(month) ?? 0,
+    }));
+  }
 
   return {
     heatmap: {
@@ -78,7 +77,8 @@ function deriveProfileCharts(rows: readonly DailyRow[], range: DailyRange): Prof
       focus: range.lastDate,
       last: calendarYearEnd(range.lastDate),
     },
-    months,
+    monthlySpend: deriveMonths(spend, (row) => row.spendUsd),
+    monthlyTokens: deriveMonths(tokens, (row) => row.totalTokens),
     segmentsByDate,
     spend,
     spendByDate: spend.buckets.totals,

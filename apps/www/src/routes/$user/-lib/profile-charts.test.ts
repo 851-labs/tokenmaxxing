@@ -36,7 +36,12 @@ describe("deriveProfileCharts", () => {
       ["2026-06-20", 0],
       ["2026-06-21", 0],
     ]);
-    expect(derived.months.map((month) => [month.month, month.value])).toEqual([["2026-06", 12]]);
+    expect(derived.monthlySpend.map((month) => [month.month, month.value])).toEqual([
+      ["2026-06", 12],
+    ]);
+    expect(derived.monthlyTokens.map((month) => [month.month, month.value])).toEqual([
+      ["2026-06", 300],
+    ]);
   });
 
   it("renders the heatmap across the full calendar year, opened on the last day", () => {
@@ -64,14 +69,9 @@ describe("deriveProfileCharts", () => {
 
     const derived = deriveProfileCharts([], range);
 
-    expect(derived.months.map((month) => month.month)).toEqual([
-      "2026-01",
-      "2026-02",
-      "2026-03",
-      "2026-04",
-      "2026-05",
-      "2026-06",
-    ]);
+    const months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
+    expect(derived.monthlySpend.map((month) => month.month)).toEqual(months);
+    expect(derived.monthlyTokens.map((month) => month.month)).toEqual(months);
   });
 
   it("uses raw model names as separate series", () => {
@@ -100,6 +100,42 @@ describe("deriveProfileCharts", () => {
     ]);
   });
 
+  it("sums monthly tokens by model across years and fills months without usage", () => {
+    const range: DailyRange = { firstDate: "2025-12-01", lastDate: "2026-02-28" };
+    const rows: DailyRow[] = [
+      { ...dailyRow({ spendUsd: 10, key: "a", totalTokens: 100 }), date: "2025-12-01" },
+      { ...dailyRow({ spendUsd: 20, key: "a", totalTokens: 200 }), date: "2025-12-31" },
+      { ...dailyRow({ spendUsd: 5, key: "b", totalTokens: 400 }), date: "2025-12-31" },
+      { ...dailyRow({ spendUsd: 1, key: "b", totalTokens: 50 }), date: "2026-02-01" },
+    ];
+
+    const derived = deriveProfileCharts(rows, range);
+
+    expect(derived.monthlyTokens.map((month) => [month.month, month.value])).toEqual([
+      ["2025-12", 700],
+      ["2026-01", 0],
+      ["2026-02", 50],
+    ]);
+    expect(
+      derived.monthlyTokens.map((month) =>
+        month.segments.map((segment) => [segment.series, segment.value]),
+      ),
+    ).toEqual([
+      [
+        ["b", 400],
+        ["a", 300],
+      ],
+      [
+        ["b", 0],
+        ["a", 0],
+      ],
+      [
+        ["b", 50],
+        ["a", 0],
+      ],
+    ]);
+  });
+
   it("colors models by identity, the same as /stats, across every chart", () => {
     const range: DailyRange = { firstDate: "2026-06-21", lastDate: "2026-06-21" };
     const rows: DailyRow[] = [
@@ -112,10 +148,11 @@ describe("deriveProfileCharts", () => {
       ...derived.spend.legend,
       ...derived.tokens.legend,
       ...(derived.segmentsByDate.get("2026-06-21") ?? []),
-      ...(derived.months[0]?.segments ?? []),
+      ...(derived.monthlySpend[0]?.segments ?? []),
+      ...(derived.monthlyTokens[0]?.segments ?? []),
     ];
 
-    expect(segments).toHaveLength(8);
+    expect(segments).toHaveLength(10);
     for (const segment of segments) {
       expect(segment.color, segment.series).toBe(modelColor(segment.series));
     }
@@ -130,7 +167,7 @@ describe("deriveProfileCharts", () => {
       dailyRow({
         spendUsd: 11 - index,
         key: `model-${String(index + 1).padStart(2, "0")}`,
-        totalTokens: 110 - index * 10,
+        totalTokens: (index + 1) * 10,
       }),
     );
 
@@ -151,6 +188,22 @@ describe("deriveProfileCharts", () => {
     expect(
       derived.spend.days[0]?.segments.find((segment) => segment.series === "Other")?.value,
     ).toBe(3);
+    expect(derived.monthlyTokens[0]?.value).toBe(660);
+    expect(derived.monthlyTokens[0]?.segments.map((segment) => segment.series)).toEqual([
+      "model-11",
+      "model-10",
+      "model-09",
+      "model-08",
+      "model-07",
+      "model-06",
+      "model-05",
+      "model-04",
+      "model-03",
+      "Other",
+    ]);
+    expect(
+      derived.monthlyTokens[0]?.segments.find((segment) => segment.series === "Other")?.value,
+    ).toBe(30);
   });
 
   it("buckets spend by Monday-first weekday from the opaque date key", () => {

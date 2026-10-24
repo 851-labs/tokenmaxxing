@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
 import { cn } from "../../lib/cn";
-import { formatMonth, formatMonthLong, formatUsd } from "../../lib/format";
+import { formatMonth, formatMonthLong } from "../../lib/format";
 import { barAnchor, BarChart, ColumnSpotlight, hiddenWhenNarrow } from "./axis";
 import {
   barCenter,
@@ -17,7 +17,7 @@ import { segmentTooltipRows, type ChartSegment } from "./series";
 import { ChartLiveRegion, ChartTooltip } from "./tooltip";
 import { useChartCursor } from "./use-chart-cursor";
 
-/** Spend per calendar month with value labels above each bar. */
+/** Usage per calendar month with value labels above each bar. */
 
 interface MonthPoint {
   /** YYYY-MM */
@@ -28,7 +28,15 @@ interface MonthPoint {
 
 const HEIGHT = 220;
 
-function MonthBars({ months }: { months: readonly MonthPoint[] }) {
+function MonthBars({
+  ariaLabel,
+  months,
+  valueFormatter,
+}: {
+  ariaLabel: string;
+  months: readonly MonthPoint[];
+  valueFormatter: (value: number) => string;
+}) {
   const cursor = useChartCursor(months.length);
   const hovered = cursor.active;
 
@@ -41,9 +49,9 @@ function MonthBars({ months }: { months: readonly MonthPoint[] }) {
 
   return (
     <BarChart
-      ariaLabel={`Monthly spend across ${months.length} months`}
+      ariaLabel={ariaLabel}
       columns={months.length}
-      format={formatUsd}
+      format={valueFormatter}
       height={HEIGHT}
       labels={months.map((point, index) => ({
         center: centerOf(index),
@@ -65,7 +73,7 @@ function MonthBars({ months }: { months: readonly MonthPoint[] }) {
                 key={point.month}
                 style={{ left: `${centerOf(index) * 100}%`, top: HEIGHT - y(point.value) - 16 }}
               >
-                {formatUsd(point.value)}
+                {valueFormatter(point.value)}
               </span>
             ) : null,
           )}
@@ -73,8 +81,10 @@ function MonthBars({ months }: { months: readonly MonthPoint[] }) {
             {active !== undefined && hovered !== null ? (
               <ChartTooltip
                 anchor={barAnchor(layout, hovered, HEIGHT - y(active.value), y(active.value))}
-                rows={segmentTooltipRows(active.segments, (segment) => formatUsd(segment.value))}
-                subtitle={`${formatUsd(active.value)} total`}
+                rows={segmentTooltipRows(active.segments, (segment) =>
+                  valueFormatter(segment.value),
+                )}
+                subtitle={`${valueFormatter(active.value)} total`}
                 title={formatMonthLong(active.month)}
               />
             ) : null}

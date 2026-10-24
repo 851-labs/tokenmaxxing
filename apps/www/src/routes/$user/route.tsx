@@ -221,7 +221,21 @@ function ProfileDashboard({
       <section className="bg-background p-5">
         <h2 className="font-medium">Monthly Spend</h2>
         <div className="mt-4">
-          <MonthBars months={charts.months} />
+          <MonthBars
+            ariaLabel={`Monthly spend by model across ${charts.monthlySpend.length} months`}
+            months={charts.monthlySpend}
+            valueFormatter={formatUsd}
+          />
+        </div>
+      </section>
+      <section className="bg-background p-5">
+        <h2 className="font-medium">Monthly Tokens</h2>
+        <div className="mt-4">
+          <MonthBars
+            ariaLabel={`Monthly tokens by model across ${charts.monthlyTokens.length} months`}
+            months={charts.monthlyTokens}
+            valueFormatter={formatTokens}
+          />
         </div>
       </section>
     </div>
