@@ -55,7 +55,7 @@ macOS Background Task Management (BTM) tracks the launchd plist
 
 - BTM re-checks every agent whenever anything in `~/Library/LaunchAgents`
   changes (any app's plist, not just ours). A `launchctl
-bootout` + `bootstrap` with no file change triggers nothing.
+  bootout` + `bootstrap` with no file change triggers nothing.
 - An unsigned item counts as modified when either file is replaced (atomic
   rewrite, new inode) or its mtime changes, **even with identical bytes**. A
   `chmod` (ctime only) does not count. Each modification gets a new record,

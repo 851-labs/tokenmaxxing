@@ -7,13 +7,13 @@ import {
   HttpServerRequest,
   HttpServerError,
   HttpServerResponse,
-} from "effect/unstable/http";
-import * as Etag from "effect/unstable/http/Etag";
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import type * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
+} from "effect/http";
+import * as Etag from "effect/http/Etag";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import type * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 
 import {
   CurrentCliIdentity,

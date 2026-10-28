@@ -30,7 +30,9 @@ type DeviceId = typeof DeviceId.Type;
  * devices must present a UUID. Responses keep the plain {@link DeviceId}.
  */
 const NewDeviceId = DeviceId.check(
-  Schema.isPattern(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/),
+  Schema.isPattern(
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/u,
+  ),
 );
 
 type NewDeviceId = typeof NewDeviceId.Type;

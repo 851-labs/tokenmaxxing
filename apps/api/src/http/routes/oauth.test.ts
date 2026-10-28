@@ -1,6 +1,6 @@
 import { Cause, Context, Effect, Logger, Option } from "effect";
-import { HttpRouter } from "effect/unstable/http";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { HttpRouter } from "effect/http";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { describe, expect, it } from "vite-plus/test";
 
 import { AccountLinkConflict, AuthService, type OAuthProfile } from "../../auth/service";

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Context, Effect, Exit, Layer, Option, Schema, Scope } from "effect";
 import * as FileSystem from "effect/FileSystem";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {

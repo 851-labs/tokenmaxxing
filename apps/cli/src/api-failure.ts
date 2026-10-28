@@ -1,5 +1,5 @@
 import { Cause, Data, Effect, Schema, SchemaAST } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientError from "effect/http/HttpClientError";
 import {
   type ApiError,
   ApiErrors,

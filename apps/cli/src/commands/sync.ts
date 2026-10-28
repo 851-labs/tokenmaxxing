@@ -1,7 +1,7 @@
 import { arch, hostname } from "node:os";
 
 import { Data, Effect, Option } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import {
   type AuthUser,
   isDateKey,

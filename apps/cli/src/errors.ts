@@ -1,5 +1,5 @@
 import { Cause, Effect, Option } from "effect";
-import { CliError, Flag, GlobalFlag } from "effect/unstable/cli";
+import { CliError, Flag, GlobalFlag } from "effect/cli";
 
 import { booleanFlag } from "./flags";
 import { formatHighlight, humanFailure, type HumanFailureContent, shouldUseClack } from "./output";

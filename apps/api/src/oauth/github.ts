@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import * as Schema from "effect/Schema";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { AppConfig } from "../config";
 import { makeOAuthHttp, type OAuthProvider } from "./provider";

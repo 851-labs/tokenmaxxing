@@ -1,5 +1,5 @@
 import { Duration } from "effect";
-import type { Cookies, HttpServerRequest } from "effect/unstable/http";
+import type { Cookies, HttpServerRequest } from "effect/http";
 
 import type { Deployment } from "../config";
 

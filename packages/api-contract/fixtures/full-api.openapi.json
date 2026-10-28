@@ -1743,15 +1743,11 @@
                               "attemptedAt": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string",
-                                        "maxLength": 256
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -1761,15 +1757,11 @@
                               "completedAt": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string",
-                                        "maxLength": 256
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -1779,15 +1771,11 @@
                               "currentVersion": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string",
-                                        "maxLength": 256
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -1800,14 +1788,10 @@
                               "error": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -1817,15 +1801,11 @@
                               "installedVersion": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string",
-                                        "maxLength": 256
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -1835,15 +1815,11 @@
                               "latestVersion": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string",
-                                        "maxLength": 256
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -2050,18 +2026,14 @@
                       "templateVersion": {
                         "anyOf": [
                           {
-                            "anyOf": [
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "Infinity",
-                                  "-Infinity",
-                                  "NaN"
-                                ]
-                              }
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "Infinity",
+                              "-Infinity",
+                              "NaN"
                             ]
                           },
                           {
@@ -2327,7 +2299,8 @@
                           "properties": {
                             "sessionCount": {
                               "type": "integer",
-                              "minimum": 0
+                              "minimum": 0,
+                              "maximum": 9007199254740991
                             },
                             "source": {
                               "type": "string",
@@ -2571,7 +2544,8 @@
                           "properties": {
                             "sessionCount": {
                               "type": "integer",
-                              "minimum": 0
+                              "minimum": 0,
+                              "maximum": 9007199254740991
                             },
                             "source": {
                               "type": "string",
@@ -4284,18 +4258,14 @@
                         "leaderboardRank": {
                           "anyOf": [
                             {
-                              "anyOf": [
-                                {
-                                  "type": "number"
-                                },
-                                {
-                                  "type": "string",
-                                  "enum": [
-                                    "Infinity",
-                                    "-Infinity",
-                                    "NaN"
-                                  ]
-                                }
+                              "type": "number"
+                            },
+                            {
+                              "type": "string",
+                              "enum": [
+                                "Infinity",
+                                "-Infinity",
+                                "NaN"
                               ]
                             },
                             {
@@ -5187,18 +5157,14 @@
                               "serviceTemplateVersion": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "number"
-                                      },
-                                      {
-                                        "type": "string",
-                                        "enum": [
-                                          "Infinity",
-                                          "-Infinity",
-                                          "NaN"
-                                        ]
-                                      }
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "Infinity",
+                                      "-Infinity",
+                                      "NaN"
                                     ]
                                   },
                                   {
@@ -6132,18 +6098,14 @@
                                   "serviceTemplateVersion": {
                                     "anyOf": [
                                       {
-                                        "anyOf": [
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "string",
-                                            "enum": [
-                                              "Infinity",
-                                              "-Infinity",
-                                              "NaN"
-                                            ]
-                                          }
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "Infinity",
+                                          "-Infinity",
+                                          "NaN"
                                         ]
                                       },
                                       {
@@ -6755,32 +6717,13 @@
   },
   "components": {
     "schemas": {
-      "BadRequestEncoded": {
+      "InternalServerErrorEncoded": {
         "type": "object",
         "properties": {
           "_tag": {
             "type": "string",
             "enum": [
-              "BadRequest"
-            ]
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "_tag",
-          "message"
-        ],
-        "additionalProperties": false
-      },
-      "PayloadTooLargeEncoded": {
-        "type": "object",
-        "properties": {
-          "_tag": {
-            "type": "string",
-            "enum": [
-              "PayloadTooLarge"
+              "InternalServerError"
             ]
           },
           "message": {
@@ -6812,13 +6755,13 @@
         ],
         "additionalProperties": false
       },
-      "InternalServerErrorEncoded": {
+      "PayloadTooLargeEncoded": {
         "type": "object",
         "properties": {
           "_tag": {
             "type": "string",
             "enum": [
-              "InternalServerError"
+              "PayloadTooLarge"
             ]
           },
           "message": {
@@ -6831,13 +6774,13 @@
         ],
         "additionalProperties": false
       },
-      "UnauthorizedEncoded": {
+      "BadRequestEncoded": {
         "type": "object",
         "properties": {
           "_tag": {
             "type": "string",
             "enum": [
-              "Unauthorized"
+              "BadRequest"
             ]
           },
           "message": {
@@ -6869,17 +6812,14 @@
         ],
         "additionalProperties": false
       },
-      "LoginCodeNotFoundEncoded": {
+      "UnauthorizedEncoded": {
         "type": "object",
         "properties": {
           "_tag": {
             "type": "string",
             "enum": [
-              "LoginCodeNotFound"
+              "Unauthorized"
             ]
-          },
-          "code": {
-            "type": "string"
           },
           "message": {
             "type": "string"
@@ -6887,41 +6827,17 @@
         },
         "required": [
           "_tag",
-          "code",
           "message"
         ],
         "additionalProperties": false
       },
-      "LoginCodeExpiredEncoded": {
+      "AdminUserNotFoundEncoded": {
         "type": "object",
         "properties": {
           "_tag": {
             "type": "string",
             "enum": [
-              "LoginCodeExpired"
-            ]
-          },
-          "code": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "_tag",
-          "code",
-          "message"
-        ],
-        "additionalProperties": false
-      },
-      "DeviceNotFoundEncoded": {
-        "type": "object",
-        "properties": {
-          "_tag": {
-            "type": "string",
-            "enum": [
-              "DeviceNotFound"
+              "AdminUserNotFound"
             ]
           },
           "id": {
@@ -6938,36 +6854,13 @@
         ],
         "additionalProperties": false
       },
-      "TokenNotFoundEncoded": {
+      "ForbiddenEncoded": {
         "type": "object",
         "properties": {
           "_tag": {
             "type": "string",
             "enum": [
-              "TokenNotFound"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "_tag",
-          "id",
-          "message"
-        ],
-        "additionalProperties": false
-      },
-      "CliUpgradeRequiredEncoded": {
-        "type": "object",
-        "properties": {
-          "_tag": {
-            "type": "string",
-            "enum": [
-              "CliUpgradeRequired"
+              "Forbidden"
             ]
           },
           "message": {
@@ -6980,36 +6873,13 @@
         ],
         "additionalProperties": false
       },
-      "TooManyRequestsEncoded": {
+      "RouteNotFoundEncoded": {
         "type": "object",
         "properties": {
           "_tag": {
             "type": "string",
             "enum": [
-              "TooManyRequests"
-            ]
-          },
-          "message": {
-            "type": "string"
-          },
-          "retryAfterSeconds": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "_tag",
-          "message",
-          "retryAfterSeconds"
-        ],
-        "additionalProperties": false
-      },
-      "DeviceMissingEncoded": {
-        "type": "object",
-        "properties": {
-          "_tag": {
-            "type": "string",
-            "enum": [
-              "DeviceMissing"
+              "RouteNotFound"
             ]
           },
           "message": {
@@ -7045,13 +6915,13 @@
         ],
         "additionalProperties": false
       },
-      "RouteNotFoundEncoded": {
+      "DeviceMissingEncoded": {
         "type": "object",
         "properties": {
           "_tag": {
             "type": "string",
             "enum": [
-              "RouteNotFound"
+              "DeviceMissing"
             ]
           },
           "message": {
@@ -7064,13 +6934,84 @@
         ],
         "additionalProperties": false
       },
-      "ForbiddenEncoded": {
+      "TooManyRequestsEncoded": {
         "type": "object",
         "properties": {
           "_tag": {
             "type": "string",
             "enum": [
-              "Forbidden"
+              "TooManyRequests"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryAfterSeconds": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "_tag",
+          "message",
+          "retryAfterSeconds"
+        ],
+        "additionalProperties": false
+      },
+      "LoginCodeExpiredEncoded": {
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": [
+              "LoginCodeExpired"
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "_tag",
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "LoginCodeNotFoundEncoded": {
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": [
+              "LoginCodeNotFound"
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "_tag",
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "CliUpgradeRequiredEncoded": {
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": [
+              "CliUpgradeRequired"
             ]
           },
           "message": {
@@ -7083,13 +7024,36 @@
         ],
         "additionalProperties": false
       },
-      "AdminUserNotFoundEncoded": {
+      "TokenNotFoundEncoded": {
         "type": "object",
         "properties": {
           "_tag": {
             "type": "string",
             "enum": [
-              "AdminUserNotFound"
+              "TokenNotFound"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "_tag",
+          "id",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "DeviceNotFoundEncoded": {
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": [
+              "DeviceNotFound"
             ]
           },
           "id": {

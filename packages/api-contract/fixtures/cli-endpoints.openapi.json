@@ -173,7 +173,9 @@
           "type": "string"
         },
         "retryAfterSeconds": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -908,15 +910,11 @@
                               "attemptedAt": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string",
-                                        "maxLength": 256
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -926,15 +924,11 @@
                               "completedAt": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string",
-                                        "maxLength": 256
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -944,15 +938,11 @@
                               "currentVersion": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string",
-                                        "maxLength": 256
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -965,14 +955,10 @@
                               "error": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -982,15 +968,11 @@
                               "installedVersion": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string",
-                                        "maxLength": 256
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -1000,15 +982,11 @@
                               "latestVersion": {
                                 "anyOf": [
                                   {
-                                    "anyOf": [
-                                      {
-                                        "type": "string",
-                                        "maxLength": 256
-                                      },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  {
+                                    "type": "null"
                                   },
                                   {
                                     "type": "null"
@@ -1215,18 +1193,14 @@
                       "templateVersion": {
                         "anyOf": [
                           {
-                            "anyOf": [
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "Infinity",
-                                  "-Infinity",
-                                  "NaN"
-                                ]
-                              }
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "Infinity",
+                              "-Infinity",
+                              "NaN"
                             ]
                           },
                           {
@@ -1492,7 +1466,8 @@
                           "properties": {
                             "sessionCount": {
                               "type": "integer",
-                              "minimum": 0
+                              "minimum": 0,
+                              "maximum": 9007199254740991
                             },
                             "source": {
                               "type": "string",
@@ -1736,7 +1711,8 @@
                           "properties": {
                             "sessionCount": {
                               "type": "integer",
-                              "minimum": 0
+                              "minimum": 0,
+                              "maximum": 9007199254740991
                             },
                             "source": {
                               "type": "string",

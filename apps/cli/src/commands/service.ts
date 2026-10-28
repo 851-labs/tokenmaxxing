@@ -21,7 +21,7 @@ import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
 
 import { Data, Effect, Option } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import type {
   ServiceAutoUpdateManager,
   ServiceAutoUpdateReason,

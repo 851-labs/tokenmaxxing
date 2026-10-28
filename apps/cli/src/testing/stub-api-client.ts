@@ -1,7 +1,7 @@
 import { Effect } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { TokenmaxxingApi } from "@tokenmaxxing/api-contract";
 
 import type { TokenmaxxingApiClient } from "../services";

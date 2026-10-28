@@ -1,7 +1,7 @@
 import { Cache, Context, Data, Duration, Effect, Exit, Layer, Option, Schema } from "effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 /**
  * Reads the published CLI's dist-tags from the npm registry so the admin

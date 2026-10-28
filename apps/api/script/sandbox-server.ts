@@ -22,7 +22,7 @@ import { DatabaseSync } from "node:sqlite";
 import { applyMigrations } from "@tokenmaxxing/db/migrations";
 import { Context, Effect, Layer, Scope } from "effect";
 import * as FileSystem from "effect/FileSystem";
-import { HttpEffect } from "effect/unstable/http";
+import { HttpEffect } from "effect/http";
 
 import { generateCliToken, hashCliToken } from "../src/auth/crypto";
 import { AppConfig } from "../src/config";

@@ -1,6 +1,6 @@
 import { Duration, Effect } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeTestLogger, type TestLogger } from "../testing/logger";
