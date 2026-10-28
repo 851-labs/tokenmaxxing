@@ -9,7 +9,7 @@ import {
   applyMigrations as alchemyApplyMigrations,
   inlineSqlParams,
   type SqlExecutor,
-} from "alchemy/SQL/Migrations/index";
+} from "@alchemy.run/sql/Migrations";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 

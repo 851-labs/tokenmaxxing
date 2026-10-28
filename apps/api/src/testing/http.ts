@@ -1,6 +1,6 @@
 import { Context, Effect, Exit, Layer, Scope } from "effect";
 import * as FileSystem from "effect/FileSystem";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { AdminService } from "../admin/service";
 import { AuthService } from "../auth/service";

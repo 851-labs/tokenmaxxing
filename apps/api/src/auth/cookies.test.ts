@@ -1,5 +1,5 @@
 import { Duration } from "effect";
-import { HttpServerRequest } from "effect/unstable/http";
+import { HttpServerRequest } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
 import { deploymentForHost } from "../config";

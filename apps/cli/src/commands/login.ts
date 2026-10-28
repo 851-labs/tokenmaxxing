@@ -1,7 +1,7 @@
 import { arch, hostname } from "node:os";
 
 import { Data, Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { DeviceId, type AuthUser } from "@tokenmaxxing/api-contract";
 
 import packageJson from "../../package.json";

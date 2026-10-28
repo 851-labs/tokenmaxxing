@@ -96,7 +96,7 @@ function shiftDayKey(key: string, days: number): string {
  * The decoded value stays a plain string.
  */
 const DateKey = Schema.String.check(
-  Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/),
+  Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/u),
   Schema.makeFilter((value: string) => isDateKey(value) || "expected a calendar date"),
 );
 

@@ -1,7 +1,7 @@
 import * as Http from "alchemy/Http";
 import { Cause, Context, Effect, Layer, Scope } from "effect";
 import * as FileSystem from "effect/FileSystem";
-import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { MIN_USAGE_DATE_KEY, UserNotFound } from "@tokenmaxxing/api-contract";

@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import type { OAuthProviderId } from "@tokenmaxxing/api-contract";
 

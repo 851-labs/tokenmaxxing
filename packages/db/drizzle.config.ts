@@ -4,7 +4,6 @@ const config = defineConfig({
   dialect: "sqlite",
   out: "./migrations",
   schema: "./src/schema/index.ts",
-  strict: true,
   verbose: true,
 });
 

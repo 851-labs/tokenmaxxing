@@ -135,7 +135,7 @@ automatically; revoke one with `tokenmaxxing logout` or from
 
 ## Development
 
-Use Bun 1.4.2 and Node.js 24.18.0 (the CI runtime). Vite+ is installed locally;
+Use Bun 1.4.4 and Node.js 24.18.0 (the CI runtime). Vite+ is installed locally;
 no global CLI installation is required.
 
 ```bash

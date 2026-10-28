@@ -1,5 +1,5 @@
 import { Effect, Layer, Option } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {

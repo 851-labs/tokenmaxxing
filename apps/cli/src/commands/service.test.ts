@@ -7,9 +7,9 @@ import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 
 import { Cause, Effect, Exit, Layer } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { Unauthorized, UserId, type AuthUser, type UsageSource } from "@tokenmaxxing/api-contract";
 import { describe, expect, it } from "vite-plus/test";
 

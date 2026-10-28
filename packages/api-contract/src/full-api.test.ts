@@ -1,4 +1,4 @@
-import * as OpenApi from "effect/unstable/httpapi/OpenApi";
+import * as OpenApi from "effect/http-api/OpenApi";
 import { describe, expect, it } from "vite-plus/test";
 
 import { TokenmaxxingApi } from "./api";

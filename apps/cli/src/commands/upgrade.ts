@@ -1,5 +1,5 @@
 import { Data, Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import packageJson from "../../package.json";
 import {

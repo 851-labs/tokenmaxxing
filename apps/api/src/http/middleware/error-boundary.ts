@@ -1,7 +1,7 @@
 import { Cause, Effect, Layer, Result, type Types } from "effect";
 import * as SchemaIssue from "effect/SchemaIssue";
-import { HttpServerResponse } from "effect/unstable/http";
-import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
+import { HttpServerResponse } from "effect/http";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 
 import {
   BadRequest,

@@ -1,4 +1,4 @@
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 
 /**
  * A presence flag: `--name` is true, omitting it is false. Since effect

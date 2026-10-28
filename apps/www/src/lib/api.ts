@@ -1,9 +1,9 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { createIsomorphicFn } from "@tanstack/react-start";
 import {
   ApiErrors,

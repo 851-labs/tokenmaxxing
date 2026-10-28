@@ -1,5 +1,5 @@
 import { Effect, Layer, Option } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { Forbidden, OAuthProviderId } from "@tokenmaxxing/api-contract";
 
