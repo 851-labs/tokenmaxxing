@@ -12,8 +12,25 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  integerDisplay,
   percentOf,
+  tokensDisplay,
+  usdDisplay,
+  type NumberDisplay,
 } from "./format";
+
+/** What NumberFlow renders for a display. */
+function renderDisplay(display: NumberDisplay): string {
+  const number = new Intl.NumberFormat("en-US", display.format).format(display.value);
+  return `${display.prefix ?? ""}${number}${display.suffix ?? ""}`;
+}
+
+/** Magnitudes around every unit and rounding boundary the formatters branch on. */
+const DISPLAY_SAMPLES = [
+  0, 0.004, 0.005, 1, 42.5, 99.994, 99.996, 100, 999.4, 999.5, 1_234, 12_345.67, 99_949, 999_949,
+  999_950, 999_999, 1e6, 1_234_567, 999_949_999, 999_950_000, 1e9, 41_359_595_726, 999_994_999_999,
+  999_995_000_000, 1e12, 123_456_789_012_345, 999_999_999_999_999,
+];
 
 describe("number formatters", () => {
   it("pluralises counted nouns", () => {
@@ -91,6 +108,31 @@ describe("number formatters", () => {
       expect(formatUsd(value).length).toBeLessThanOrEqual(10);
       expect(formatTokens(value).length).toBeLessThanOrEqual(8);
       expect(formatCompact(value).length).toBeLessThanOrEqual(8);
+    }
+  });
+});
+
+describe("number displays", () => {
+  it("render exactly what their static formatters print", () => {
+    for (const sample of DISPLAY_SAMPLES) {
+      for (const value of [sample, -sample]) {
+        const pairs = [
+          [usdDisplay(value), formatUsd(value)],
+          [tokensDisplay(value), formatTokens(value)],
+          [integerDisplay(value), formatInteger(value)],
+        ] as const;
+        for (const [display, text] of pairs) {
+          expect(display === null ? null : renderDisplay(display), `${value}`).toBe(text);
+        }
+      }
+    }
+  });
+
+  it("are null where the formatters print a cap or a dash", () => {
+    for (const value of [Number.NaN, 1e15, -1e16]) {
+      expect(usdDisplay(value)).toBeNull();
+      expect(tokensDisplay(value)).toBeNull();
+      expect(integerDisplay(value)).toBeNull();
     }
   });
 });

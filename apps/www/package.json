@@ -9,6 +9,7 @@
     "@base-ui/react": "catalog:",
     "@fontsource/geist-mono": "catalog:",
     "@fontsource/geist-sans": "catalog:",
+    "@number-flow/react": "^0.6.2",
     "@phosphor-icons/react": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",

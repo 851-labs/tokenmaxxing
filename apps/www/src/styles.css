@@ -44,6 +44,16 @@
   --color-accent-foreground: var(--accent-foreground);
   --font-sans: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --animate-value-swap: value-swap 300ms cubic-bezier(0.2, 0, 0, 1);
+
+  /* A changed value settling into place (see AnimatedText). */
+  @keyframes value-swap {
+    from {
+      filter: blur(4px);
+      opacity: 0;
+      transform: translateY(0.25em);
+    }
+  }
 }
 
 body {
