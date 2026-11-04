@@ -13,6 +13,7 @@ import {
   formatTokens,
   formatUsd,
   integerDisplay,
+  percentDisplay,
   percentOf,
   tokensDisplay,
   usdDisplay,
@@ -27,9 +28,10 @@ function renderDisplay(display: NumberDisplay): string {
 
 /** Magnitudes around every unit and rounding boundary the formatters branch on. */
 const DISPLAY_SAMPLES = [
-  0, 0.004, 0.005, 1, 42.5, 99.994, 99.996, 100, 999.4, 999.5, 1_234, 12_345.67, 99_949, 999_949,
-  999_950, 999_999, 1e6, 1_234_567, 999_949_999, 999_950_000, 1e9, 41_359_595_726, 999_994_999_999,
-  999_995_000_000, 1e12, 123_456_789_012_345, 999_999_999_999_999,
+  0, 0.004, 0.005, 0.04, 0.05, 0.45, 1, 1.005, 2.5, 9.95, 42.5, 95.84, 95.85, 99.95, 100, 1_450,
+  1_005_000, 1_234_550_000, 2_675_000_000_000, 99.994, 99.996, 100, 999.4, 999.5, 1_234, 12_345.67,
+  99_949, 999_949, 999_950, 999_999, 1e6, 1_234_567, 999_949_999, 999_950_000, 1e9, 41_359_595_726,
+  999_994_999_999, 999_995_000_000, 1e12, 123_456_789_012_345, 999_999_999_999_999,
 ];
 
 describe("number formatters", () => {
@@ -120,6 +122,7 @@ describe("number displays", () => {
           [usdDisplay(value), formatUsd(value)],
           [tokensDisplay(value), formatTokens(value)],
           [integerDisplay(value), formatInteger(value)],
+          [percentDisplay(value), formatPercent(value)],
         ] as const;
         for (const [display, text] of pairs) {
           expect(display === null ? null : renderDisplay(display), `${value}`).toBe(text);

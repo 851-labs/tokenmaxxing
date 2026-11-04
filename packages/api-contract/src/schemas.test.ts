@@ -225,11 +225,7 @@ describe("stats responses", () => {
       name: "Alexandru",
     },
   };
-  const window = (since: string) => ({
-    dailyByModel: [
-      { date: "2026-06-21", key: "gpt-5.5", rowCount: 3, spendUsd: 100, totalTokens: 500 },
-      { date: "2026-06-21", key: "Other", rowCount: 1, spendUsd: 1, totalTokens: 5 },
-    ],
+  const range = (since: string) => ({
     modelsBySpend: [ranked],
     modelsByTokens: [ranked],
     since,
@@ -237,32 +233,41 @@ describe("stats responses", () => {
     totals,
   });
   const response = {
+    daily: [{ date: "2026-06-21", spendUsd: 101, totalTokens: 505, userCount: 2 }],
+    dailyByModel: [
+      { date: "2026-06-21", key: "gpt-5.5", spendUsd: 100, totalTokens: 500 },
+      { date: "2026-06-21", key: "Other", spendUsd: 1, totalTokens: 5 },
+    ],
+    dailyBySource: [{ date: "2026-06-21", key: "codex", spendUsd: 101, totalTokens: 505 }],
     generatedAt: "2026-06-21T20:00:00.000Z",
-    windows: {
-      last30d: window("2026-05-23"),
-      ytd: window("2026-01-01"),
+    ranges: {
+      "1m": range("2026-05-23"),
+      "2m": range("2026-04-23"),
+      "2w": range("2026-06-08"),
+      "3m": range("2026-03-24"),
+      "6m": range("2025-12-22"),
+      ytd: range("2026-01-01"),
     },
+    until: "2026-06-22",
   };
 
-  it("carries every window with the same shape", async () => {
+  it("carries one daily series and every range with the same shape", async () => {
     await expect(Schema.decodeUnknownPromise(StatsResponse)(response)).resolves.toMatchObject({
-      windows: {
-        last30d: {
-          dailyByModel: [{ key: "gpt-5.5" }, { key: "Other" }],
-          modelsByTokens: [{ key: "gpt-5.5" }],
-          since: "2026-05-23",
-          totals: { spendUsd: 123.45 },
-        },
-        ytd: { since: "2026-01-01", sources: [{ key: "gpt-5.5" }] },
+      dailyByModel: [{ key: "gpt-5.5" }, { key: "Other" }],
+      dailyBySource: [{ key: "codex" }],
+      ranges: {
+        "1m": { modelsByTokens: [{ key: "gpt-5.5" }], since: "2026-05-23" },
+        ytd: { since: "2026-01-01", sources: [{ key: "gpt-5.5" }], totals: { spendUsd: 123.45 } },
       },
+      until: "2026-06-22",
     });
   });
 
-  it("requires both windows", async () => {
-    const { ytd: _ytd, ...windows } = response.windows;
+  it("requires every range", async () => {
+    const { ytd: _ytd, ...ranges } = response.ranges;
 
     await expect(
-      Schema.decodeUnknownPromise(StatsResponse)({ ...response, windows }),
+      Schema.decodeUnknownPromise(StatsResponse)({ ...response, ranges }),
     ).rejects.toThrow();
   });
 

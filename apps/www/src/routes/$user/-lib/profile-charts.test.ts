@@ -5,7 +5,6 @@ import {
   deriveProfileCharts,
   deriveProfileTrendCharts,
   deriveWindowStats,
-  timeframeRange,
   type DailyRange,
   type DailyRow,
 } from "./profile-charts";
@@ -239,18 +238,6 @@ describe("deriveProfileCharts", () => {
 
 describe("deriveProfileTrendCharts", () => {
   const range: DailyRange = { firstDate: "2026-01-01", lastDate: "2026-11-03" };
-
-  it("ends every timeframe on the last day and clamps it to the loaded range", () => {
-    expect(timeframeRange(range, "2w")).toEqual({
-      firstDate: "2026-10-21",
-      lastDate: "2026-11-03",
-    });
-    expect(timeframeRange(range, "ytd")).toEqual(range);
-    expect(timeframeRange({ firstDate: "2026-01-01", lastDate: "2026-01-10" }, "3m")).toEqual({
-      firstDate: "2026-01-01",
-      lastDate: "2026-01-10",
-    });
-  });
 
   it("keeps short timeframes daily", () => {
     const month = deriveProfileTrendCharts([], range, "1m");

@@ -5,9 +5,11 @@ import { useHydrated } from "../hooks/use-hydrated";
 import { cn } from "../lib/cn";
 import {
   formatInteger,
+  formatPercent,
   formatTokens,
   formatUsd,
   integerDisplay,
+  percentDisplay,
   tokensDisplay,
   usdDisplay,
   type NumberDisplay,
@@ -27,6 +29,7 @@ import {
 
 const NUMBER_KINDS = {
   integer: { display: integerDisplay, format: formatInteger },
+  percent: { display: percentDisplay, format: (value: number) => formatPercent(value) },
   tokens: { display: tokensDisplay, format: formatTokens },
   usd: { display: usdDisplay, format: formatUsd },
 } as const satisfies Record<

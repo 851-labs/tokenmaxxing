@@ -1,35 +1,47 @@
 import type {
-  StatsChartPoint,
+  StatsDailyPoint,
+  StatsRange,
+  StatsRankedMetric,
   StatsResponse,
-  StatsWindow,
-  StatsWindowId,
+  StatsSeriesPoint,
+  UsageRangeId,
 } from "@tokenmaxxing/api-contract";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import {
-  buildStackedSeriesCharts,
-  type StackedSeriesChart,
-} from "../../../components/charts/series";
-import { addDays, enumerateDays } from "../../../lib/dates";
-
-/** Pure view-model for the /stats page: window selection and chart series. */
-
-/** The page's tabs, each backed by one of the API's stats windows. */
-const STATS_TAB_WINDOWS = {
-  "30d": "last30d",
-  ytd: "ytd",
-} as const satisfies Record<string, StatsWindowId>;
-
-type StatsTab = keyof typeof STATS_TAB_WINDOWS;
+import { bucketDays } from "../../../components/charts/day-buckets";
+import { OTHER_MODEL_SERIES } from "../../../components/charts/model-colors";
+import type { StackedDay, StackedSeriesChart } from "../../../components/charts/series";
+import { bucketedStackedCharts } from "../../../components/charts/trend";
+import { agentLabel } from "../../../lib/agents";
+import { addDays, dayNumber } from "../../../lib/dates";
+import { percentOf } from "../../../lib/format";
+import type { DayWindow } from "../../../lib/usage-ranges";
 
 /**
- * `?window=` values. `2026` links predate year-to-date and now open `ytd`;
- * TanStack's default search parser JSON-parses a bare `2026` into a number,
- * so the legacy value arrives as either type.
+ * Pure view-model for /stats: one range of the stats payload, measured by one
+ * metric, as the page's cards, series charts with their ranked tables, and the
+ * active-users chart.
  */
-const StatsTabParam = Schema.Union([
-  Schema.Literals(["30d", "ytd"]),
+
+const StatsMetric = Schema.Literals(["tokens", "spend"]);
+
+type StatsMetric = typeof StatsMetric.Type;
+
+const DEFAULT_STATS_METRIC: StatsMetric = "tokens";
+
+/**
+ * Pre-range `?window=` links: `30d` opens one month, `ytd` (and the older
+ * `2026`, which TanStack's default parser turns into a number) year to date.
+ */
+const LegacyStatsWindow = Schema.Union([
+  Schema.Literal("30d").pipe(
+    Schema.decodeTo(
+      Schema.Literal("1m"),
+      SchemaTransformation.transform<"1m", "30d">({ decode: () => "1m", encode: () => "30d" }),
+    ),
+  ),
+  Schema.Literal("ytd"),
   Schema.Literals(["2026", 2026]).pipe(
     Schema.decodeTo(
       Schema.Literal("ytd"),
@@ -41,82 +53,205 @@ const StatsTabParam = Schema.Union([
   ),
 ]);
 
-interface StatsWindowView {
-  /** Inclusive chart bounds, or null before any usage exists. */
-  chartRange: { first: string; last: string } | null;
-  dailyByModel: StatsChartPoint[];
+/** One series in a section's chart, as its table row. */
+interface SeriesRow {
+  color: string;
+  key: string;
   label: string;
-  window: StatsWindow;
+  /** Share of the range's selected metric, 0–100. */
+  percent: number;
+  spendUsd: number;
+  totalTokens: number;
+  /** Distinct users in the range; null for "Other", whose users overlap the named rows'. */
+  userCount: number | null;
 }
 
-interface AggregateCharts {
-  sessions: StackedSeriesChart;
-  spend: StackedSeriesChart;
-  tokens: StackedSeriesChart;
+interface SeriesSection {
+  chart: StackedSeriesChart;
+  rows: SeriesRow[];
+}
+
+interface StatsCards {
+  /** The range's busiest day by the selected metric, or null without usage. */
+  busiestDay: { date: string; value: number } | null;
+  /** Cache-read share of all tokens, 0–100. */
+  cacheReadPercent: number;
+  spendPerUser: number;
+  spendUsd: number;
+  topAgent: string | null;
+  topModel: string | null;
+  totalTokens: number;
+  userCount: number;
+}
+
+interface StatsView {
+  /** Average daily active users per bar. */
+  activeUsers: StackedDay[];
+  agents: SeriesSection;
+  /** Days per bar, shared by every chart. */
+  bucketDays: number;
+  cards: StatsCards;
+  models: SeriesSection;
+  /** The days the range covers, or null before any usage exists. */
+  window: DayWindow | null;
+}
+
+const ACTIVE_USERS_SERIES = "Active users";
+const ACTIVE_USERS_COLOR = "#2563eb";
+
+function metricOf(metric: StatsMetric): (row: { spendUsd: number; totalTokens: number }) => number {
+  return metric === "spend" ? (row) => row.spendUsd : (row) => row.totalTokens;
 }
 
 /**
- * The latest date a real row can carry: the server's UTC date plus one day,
- * since no time zone runs more than a day ahead of UTC (UTC+14). Dates are
- * opaque per-user local buckets, so the *viewer's* "today" is no bound at all
- * — but rows past this one are corrupt (production has seen year 3089) and
- * would stretch the chart across centuries.
+ * The range's charted days: from its start through the server's UTC today.
+ * Devices whose local day already leads UTC can date usage tomorrow; that
+ * sliver counts in the range's totals but would draw as a near-empty last
+ * bar, so charts end today.
  */
-function latestPlausibleDate(generatedAt: string): string {
-  return addDays(generatedAt.slice(0, 10), 1);
+function rangeWindow(data: StatsResponse, range: StatsRange): DayWindow | null {
+  const today = data.generatedAt.slice(0, 10);
+  const last = data.daily.at(-1)?.date;
+  if (last === undefined || last < range.since) {
+    return null;
+  }
+
+  return { firstDate: range.since, lastDate: last > today ? today : last };
 }
 
-/** One window of the stats payload, with chart rows clamped to plausible dates. */
-function selectStatsWindow(data: StatsResponse, tab: StatsTab): StatsWindowView {
-  const window = data.windows[STATS_TAB_WINDOWS[tab]];
-  const { totals } = window;
-  const { since } = window;
-  const latest = latestPlausibleDate(data.generatedAt);
-  const chartLast =
-    totals.lastDate === null ? null : totals.lastDate > latest ? latest : totals.lastDate;
-  const chartFirst =
-    totals.firstDate === null || totals.firstDate < since ? since : totals.firstDate;
+function inWindow<Row extends { date: string }>(rows: readonly Row[], window: DayWindow): Row[] {
+  return rows.filter((row) => row.date >= window.firstDate && row.date <= window.lastDate);
+}
+
+function deriveStatsView(
+  data: StatsResponse,
+  rangeId: UsageRangeId,
+  metric: StatsMetric,
+): StatsView {
+  const range = data.ranges[rangeId];
+  const window = rangeWindow(data, range);
+  const value = metricOf(metric);
+  // Ends before it starts: charts over it have no bars.
+  const empty: DayWindow = { firstDate: range.since, lastDate: addDays(range.since, -1) };
+  const days = window === null ? [] : inWindow(data.daily, window);
+
+  const models = seriesSection(
+    window === null ? [] : inWindow(data.dailyByModel, window),
+    window ?? empty,
+    value,
+    [...range.modelsByTokens, ...range.modelsBySpend],
+    (key) => key,
+  );
+  const agents = seriesSection(
+    window === null ? [] : inWindow(data.dailyBySource, window),
+    window ?? empty,
+    value,
+    range.sources,
+    agentLabel,
+  );
+  const topAgent = [...range.sources].sort((left, right) => value(right) - value(left))[0];
+  const topModel = (metric === "spend" ? range.modelsBySpend : range.modelsByTokens)[0];
+  const busiest = days.reduce<StatsDailyPoint | undefined>(
+    (best, day) => (best === undefined || value(day) > value(best) ? day : best),
+    undefined,
+  );
+  const { totals } = range;
 
   return {
-    chartRange:
-      chartLast === null || totals.firstDate === null || chartFirst > chartLast
-        ? null
-        : { first: chartFirst, last: chartLast },
-    dailyByModel: window.dailyByModel.filter((row) => row.date >= since && row.date <= latest),
-    label: tab === "ytd" ? ytdLabel(data) : "30d",
+    activeUsers: window === null ? [] : activeUserDays(days, window),
+    agents: agents.section,
+    bucketDays: models.bucketDays,
+    cards: {
+      busiestDay: busiest === undefined ? null : { date: busiest.date, value: value(busiest) },
+      cacheReadPercent: percentOf(totals.cacheReadTokens, totals.totalTokens),
+      spendPerUser: totals.userCount === 0 ? 0 : totals.spendUsd / totals.userCount,
+      spendUsd: totals.spendUsd,
+      topAgent: topAgent === undefined ? null : agentLabel(topAgent.key),
+      topModel: topModel?.key ?? null,
+      totalTokens: totals.totalTokens,
+      userCount: totals.userCount,
+    },
+    models: models.section,
     window,
   };
 }
 
-/** The server's current year, e.g. "2026" — `ytd.since` is always Jan 1 of it. */
-function ytdLabel(data: StatsResponse): string {
-  return data.windows.ytd.since.slice(0, 4);
+/**
+ * A stacked chart of the window's series by the selected metric, plus one
+ * table row per charted series (the chart's legend, with users and both
+ * metrics). Ranked rows come from the server, which counts distinct users.
+ */
+function seriesSection(
+  rows: readonly StatsSeriesPoint[],
+  window: DayWindow,
+  value: (row: { spendUsd: number; totalTokens: number }) => number,
+  ranked: readonly StatsRankedMetric[],
+  labelOf: (key: string) => string,
+): { bucketDays: number; section: SeriesSection } {
+  const { bucketDays: size, charts } = bucketedStackedCharts(rows, window, { value });
+  const chart = charts.value;
+  const rankedByKey = new Map(ranked.map((row) => [row.key, row]));
+
+  const sums = new Map<string, { spendUsd: number; totalTokens: number }>();
+  let total = 0;
+  for (const row of rows) {
+    const series = chart.selection.label(row.key);
+    const sum = sums.get(series) ?? { spendUsd: 0, totalTokens: 0 };
+    sum.spendUsd += row.spendUsd;
+    sum.totalTokens += row.totalTokens;
+    sums.set(series, sum);
+    total += value(row);
+  }
+
+  const colors = new Map(chart.legend.map((entry) => [entry.series, entry.color]));
+  const tableRows = chart.selection.order.flatMap((series): SeriesRow[] => {
+    const sum = sums.get(series);
+    const color = colors.get(series);
+    if (sum === undefined || color === undefined) {
+      return [];
+    }
+
+    return [
+      {
+        color,
+        key: series,
+        label: series === OTHER_MODEL_SERIES ? "Other" : labelOf(series),
+        percent: percentOf(value(sum), total),
+        spendUsd: sum.spendUsd,
+        totalTokens: sum.totalTokens,
+        userCount:
+          series === OTHER_MODEL_SERIES ? null : (rankedByKey.get(series)?.userCount ?? null),
+      },
+    ];
+  });
+
+  return { bucketDays: size, section: { chart, rows: tableRows } };
 }
 
-/** Spend, token, and session stacks over every day of the window's usage range. */
-function deriveAggregateCharts(view: StatsWindowView): AggregateCharts {
-  const rows = view.dailyByModel;
-  const days =
-    view.chartRange === null ? [] : enumerateDays(view.chartRange.first, view.chartRange.last);
+/** Average daily active users per bar, over the same buckets as the series charts. */
+function activeUserDays(days: readonly StatsDailyPoint[], window: DayWindow): StackedDay[] {
+  const bucketing = bucketDays(window.firstDate, window.lastDate);
+  const users = new Map<string, number>();
+  for (const day of days) {
+    const bucket = bucketing.bucketOf(day.date);
+    if (bucket !== undefined) {
+      users.set(bucket, (users.get(bucket) ?? 0) + day.userCount);
+    }
+  }
 
-  return buildStackedSeriesCharts(rows, days, {
-    sessions: (row) => row.rowCount,
-    spend: (row) => row.spendUsd,
-    tokens: (row) => row.totalTokens,
-  }).charts;
+  return bucketing.buckets.map((bucket) => {
+    const span = dayNumber(bucket.last) - dayNumber(bucket.first) + 1;
+    const average = (users.get(bucket.first) ?? 0) / span;
+
+    return {
+      date: bucket.first,
+      endDate: bucket.last,
+      segments: [{ color: ACTIVE_USERS_COLOR, series: ACTIVE_USERS_SERIES, value: average }],
+      total: average,
+    };
+  });
 }
 
-function formatUsageRange(range: StatsWindowView["chartRange"]): string {
-  return range === null ? "No usage yet" : `${range.first} to ${range.last}`;
-}
+export { DEFAULT_STATS_METRIC, deriveStatsView, LegacyStatsWindow, StatsMetric };
 
-export {
-  deriveAggregateCharts,
-  formatUsageRange,
-  latestPlausibleDate,
-  selectStatsWindow,
-  StatsTabParam,
-  ytdLabel,
-};
-
-export type { AggregateCharts, StatsTab, StatsWindowView };
+export type { SeriesRow, SeriesSection, StatsCards, StatsView };

@@ -629,19 +629,37 @@ const StatsDailyModelPoint = Schema.Struct({
 type StatsDailyModelPoint = typeof StatsDailyModelPoint.Type;
 
 /**
- * Series per stats chart: www stacks each metric's top models and folds the
- * rest into one "Other" series. The API keeps every model that ranks in the
- * top `STATS_CHART_MODEL_LIMIT` of any charted metric (spend, tokens,
- * sessions) and sums the long tail into `STATS_OTHER_MODEL_KEY`, so the
- * charts stay exact without shipping every model ever seen.
+ * The time ranges /stats and profiles offer: trailing day counts ending on
+ * the latest day, or `ytd` (from Jan 1). /stats aggregates every one of them
+ * server-side, since distinct user counts can't be summed from daily rows.
+ */
+const UsageRangeId = Schema.Literals(["2w", "1m", "2m", "3m", "6m", "ytd"]);
+
+type UsageRangeId = typeof UsageRangeId.Type;
+
+const USAGE_RANGE_DAYS = {
+  "2w": 14,
+  "1m": 30,
+  "2m": 60,
+  "3m": 90,
+  "6m": 182,
+  ytd: null,
+} as const satisfies Record<UsageRangeId, number | null>;
+
+/**
+ * Series per stats chart: www stacks the selected metric's top series and
+ * folds the rest into one "Other" series. The API keeps every series that
+ * ranks in the top `STATS_CHART_MODEL_LIMIT` by spend or tokens in any range
+ * and sums the long tail into `STATS_OTHER_MODEL_KEY`, so every range's chart
+ * stays exact without shipping every model ever seen.
  */
 const STATS_CHART_MODEL_LIMIT = 10;
 const STATS_OTHER_MODEL_KEY = "Other";
 
-/** One (date, model) cell of a window's daily charts; `rowCount` is sessions. */
-const StatsChartPoint = StatsDailyModelPoint.mapFields(Struct.omit(["outputTokens"]));
+/** One (date, key) cell of a stats chart series; `key` is a model or a source. */
+const StatsSeriesPoint = StatsDailyModelPoint.mapFields(Struct.omit(["outputTokens", "rowCount"]));
 
-type StatsChartPoint = typeof StatsChartPoint.Type;
+type StatsSeriesPoint = typeof StatsSeriesPoint.Type;
 
 const StatsRankedMetric = Schema.Struct({
   key: Schema.String,
@@ -653,28 +671,32 @@ const StatsRankedMetric = Schema.Struct({
 
 type StatsRankedMetric = typeof StatsRankedMetric.Type;
 
-/** `ytd` starts on Jan 1 of the server's current UTC year. */
-const StatsWindowId = Schema.Literals(["last30d", "ytd"]);
-
-type StatsWindowId = typeof StatsWindowId.Type;
-
-const StatsWindow = Schema.Struct({
-  /** Daily chart cells, date-ascending; see `STATS_OTHER_MODEL_KEY`. */
-  dailyByModel: Schema.Array(StatsChartPoint),
+/** One range's exact aggregates; its chart rows are the response's daily series from `since`. */
+const StatsRange = Schema.Struct({
   modelsBySpend: Schema.Array(StatsRankedMetric),
   modelsByTokens: Schema.Array(StatsRankedMetric),
   /** Inclusive YYYY-MM-DD lower bound. */
   since: Schema.String,
+  /** Every source, by tokens. */
   sources: Schema.Array(StatsRankedMetric),
   totals: StatsTotals,
-});
+  // Named, so OpenAPI references one component instead of inlining it per range.
+}).annotate({ identifier: "StatsRange" });
 
-type StatsWindow = typeof StatsWindow.Type;
+type StatsRange = typeof StatsRange.Type;
 
-/** Exactly what the /stats page renders: one entry per selectable window. */
+/** Exactly what the /stats page renders. */
 const StatsResponse = Schema.Struct({
+  /** Totals per day (with distinct users), date-ascending, from the earliest range's start. */
+  daily: Schema.Array(StatsDailyPoint),
+  /** (date, model) cells over `daily`'s days; see `STATS_OTHER_MODEL_KEY`. */
+  dailyByModel: Schema.Array(StatsSeriesPoint),
+  /** (date, source) cells over `daily`'s days; see `STATS_OTHER_MODEL_KEY`. */
+  dailyBySource: Schema.Array(StatsSeriesPoint),
   generatedAt: Schema.String,
-  windows: Schema.Record(StatsWindowId, StatsWindow),
+  ranges: Schema.Record(UsageRangeId, StatsRange),
+  /** Inclusive YYYY-MM-DD upper bound of every range: the ingest ceiling. */
+  until: Schema.String,
 });
 
 type StatsResponse = typeof StatsResponse.Type;
@@ -956,14 +978,13 @@ export {
   SourceUsageStatsInput,
   STATS_CHART_MODEL_LIMIT,
   STATS_OTHER_MODEL_KEY,
-  StatsChartPoint,
   StatsDailyModelPoint,
   StatsDailyPoint,
   StatsRankedMetric,
+  StatsRange,
   StatsResponse,
+  StatsSeriesPoint,
   StatsTotals,
-  StatsWindow,
-  StatsWindowId,
   SyncUsageDayInput,
   SyncUsageInput,
   SyncUsageResponse,
@@ -974,6 +995,8 @@ export {
   UsageCheckInResponse,
   UsageDayInput,
   UsageDeviceInput,
+  USAGE_RANGE_DAYS,
+  UsageRangeId,
   UsageRawReportKind,
   UsageSource,
   UsdAmount,

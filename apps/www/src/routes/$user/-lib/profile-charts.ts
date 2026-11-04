@@ -1,6 +1,6 @@
-import type { ProfileDailyResponse } from "@tokenmaxxing/api-contract";
+import type { ProfileDailyResponse, UsageRangeId } from "@tokenmaxxing/api-contract";
 
-import { bucketDays } from "../../../components/charts/day-buckets";
+import { bucketedStackedCharts } from "../../../components/charts/trend";
 import type { MonthPoint } from "../../../components/charts/month-bars";
 import {
   bucketSeries,
@@ -9,8 +9,8 @@ import {
   type ChartSegment,
   type StackedSeriesChart,
 } from "../../../components/charts/series";
+import { usageRangeWindow } from "../../../lib/usage-ranges";
 import {
-  addDays,
   calendarYearEnd,
   calendarYearStart,
   enumerateDays,
@@ -38,23 +38,6 @@ interface ProfileCharts {
   spendByWeekday: number[];
   tokens: StackedSeriesChart;
 }
-
-/**
- * The trend charts' time ranges. Each ends on the range's last day; `ytd` is
- * everything the profile endpoint loaded (the current year to date).
- */
-const PROFILE_TIMEFRAME_DAYS = {
-  "2w": 14,
-  "1m": 30,
-  "2m": 60,
-  "3m": 90,
-  "6m": 182,
-  ytd: null,
-} as const satisfies Record<string, number | null>;
-
-type ProfileTimeframe = keyof typeof PROFILE_TIMEFRAME_DAYS;
-
-const DEFAULT_PROFILE_TIMEFRAME: ProfileTimeframe = "2m";
 
 interface ProfileTrendCharts {
   /** Days per bar. */
@@ -104,51 +87,18 @@ function deriveWindowStats(rows: readonly DailyRow[], window: DailyRange): Profi
   return { activeDays: dates.size, spendUsd, topModel, totalTokens };
 }
 
-/** The timeframe's trailing window, clamped to the loaded range. */
-function timeframeRange(range: DailyRange, timeframe: ProfileTimeframe): DailyRange {
-  const days = PROFILE_TIMEFRAME_DAYS[timeframe];
-  if (days === null) {
-    return range;
-  }
-  const first = addDays(range.lastDate, -(days - 1));
-
-  return { firstDate: first > range.firstDate ? first : range.firstDate, lastDate: range.lastDate };
-}
-
-/**
- * Spend and token stacks over the timeframe, in equal N-day bars sized so the
- * bar count stays readable. Top models and legend shares cover only the
- * window, so a model that dominated months ago doesn't crowd a recent view.
- */
+/** Spend and token stacks over the range, bucketed to a readable bar count. */
 function deriveProfileTrendCharts(
   rows: readonly DailyRow[],
   range: DailyRange,
-  timeframe: ProfileTimeframe,
+  usageRange: UsageRangeId,
 ): ProfileTrendCharts {
-  const window = timeframeRange(range, timeframe);
-  const bucketing = bucketDays(window.firstDate, window.lastDate);
-  const bucketed = rows.flatMap((row) => {
-    const bucket = bucketing.bucketOf(row.date);
-    return bucket === undefined ? [] : [{ ...row, date: bucket }];
-  });
-  const { charts } = buildStackedSeriesCharts(
-    bucketed,
-    bucketing.buckets.map((bucket) => bucket.first),
-    { spend: (row) => row.spendUsd, tokens: (row) => row.totalTokens },
-  );
-  const withEndDates = (chart: StackedSeriesChart): StackedSeriesChart => ({
-    ...chart,
-    days: chart.days.map((day, index) => ({
-      ...day,
-      endDate: bucketing.buckets[index]?.last ?? day.date,
-    })),
+  const { bucketDays, charts } = bucketedStackedCharts(rows, usageRangeWindow(range, usageRange), {
+    spend: (row) => row.spendUsd,
+    tokens: (row) => row.totalTokens,
   });
 
-  return {
-    bucketDays: bucketing.size,
-    spend: withEndDates(charts.spend),
-    tokens: withEndDates(charts.tokens),
-  };
+  return { bucketDays, spend: charts.spend, tokens: charts.tokens };
 }
 
 function deriveProfileCharts(rows: readonly DailyRow[], range: DailyRange): ProfileCharts {
@@ -201,20 +151,6 @@ function deriveProfileCharts(rows: readonly DailyRow[], range: DailyRange): Prof
   };
 }
 
-export {
-  DEFAULT_PROFILE_TIMEFRAME,
-  deriveProfileCharts,
-  deriveProfileTrendCharts,
-  deriveWindowStats,
-  PROFILE_TIMEFRAME_DAYS,
-  timeframeRange,
-};
+export { deriveProfileCharts, deriveProfileTrendCharts, deriveWindowStats };
 
-export type {
-  DailyRange,
-  DailyRow,
-  ProfileCharts,
-  ProfileTimeframe,
-  ProfileTrendCharts,
-  ProfileWindowStats,
-};
+export type { DailyRange, DailyRow, ProfileCharts, ProfileTrendCharts, ProfileWindowStats };

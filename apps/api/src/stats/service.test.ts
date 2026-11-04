@@ -2,15 +2,15 @@ import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import { StatsResponse } from "@tokenmaxxing/api-contract";
-import type { StatsTotals, StatsWindow } from "@tokenmaxxing/api-contract";
+import type { StatsRange, StatsTotals } from "@tokenmaxxing/api-contract";
 
 import { type EdgeCacheLike, makeEdgeJsonCache } from "../cloudflare/edge-cache";
 import {
   makeStatsService,
+  statsRangeStarts,
   StatsRepository,
-  statsWindowStarts,
+  type StatsRangeStarts,
   type StatsSnapshot,
-  type StatsWindowStarts,
 } from "./service";
 
 const emptyTotals: StatsTotals = {
@@ -28,9 +28,8 @@ const emptyTotals: StatsTotals = {
   userCount: 0,
 };
 
-function emptyWindow(since: string): StatsWindow {
+function emptyRange(since: string): StatsRange {
   return {
-    dailyByModel: [],
     modelsBySpend: [],
     modelsByTokens: [],
     since,
@@ -40,24 +39,43 @@ function emptyWindow(since: string): StatsWindow {
 }
 
 const emptySnapshot: StatsSnapshot = {
-  windows: {
-    last30d: emptyWindow("2026-06-10"),
-    ytd: emptyWindow("2026-01-01"),
+  daily: [],
+  dailyByModel: [],
+  dailyBySource: [],
+  ranges: {
+    "1m": emptyRange("2026-06-10"),
+    "2m": emptyRange("2026-05-11"),
+    "2w": emptyRange("2026-06-26"),
+    "3m": emptyRange("2026-04-11"),
+    "6m": emptyRange("2026-01-09"),
+    ytd: emptyRange("2026-01-01"),
   },
+  until: "2026-07-10",
 };
 
-describe("statsWindowStarts", () => {
-  it("derives year-to-date from the current UTC year instead of a fixed year", () => {
-    expect(statsWindowStarts(new Date("2027-01-05T12:00:00.000Z"))).toEqual({
-      last30d: "2026-12-07",
+describe("statsRangeStarts", () => {
+  it("ends every trailing range today and starts year to date on Jan 1", () => {
+    expect(statsRangeStarts(new Date("2026-07-09T20:00:00.000Z"))).toEqual({
+      "1m": "2026-06-10",
+      "2m": "2026-05-11",
+      "2w": "2026-06-26",
+      "3m": "2026-04-11",
+      "6m": "2026-01-09",
+      ytd: "2026-01-01",
+    });
+  });
+
+  it("derives year to date from the current UTC year, even when trailing ranges reach back", () => {
+    expect(statsRangeStarts(new Date("2027-01-05T12:00:00.000Z"))).toMatchObject({
+      "1m": "2026-12-07",
       ytd: "2027-01-01",
     });
   });
 });
 
 describe("StatsService.getStats", () => {
-  it("asks for every window plus the future-date ceiling, and adds generatedAt", async () => {
-    const calls: Array<{ limit: number; until: string; windows: StatsWindowStarts }> = [];
+  it("asks for every range plus the future-date ceiling, and adds generatedAt", async () => {
+    const calls: Array<{ limit: number; ranges: StatsRangeStarts; until: string }> = [];
     const service = await Effect.runPromise(
       makeStatsService({
         now: () => new Date("2026-07-09T20:00:00.000Z"),
@@ -77,12 +95,19 @@ describe("StatsService.getStats", () => {
     expect(calls).toEqual([
       {
         limit: 10,
+        ranges: {
+          "1m": "2026-06-10",
+          "2m": "2026-05-11",
+          "2w": "2026-06-26",
+          "3m": "2026-04-11",
+          "6m": "2026-01-09",
+          ytd: "2026-01-01",
+        },
         until: "2026-07-10",
-        windows: { last30d: "2026-06-10", ytd: "2026-01-01" },
       },
     ]);
     expect(response.generatedAt).toBe("2026-07-09T20:00:00.000Z");
-    expect(response.windows.ytd.totals.totalTokens).toBe(0);
+    expect(response.ranges.ytd.totals.totalTokens).toBe(0);
   });
 
   it("serves repeat reads from the edge cache without touching D1", async () => {

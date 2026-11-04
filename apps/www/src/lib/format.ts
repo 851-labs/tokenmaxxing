@@ -93,6 +93,10 @@ function formatTokens(value: number): string {
  * en-US with `format`, between `prefix` and `suffix`. Each `*Display` below
  * mirrors its `format*` twin exactly (format.test.ts holds them equal), and is
  * null where that twin prints a cap or a dash instead of a number.
+ *
+ * Twins that print with `toFixed` hand over a value already rounded by it:
+ * `toFixed` rounds the exact binary value (9.95 → "9.9") while Intl rounds
+ * its shortest decimal form (9.95 → "10.0").
  */
 interface NumberDisplay {
   /** No scientific or engineering notation: NumberFlow can't animate them. */
@@ -100,6 +104,14 @@ interface NumberDisplay {
   prefix?: string;
   suffix?: string;
   value: number;
+}
+
+/** `value` rounded as `toFixed(digits)` prints it, as a number Intl prints identically. */
+function toFixedValue(value: number, digits: number): number {
+  const rounded = Number(value.toFixed(digits));
+  // `toFixed` signs any negative value that rounds to zero (-0.004 → "-0") but
+  // never -0 itself; Intl signs exactly -0.
+  return rounded === 0 ? (value < 0 ? -0 : 0) : rounded;
 }
 
 /** {@link formatUsd} as a {@link NumberDisplay}. */
@@ -131,7 +143,10 @@ function tokensDisplay(value: number): NumberDisplay | null {
   const unit = TOKEN_UNITS.find((candidate) => magnitude >= candidate.divisor);
   if (unit === undefined) {
     // `toFixed` prints -0 as "0"; Intl would keep the sign.
-    return { format: { maximumFractionDigits: 0, useGrouping: false }, value: value || 0 };
+    return {
+      format: { maximumFractionDigits: 0, useGrouping: false },
+      value: toFixedValue(value, 0),
+    };
   }
 
   return {
@@ -142,7 +157,7 @@ function tokensDisplay(value: number): NumberDisplay | null {
       useGrouping: false,
     },
     suffix: unit.suffix,
-    value: value / unit.divisor,
+    value: toFixedValue(value / unit.divisor, unit.decimals),
   };
 }
 
@@ -151,6 +166,17 @@ function integerDisplay(value: number): NumberDisplay | null {
   return Number.isNaN(value) || Math.abs(value) >= DISPLAY_CEILING
     ? null
     : { format: INTEGER_OPTIONS, value };
+}
+
+/** {@link formatPercent} (one decimal) as a {@link NumberDisplay}. */
+function percentDisplay(value: number): NumberDisplay | null {
+  return Number.isFinite(value)
+    ? {
+        format: { maximumFractionDigits: 1, minimumFractionDigits: 1, useGrouping: false },
+        suffix: "%",
+        value: toFixedValue(value, 1),
+      }
+    : null;
 }
 
 /** Grouped digits for counts; values past the display ceiling go compact. */
@@ -256,6 +282,7 @@ export {
   formatTokens,
   formatUsd,
   integerDisplay,
+  percentDisplay,
   percentOf,
   tokensDisplay,
   usdDisplay,

@@ -1,45 +1,59 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, stripSearchParams, useNavigate } from "@tanstack/react-router";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import type { StatsRankedMetric } from "@tokenmaxxing/api-contract";
+import { UsageRangeId } from "@tokenmaxxing/api-contract";
 import * as Schema from "effect/Schema";
 
-import { StackedChartPanel, type StackedBarsMode } from "../../components/charts/stacked-bars";
+import { AnimatedNumber, AnimatedText } from "../../components/animated-value";
+import { StackedBars, type StackedBarsMode } from "../../components/charts/stacked-bars";
+import { FilterBar } from "../../components/filter-bar";
 import { StatCard } from "../../components/stat-card";
 import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
+import { cn } from "../../lib/cn";
 import {
-  formatCount,
+  formatDay,
+  formatDayRange,
   formatInteger,
   formatPercent,
   formatTokens,
   formatUsd,
-  percentOf,
 } from "../../lib/format";
-import { agentLabel } from "../../lib/agents";
 import { statsQueryOptions } from "../../lib/queries";
-import { searchParam } from "../../lib/search";
+import { optionalSearchParam, searchParam } from "../../lib/search";
 import { pageHead } from "../../lib/seo";
+import { DEFAULT_USAGE_RANGE, USAGE_RANGE_OPTIONS } from "../../lib/usage-ranges";
 import {
-  deriveAggregateCharts,
-  formatUsageRange,
-  selectStatsWindow,
-  StatsTabParam,
-  ytdLabel,
-  type StatsTab,
-  type StatsWindowView,
+  DEFAULT_STATS_METRIC,
+  deriveStatsView,
+  LegacyStatsWindow,
+  StatsMetric,
+  type SeriesSection,
+  type StatsView,
 } from "./-lib/stats-view";
 
-const statsSearchSchema = Schema.toStandardSchemaV1(
-  Schema.Struct({
-    window: searchParam(StatsTabParam, "30d"),
-  }),
-);
+const StatsSearchInput = Schema.Struct({
+  metric: searchParam(StatsMetric, DEFAULT_STATS_METRIC),
+  range: optionalSearchParam(UsageRangeId),
+  /** Pre-range links (`?window=30d|ytd|2026`); `range` wins when both are set. */
+  window: optionalSearchParam(LegacyStatsWindow),
+});
 
-type StatsSearch = typeof statsSearchSchema.Type;
+const decodeStatsSearch = Schema.decodeUnknownSync(StatsSearchInput);
+
+interface StatsSearch {
+  metric: StatsMetric;
+  range: UsageRangeId;
+}
 
 const DEFAULT_STATS_SEARCH = {
-  window: "30d",
+  metric: DEFAULT_STATS_METRIC,
+  range: DEFAULT_USAGE_RANGE,
 } as const satisfies StatsSearch;
+
+const METRIC_OPTIONS = [
+  { label: "Tokens", value: "tokens" },
+  { label: "Spend", value: "spend" },
+] as const satisfies readonly SegmentedOption<StatsMetric>[];
 
 const CHART_MODE_OPTIONS = [
   { label: "Usage", value: "absolute" },
@@ -47,7 +61,10 @@ const CHART_MODE_OPTIONS = [
 ] as const satisfies readonly SegmentedOption<StackedBarsMode>[];
 
 const Route = createFileRoute("/stats")({
-  validateSearch: statsSearchSchema,
+  validateSearch: (raw: Record<string, unknown>): StatsSearch => {
+    const search = decodeStatsSearch(raw);
+    return { metric: search.metric, range: search.range ?? search.window ?? DEFAULT_USAGE_RANGE };
+  },
   search: {
     middlewares: [stripSearchParams<StatsSearch>(DEFAULT_STATS_SEARCH)],
   },
@@ -57,7 +74,7 @@ const Route = createFileRoute("/stats")({
   head: () =>
     pageHead({
       description:
-        "Aggregate tokenmaxxing stats across tracked LLM agent spend, token volume, models, sources, and public leaderboard users.",
+        "Which AI models and coding agents are winning: token volume, API-equivalent spend and active users across every public tokenmaxxing profile.",
       path: "/stats",
       title: "Stats — tokenmaxxing.sh",
     }),
@@ -65,205 +82,248 @@ const Route = createFileRoute("/stats")({
 });
 
 function StatsPage() {
-  const { window } = Route.useSearch();
+  const { metric, range } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const { data } = useSuspenseQuery(statsQueryOptions);
-  const view = useMemo(() => selectStatsWindow(data, window), [data, window]);
-  const windowOptions: readonly SegmentedOption<StatsTab>[] = [
-    { label: "30 days", value: "30d" },
-    { label: ytdLabel(data), value: "ytd" },
-  ];
+  const view = useMemo(() => deriveStatsView(data, range, metric), [data, metric, range]);
+  // Rebuilt from the validated values, so a legacy `?window=` drops out of the URL.
+  const setSearch = (next: Partial<StatsSearch>) =>
+    navigate({ resetScroll: false, search: { metric, range, ...next } });
 
   return (
     <>
       <header className="px-4 py-8">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium text-muted-foreground">
-              Aggregate leaderboard telemetry
-            </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">tokenmaxxing stats</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Public totals across synced LLM agent usage. Spend is an API-equivalent estimate for
-              comparison, not billing reconciliation.
-            </p>
-          </div>
-          <SegmentedControl
-            label="Time window"
-            onChange={(value) =>
-              navigate({
-                resetScroll: false,
-                search: { window: value },
-              })
-            }
-            options={windowOptions}
-            value={window}
-          />
-        </div>
+        <h1 className="text-3xl font-semibold tracking-tight">Stats</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+          Every public tokenmaxxing profile, combined: which models and coding agents people
+          actually use, and how much. Spend is an API-equivalent estimate for comparison, not
+          billing.
+        </p>
       </header>
 
-      <div className="grid grid-cols-1 gap-px border-y border-border bg-border">
-        <StatsSummary view={view} />
-        <TrendSection view={view} />
-        <ModelSection view={view} />
-        <SourceSection view={view} />
+      {/* Every section follows the filters, so the bar stays pinned for the whole page. */}
+      <div className="border-b border-border">
+        <FilterBar
+          hideSpanWhenNarrow
+          span={
+            view.window === null
+              ? "No usage yet"
+              : formatDayRange(view.window.firstDate, view.window.lastDate)
+          }
+        >
+          <SegmentedControl
+            label="Metric"
+            onChange={(value) => setSearch({ metric: value })}
+            options={METRIC_OPTIONS}
+            value={metric}
+          />
+          <SegmentedControl
+            label="Time range"
+            onChange={(value) => setSearch({ range: value })}
+            options={USAGE_RANGE_OPTIONS}
+            value={range}
+          />
+        </FilterBar>
+
+        <div className="grid grid-cols-1 gap-px bg-border">
+          <StatsCards metric={metric} view={view} />
+          <SeriesPanel
+            bucketDays={view.bucketDays}
+            itemLabel="Model"
+            metric={metric}
+            section={view.models}
+            title="Models"
+          />
+          <SeriesPanel
+            bucketDays={view.bucketDays}
+            itemLabel="Agent"
+            metric={metric}
+            section={view.agents}
+            title="Agents"
+          />
+          <ActiveUsersPanel bucketDays={view.bucketDays} view={view} />
+        </div>
       </div>
     </>
   );
 }
 
-function StatsSummary({ view }: { view: StatsWindowView }) {
-  const { label } = view;
-  const { totals } = view.window;
+function StatsCards({ metric, view }: { metric: StatsMetric; view: StatsView }) {
+  const { cards } = view;
+  const busiest = cards.busiestDay;
 
   return (
     <section className="grid grid-cols-2 gap-px bg-border lg:grid-cols-4">
-      <StatCard label={`${label} spend`} value={formatUsd(totals.spendUsd)} />
-      <StatCard label={`${label} tokens`} value={formatTokens(totals.totalTokens)} />
-      <StatCard label="Users" value={formatInteger(totals.userCount)} />
-      <StatCard label="Devices" value={formatInteger(totals.deviceCount)} />
-      <StatCard label="Input tokens" value={formatTokens(totals.inputTokens)} />
-      <StatCard label="Output tokens" value={formatTokens(totals.outputTokens)} />
+      <StatCard label="Spend" value={<AnimatedNumber kind="usd" value={cards.spendUsd} />} />
+      <StatCard label="Tokens" value={<AnimatedNumber kind="tokens" value={cards.totalTokens} />} />
       <StatCard
-        label="Cache-read share"
-        value={formatPercent(percentOf(totals.cacheReadTokens, totals.totalTokens))}
+        label="Active users"
+        value={<AnimatedNumber kind="integer" value={cards.userCount} />}
       />
-      <StatCard label="Usage range" value={<UsageRange range={view.chartRange} />} />
-    </section>
-  );
-}
-
-/** Smaller than a stat so a phone's half-width card fits each date; wraps only between them. */
-function UsageRange({ range }: { range: StatsWindowView["chartRange"] }) {
-  if (range === null) {
-    return formatUsageRange(range);
-  }
-
-  return (
-    <span className="text-lg">
-      <span className="whitespace-nowrap">{range.first}</span>{" "}
-      <span className="whitespace-nowrap">to {range.last}</span>
-    </span>
-  );
-}
-
-function TrendSection({ view }: { view: StatsWindowView }) {
-  const charts = useMemo(() => deriveAggregateCharts(view), [view]);
-  const [chartMode, setChartMode] = useState<StackedBarsMode>("absolute");
-  const dayCount = charts.spend.days.length;
-
-  return (
-    <>
-      <section className="flex justify-end bg-background p-5 pb-0">
-        <SegmentedControl
-          label="Chart values"
-          onChange={setChartMode}
-          options={CHART_MODE_OPTIONS}
-          value={chartMode}
-        />
-      </section>
-
-      <StackedChartPanel
-        ariaLabel={`Aggregate daily spend by model across ${dayCount} days`}
-        days={charts.spend.days}
-        legend={charts.spend.legend}
-        mode={chartMode}
-        title="Daily Spend"
-        valueFormatter={formatUsd}
+      <StatCard
+        label="Spend per user"
+        value={<AnimatedNumber kind="usd" value={cards.spendPerUser} />}
       />
-      <StackedChartPanel
-        ariaLabel={`Aggregate daily tokens by model across ${dayCount} days`}
-        days={charts.tokens.days}
-        legend={charts.tokens.legend}
-        mode={chartMode}
-        title="Daily Tokens"
-        valueFormatter={formatTokens}
+      <StatCard
+        label="Top model"
+        value={<AnimatedText className="inline-block" text={cards.topModel ?? "—"} />}
       />
-      <StackedChartPanel
-        ariaLabel={`Aggregate daily sessions by model across ${dayCount} days`}
-        days={charts.sessions.days}
-        legend={charts.sessions.legend}
-        mode={chartMode}
-        title="Daily Sessions"
-        valueFormatter={formatInteger}
+      <StatCard
+        label="Top agent"
+        value={<AnimatedText className="inline-block" text={cards.topAgent ?? "—"} />}
       />
-    </>
-  );
-}
-
-function ModelSection({ view }: { view: StatsWindowView }) {
-  return (
-    <section className="grid grid-cols-1 gap-px bg-border xl:grid-cols-2">
-      <RankPanel
-        entries={view.window.modelsByTokens}
-        metric="tokens"
-        title={`Popular models ${view.label}`}
+      <StatCard
+        label="Cache reads"
+        detail="of all tokens"
+        value={<AnimatedNumber kind="percent" value={cards.cacheReadPercent} />}
       />
-      <RankPanel
-        entries={view.window.modelsBySpend}
-        metric="spend"
-        title={`Top spend models ${view.label}`}
+      <StatCard
+        detail={busiest === null ? undefined : formatDay(busiest.date)}
+        label="Busiest day"
+        value={
+          busiest === null ? (
+            "—"
+          ) : (
+            <AnimatedNumber kind={metric === "spend" ? "usd" : "tokens"} value={busiest.value} />
+          )
+        }
       />
     </section>
   );
 }
 
-function SourceSection({ view }: { view: StatsWindowView }) {
-  return (
-    <section className="grid grid-cols-1 gap-px bg-border">
-      <RankPanel
-        entries={view.window.sources}
-        labelOf={agentLabel}
-        metric="tokens"
-        title={`Sources ${view.label}`}
-      />
-    </section>
-  );
-}
-
-function RankPanel({
-  entries,
-  labelOf = (key) => key,
+/**
+ * One breakdown (models or agents): its series stacked over time, then a
+ * table of exactly the charted series, which doubles as the legend.
+ */
+function SeriesPanel({
+  bucketDays,
+  itemLabel,
   metric,
+  section,
   title,
 }: {
-  entries: readonly StatsRankedMetric[];
-  labelOf?: (key: string) => string;
-  metric: "spend" | "tokens";
+  bucketDays: number;
+  itemLabel: string;
+  metric: StatsMetric;
+  section: SeriesSection;
   title: string;
 }) {
-  const valueOf = (entry: StatsRankedMetric) =>
-    metric === "spend" ? entry.spendUsd : entry.totalTokens;
-  const total = entries.reduce((sum, entry) => sum + valueOf(entry), 0);
+  const [mode, setMode] = useState<StackedBarsMode>("absolute");
+  const [highlight, setHighlight] = useState<string | null>(null);
+  const per = bucketDays === 1 ? "day" : `${bucketDays} days`;
+  const metricLabel = metric === "spend" ? "spend" : "tokens";
 
   return (
-    <div className="bg-background p-5">
-      <h2 className="font-medium">{title}</h2>
-      <div className="mt-4 divide-y divide-border border-y border-border">
-        {entries.slice(0, 6).map((entry, index) => {
-          const value = valueOf(entry);
-
-          return (
-            <div
-              className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 py-3"
-              key={entry.key}
-            >
-              <span className="text-sm text-muted-foreground">{index + 1}</span>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{labelOf(entry.key)}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {formatCount(entry.userCount, "user")} · {formatPercent(percentOf(value, total))}{" "}
-                  of shown
-                </p>
-              </div>
-              <span className="text-sm font-semibold">
-                {metric === "spend" ? formatUsd(value) : formatTokens(value)}
-              </span>
-            </div>
-          );
-        })}
+    <section className="bg-background p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-medium">{title}</h2>
+        <SegmentedControl
+          label={`${title} chart values`}
+          onChange={setMode}
+          options={CHART_MODE_OPTIONS}
+          value={mode}
+        />
       </div>
-    </div>
+      <div className="mt-4">
+        <StackedBars
+          ariaLabel={`${title} by ${metricLabel} per ${per} across ${section.chart.days.length} bars`}
+          days={section.chart.days}
+          highlight={highlight}
+          mode={mode}
+          valueFormatter={metric === "spend" ? formatUsd : formatTokens}
+        />
+      </div>
+      <SeriesTable
+        itemLabel={itemLabel}
+        metric={metric}
+        onHover={setHighlight}
+        rows={section.rows}
+      />
+    </section>
+  );
+}
+
+function SeriesTable({
+  itemLabel,
+  metric,
+  onHover,
+  rows,
+}: {
+  itemLabel: string;
+  metric: StatsMetric;
+  onHover: (series: string | null) => void;
+  rows: SeriesSection["rows"];
+}) {
+  // Number columns shrink to their content, so names keep the remaining width.
+  const numeric = "w-px whitespace-nowrap px-2 py-2 text-right tabular-nums";
+  const secondary = "hidden sm:table-cell";
+
+  return (
+    <table className="mt-6 w-full text-sm" onPointerLeave={() => onHover(null)}>
+      <thead className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        <tr className="border-b border-border">
+          <th className="w-px py-2 pr-2 text-left font-medium">#</th>
+          <th className="px-2 py-2 text-left font-medium">{itemLabel}</th>
+          <th className={cn(numeric, secondary, "font-medium")}>Users</th>
+          <th className={cn(numeric, metric === "tokens" ? "" : secondary, "font-medium")}>
+            Tokens
+          </th>
+          <th className={cn(numeric, metric === "spend" ? "" : secondary, "font-medium")}>Spend</th>
+          <th className={cn(numeric, "pr-0 font-medium")}>Share</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, index) => (
+          <tr
+            className="border-b border-border last:border-b-0 hover:bg-muted"
+            key={row.key}
+            onPointerEnter={() => onHover(row.key)}
+          >
+            <td className="py-2 pr-2 tabular-nums text-muted-foreground">{index + 1}</td>
+            <td className="max-w-0 px-2 py-2">
+              <span className="flex min-w-0 items-center gap-2">
+                <span
+                  className="size-2.5 shrink-0 rounded-full"
+                  style={{ background: row.color }}
+                />
+                <span className="truncate">{row.label}</span>
+              </span>
+            </td>
+            <td className={cn(numeric, secondary, "text-muted-foreground")}>
+              {row.userCount === null ? "—" : formatInteger(row.userCount)}
+            </td>
+            <td className={cn(numeric, metric === "tokens" ? "" : secondary)}>
+              {formatTokens(row.totalTokens)}
+            </td>
+            <td className={cn(numeric, metric === "spend" ? "" : secondary)}>
+              {formatUsd(row.spendUsd)}
+            </td>
+            <td className={cn(numeric, "pr-0 text-muted-foreground")}>
+              {formatPercent(row.percent)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ActiveUsersPanel({ bucketDays, view }: { bucketDays: number; view: StatsView }) {
+  const per = bucketDays === 1 ? "day" : `${bucketDays} days`;
+
+  return (
+    <section className="bg-background p-5">
+      <h2 className="font-medium">Daily active users</h2>
+      <div className="mt-4">
+        <StackedBars
+          ariaLabel={`Average daily active users per ${per} across ${view.activeUsers.length} bars`}
+          days={view.activeUsers}
+          totalLabel={(total) => `${formatInteger(total)} users a day`}
+          valueFormatter={formatInteger}
+        />
+      </div>
+    </section>
   );
 }
 

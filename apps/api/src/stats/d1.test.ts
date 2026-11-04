@@ -5,7 +5,8 @@ import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
 import { buildService } from "../testing/effect";
 import { seedUsage, seedUser } from "../testing/seed";
 import { StatsRepositoryLive } from "./d1";
-import { StatsRepository } from "./service";
+import { statsRangeStartsFrom } from "../testing/stats";
+import { StatsRepository, type StatsRangeStarts } from "./service";
 
 describe("D1 stats snapshot", () => {
   let database: TestDatabase;
@@ -25,79 +26,74 @@ describe("D1 stats snapshot", () => {
     model: string,
     costUsd: number,
     totalTokens: number,
+    source = "codex",
   ) {
     seedUsage(database.sqlite, {
       costUsd,
       date,
       deviceId: `${userId}-device`,
       model,
+      source,
       totalTokens,
       userId,
     });
   }
 
-  async function snapshot(limit: number) {
+  async function snapshot(ranges: StatsRangeStarts, until = "2026-12-31") {
     const stats = await buildService(
       StatsRepository,
       StatsRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
     );
 
-    return Effect.runPromise(
-      stats.snapshot({
-        limit,
-        until: "2026-12-31",
-        windows: { last30d: "2026-07-01", ytd: "2026-01-01" },
-      }),
-    );
+    return Effect.runPromise(stats.snapshot({ limit: 10, ranges, until }));
   }
 
-  it("splits last-30-day and year-to-date windows", async () => {
+  it("aggregates each range exactly and shares one daily series", async () => {
     usage("alpha", "2025-12-31", "legacy", 100, 1_000);
     usage("alpha", "2026-06-30", "gpt-5", 10, 100);
-    usage("bravo", "2026-07-01", "opus", 1, 10);
+    usage("bravo", "2026-07-01", "opus", 1, 10, "claude");
+    usage("charlie", "2026-07-01", "opus", 2, 20, "claude");
 
-    const result = await snapshot(10);
+    const result = await snapshot(statsRangeStartsFrom("2026-07-01", "2026-01-01"));
 
-    const { last30d, ytd } = result.windows;
-    expect([ytd.totals.spendUsd, last30d.totals.spendUsd]).toEqual([11, 1]);
-    expect([last30d.since, ytd.since]).toEqual(["2026-07-01", "2026-01-01"]);
+    const { "1m": month, ytd } = result.ranges;
+    expect([ytd.totals.spendUsd, month.totals.spendUsd]).toEqual([13, 3]);
+    expect([month.since, ytd.since]).toEqual(["2026-07-01", "2026-01-01"]);
     expect(ytd.totals).toMatchObject({
       firstDate: "2026-06-30",
       lastDate: "2026-07-01",
-      userCount: 2,
+      userCount: 3,
     });
     expect(ytd.modelsBySpend.map((row) => row.key)).toEqual(["gpt-5", "opus"]);
-    expect(last30d.modelsBySpend.map((row) => row.key)).toEqual(["opus"]);
-    // Each window pairs its own sources, token ranking and chart rows with its totals.
-    expect(last30d.modelsByTokens.map((row) => row.key)).toEqual(["opus"]);
-    expect(last30d.sources.map((row) => row.totalTokens)).toEqual([10]);
-    expect(ytd.dailyByModel).toEqual([
-      { date: "2026-06-30", key: "gpt-5", rowCount: 1, spendUsd: 10, totalTokens: 100 },
-      { date: "2026-07-01", key: "opus", rowCount: 1, spendUsd: 1, totalTokens: 10 },
+    expect(month.modelsBySpend.map((row) => [row.key, row.userCount])).toEqual([["opus", 2]]);
+    expect(month.modelsByTokens.map((row) => row.key)).toEqual(["opus"]);
+    expect(month.sources.map((row) => [row.key, row.totalTokens])).toEqual([["claude", 30]]);
+    expect(ytd.sources.map((row) => row.key)).toEqual(["codex", "claude"]);
+
+    // One series for every range, from the earliest range start.
+    expect(result.daily).toEqual([
+      { date: "2026-06-30", spendUsd: 10, totalTokens: 100, userCount: 1 },
+      { date: "2026-07-01", spendUsd: 3, totalTokens: 30, userCount: 2 },
     ]);
-    expect(last30d.dailyByModel.map((row) => row.key)).toEqual(["opus"]);
+    expect(result.dailyByModel).toEqual([
+      { date: "2026-06-30", key: "gpt-5", spendUsd: 10, totalTokens: 100 },
+      { date: "2026-07-01", key: "opus", spendUsd: 3, totalTokens: 30 },
+    ]);
+    expect(result.dailyBySource.map((row) => [row.date, row.key])).toEqual([
+      ["2026-06-30", "codex"],
+      ["2026-07-01", "claude"],
+    ]);
+    expect(result.until).toBe("2026-12-31");
   });
 
-  it("charts a 30-day window that starts before year-to-date", async () => {
+  it("starts the daily series at a trailing range that reaches back before Jan 1", async () => {
     usage("alpha", "2025-12-20", "gpt-5", 3, 30);
     usage("alpha", "2026-01-02", "gpt-5", 4, 40);
 
-    const stats = await buildService(
-      StatsRepository,
-      StatsRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
-    );
-    const result = await Effect.runPromise(
-      stats.snapshot({
-        limit: 10,
-        until: "2026-01-06",
-        windows: { last30d: "2025-12-08", ytd: "2026-01-01" },
-      }),
-    );
+    const result = await snapshot(statsRangeStartsFrom("2025-12-08", "2026-01-01"), "2026-01-06");
 
-    expect(result.windows.last30d.dailyByModel.map((row) => row.date)).toEqual([
-      "2025-12-20",
-      "2026-01-02",
-    ]);
-    expect(result.windows.ytd.dailyByModel.map((row) => row.date)).toEqual(["2026-01-02"]);
+    expect(result.daily.map((row) => row.date)).toEqual(["2025-12-20", "2026-01-02"]);
+    expect(result.ranges["1m"].totals.spendUsd).toBe(7);
+    expect(result.ranges.ytd.totals.spendUsd).toBe(4);
   });
 });
