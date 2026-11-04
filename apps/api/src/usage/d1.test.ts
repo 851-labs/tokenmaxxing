@@ -15,6 +15,7 @@ import { makeTestLogger } from "../testing/logger";
 import { seedDevice, seedUsage, seedUser } from "../testing/seed";
 import { UsageRepositoryLive } from "./d1";
 import { makeUsageService, type StoredRawUsageReport, UsageRepository } from "./service";
+import { PARSER_VERSION } from "./ccusage";
 
 describe("D1 usage repository", () => {
   let database: TestDatabase;
@@ -306,7 +307,7 @@ describe("D1 usage repository", () => {
       user: { avatarUrl: null, id: UserId.make("user"), login: "alex", name: null },
     };
     const device = { name: "Mac.localdomain", platform: "darwin" };
-    const tag = "ccusage-v20-raw-6";
+    const tag = PARSER_VERSION;
 
     function codexReport(date: string, models: ReadonlyArray<[string, number, number]>) {
       return {

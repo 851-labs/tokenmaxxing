@@ -8,11 +8,25 @@ import { stripModelPath, type UsageDayInput } from "@tokenmaxxing/api-contract";
 const CCUSAGE_MODEL_LABELS = new Map<string, readonly string[]>([["omp", ["omp", "pi"]]]);
 
 /**
- * Strips the agent's own `[source]` label, then any local filesystem path: the
- * label first, since a path behind it does not start like one.
+ * Strips the agent's own `[source]` label, then any local filesystem path (the
+ * label first, since a path behind it does not start like one), then spells
+ * Claude versions one way.
  */
 function normalizeCcusageModelName(source: string, model: string): string {
-  return stripModelPath(stripSourcePrefix(source, model));
+  return canonicalClaudeModel(stripModelPath(stripSourcePrefix(source, model)));
+}
+
+/**
+ * Claude versions are spelled with dashes in Anthropic's API ids
+ * (`claude-opus-5-5`), which Claude Code logs; agents that name models from
+ * provider catalogs (OpenCode, Oh My Pi, Hermes, custom providers) log dots
+ * (`claude-opus-5.5`). Both are one model, so dots become dashes. Only
+ * unprefixed `claude-…` names: a provider-qualified id (`anthropic/…`) is
+ * left as logged. The `20261104220909_claude_model_dashes` migration
+ * rewrote stored rows by the same rule.
+ */
+function canonicalClaudeModel(model: string): string {
+  return /^claude-/i.test(model) ? model.replaceAll(".", "-") : model;
 }
 
 function stripSourcePrefix(source: string, model: string): string {
