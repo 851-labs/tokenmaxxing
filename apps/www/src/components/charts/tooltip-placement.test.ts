@@ -32,6 +32,25 @@ describe("tooltipBounds", () => {
     });
   });
 
+  it("starts below sticky chrome covering the top of the viewport", () => {
+    expect(tooltipBounds(FRAME, { ...PHONE, coveredTop: 105 }).top).toBe(113);
+    expect(tooltipBounds(FRAME, { ...PHONE, coveredTop: -40 }).top).toBe(8);
+  });
+
+  it("flips a card below an anchor whose room above is under sticky chrome", () => {
+    const bounds = tooltipBounds(FRAME, { ...PHONE, coveredTop: 105 });
+    const spot = placeTooltip({
+      anchor: box(100, 200, 20, 20),
+      bounds,
+      card: CARD,
+      offset: 12,
+      placement: "above",
+    });
+
+    expect(spot.side).toBe("below");
+    expect(spot.top).toBe(232);
+  });
+
   it("collapses to an empty range rather than inverting when the frame is off screen", () => {
     const bounds = tooltipBounds(box(500, 0, 100, 100), PHONE);
     expect(bounds.right).toBe(bounds.left);

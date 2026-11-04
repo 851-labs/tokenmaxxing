@@ -35,12 +35,21 @@ interface TooltipPosition {
 const TOOLTIP_GUTTER = 8;
 
 /**
- * The box the card must stay inside: horizontally the chart frame ∩ the
- * viewport, so it never adds horizontal page scroll; vertically just the
- * viewport, since cards may float over the chart's title. Inset by `gutter`
- * against the viewport edges.
+ * The visible viewport: its size, plus how far pinned page chrome (the sticky
+ * site header and filter bar) covers its top edge.
  */
-function tooltipBounds(frame: Rect, viewport: Size, gutter: number = TOOLTIP_GUTTER): Rect {
+interface Viewport extends Size {
+  /** Bottom edge (px) of the sticky chrome covering the top, 0 when none. */
+  coveredTop?: number;
+}
+
+/**
+ * The box the card must stay inside: horizontally the chart frame ∩ the
+ * viewport, so it never adds horizontal page scroll; vertically the viewport
+ * below any sticky chrome, since cards may float over the chart's title but
+ * not under the headers. Inset by `gutter` against those edges.
+ */
+function tooltipBounds(frame: Rect, viewport: Viewport, gutter: number = TOOLTIP_GUTTER): Rect {
   const left = Math.max(frame.left, gutter);
   const right = Math.min(frame.right, viewport.width - gutter);
 
@@ -48,7 +57,7 @@ function tooltipBounds(frame: Rect, viewport: Size, gutter: number = TOOLTIP_GUT
     bottom: viewport.height - gutter,
     left,
     right: Math.max(right, left),
-    top: gutter,
+    top: Math.max(viewport.coveredTop ?? 0, 0) + gutter,
   };
 }
 
@@ -105,4 +114,4 @@ function placeTooltip({
 
 export { placeTooltip, TOOLTIP_GUTTER, tooltipBounds };
 
-export type { Rect, Size, TooltipPlacement, TooltipPosition, TooltipSide };
+export type { Rect, Size, TooltipPlacement, TooltipPosition, TooltipSide, Viewport };

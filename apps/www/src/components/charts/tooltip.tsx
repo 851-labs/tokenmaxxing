@@ -22,6 +22,30 @@ type TooltipAnchor =
 /** Widest the card grows for long labels before they truncate. */
 const MAX_CARD_WIDTH = "20rem";
 
+/**
+ * Marks sticky page chrome (the site header, a page's filter bar). It paints
+ * over the charts, so cards must never be placed underneath it.
+ */
+const STICKY_CHROME_ATTRIBUTE = "data-sticky-chrome";
+
+/**
+ * How far sticky chrome covers the top of the viewport for a chart whose
+ * frame ends at `frameBottom`: the lowest bottom edge among chrome starting
+ * above that (a chart scrolled partly under a pinned bar still counts it).
+ * Chrome that has scrolled away (bottom ≤ 0) covers nothing.
+ */
+function coveredViewportTop(frameBottom: number): number {
+  let covered = 0;
+  for (const chrome of document.querySelectorAll(`[${STICKY_CHROME_ATTRIBUTE}]`)) {
+    const box = chrome.getBoundingClientRect();
+    if (box.top < frameBottom && box.bottom > covered) {
+      covered = box.bottom;
+    }
+  }
+
+  return covered;
+}
+
 function ChartTooltip({
   anchor,
   offset = 12,
@@ -58,7 +82,9 @@ function ChartTooltip({
       if (target === null || target === undefined) {
         return;
       }
-      const bounds = tooltipBounds(frame.getBoundingClientRect(), {
+      const frameBox = frame.getBoundingClientRect();
+      const bounds = tooltipBounds(frameBox, {
+        coveredTop: coveredViewportTop(frameBox.bottom),
         height: window.innerHeight,
         width: document.documentElement.clientWidth,
       });
@@ -146,6 +172,6 @@ function ChartLiveRegion({ children }: { children: ReactNode }) {
   );
 }
 
-export { ChartLiveRegion, ChartTooltip };
+export { ChartLiveRegion, ChartTooltip, STICKY_CHROME_ATTRIBUTE };
 
 export type { TooltipAnchor };
