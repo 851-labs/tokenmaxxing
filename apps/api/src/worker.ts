@@ -2,6 +2,7 @@ import { RuntimeContext } from "alchemy";
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { Context, Effect, Layer, Scope } from "effect";
 
+import { AfterResponse } from "./after-response";
 import { CleanupService } from "./cleanup/service";
 import { Bucket } from "./cloudflare/bucket";
 import { Database } from "./cloudflare/database";
@@ -75,7 +76,18 @@ const ApiWorker = Cloudflare.Worker(
     // Built once per isolate. `fetch` must be the HttpEffect itself: an
     // Effect-valued `fetch` is re-run by alchemy on every request, which
     // would rebuild every handler, middleware, CORS and the OpenAPI spec.
-    const fetch = yield* makeApiFetch(Layer.succeedContext(services));
+    const router = yield* makeApiFetch(Layer.succeedContext(services));
+
+    // Out here, ahead of the router, `WorkerExecutionContext` is the request's
+    // own; inside handlers the router's build-time context shadows it. So the
+    // request's `waitUntil` reaches handlers as `AfterResponse` (see there).
+    const fetch = Effect.flatMap(Cloudflare.Workers.WorkerExecutionContext, (execution) =>
+      router.pipe(
+        Effect.provideService(AfterResponse, {
+          run: (effect) => execution.waitUntil(effect).pipe(Effect.provide(RuntimeContext.phantom)),
+        }),
+      ),
+    );
 
     return { fetch };
   }).pipe(
