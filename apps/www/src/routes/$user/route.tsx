@@ -305,7 +305,10 @@ function ProfileFilterBar({
   const window = timeframeRange(range, timeframe);
 
   return (
-    <div className="sticky top-14 z-40 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-y border-border bg-background/80 px-4 py-2 backdrop-blur">
+    <div
+      className="sticky top-14 z-40 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-y border-border bg-background/80 px-4 py-2 backdrop-blur"
+      data-sticky-chrome=""
+    >
       <p className="text-sm tabular-nums text-muted-foreground">
         {formatDayRange(window.firstDate, window.lastDate)}
       </p>
