@@ -46,16 +46,19 @@ GROUP BY
 	`usage_days`.`date`,
 	`usage_days`.`source`,
 	`affected`.`canonical_model`;--> statement-breakpoint
+-- Driven from the few merged keys through the primary key's index: a
+-- correlated EXISTS over every Claude row exceeds D1's CPU limit.
 DELETE FROM `usage_days`
-WHERE `model` LIKE 'claude-%'
-	AND EXISTS (
-		SELECT 1
-		FROM `_claude_model_dashes`
-		WHERE `_claude_model_dashes`.`device_id` = `usage_days`.`device_id`
-			AND `_claude_model_dashes`.`date` = `usage_days`.`date`
-			AND `_claude_model_dashes`.`source` = `usage_days`.`source`
-			AND `_claude_model_dashes`.`model` = replace(`usage_days`.`model`, '.', '-')
-	);--> statement-breakpoint
+WHERE `rowid` IN (
+	SELECT `usage_days`.`rowid`
+	FROM `_claude_model_dashes`
+	INNER JOIN `usage_days`
+		ON `usage_days`.`device_id` = `_claude_model_dashes`.`device_id`
+		AND `usage_days`.`date` = `_claude_model_dashes`.`date`
+		AND `usage_days`.`source` = `_claude_model_dashes`.`source`
+	WHERE `usage_days`.`model` LIKE 'claude-%'
+		AND replace(`usage_days`.`model`, '.', '-') = `_claude_model_dashes`.`model`
+);--> statement-breakpoint
 INSERT INTO `usage_days` (
 	`device_id`,
 	`user_id`,
