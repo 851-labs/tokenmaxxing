@@ -14,7 +14,7 @@ import { loadProfile } from "./$user/route";
  * build (no SSR cookie to forward).
  */
 
-type Respond = (path: string) => Response | Promise<Response>;
+type Respond = (path: string, search: string) => Response | Promise<Response>;
 
 const profileBody = {
   stats: {
@@ -43,7 +43,7 @@ let respond: Respond;
 beforeAll(() => {
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    return respond(decodeURIComponent(url.pathname));
+    return respond(decodeURIComponent(url.pathname), url.search);
   });
 });
 
@@ -78,6 +78,26 @@ describe("profile loader", () => {
 
     expect(data.profile.user.login).toBe("martinxjonsson");
     expect(queryClient.getQueryData(queryKeys.profileDaily("martinxjonsson"))).toEqual(dailyBody);
+  });
+
+  it("requests the agent-scoped daily rows and keys the cache by source", async () => {
+    const requested: string[] = [];
+    respond = (path, search) => {
+      if (path.endsWith("/daily")) {
+        requested.push(search);
+      }
+      return path.endsWith("/daily") ? json(dailyBody) : json(profileBody);
+    };
+    const queryClient = new QueryClient();
+
+    const data = await loadProfile(queryClient, "martinxjonsson", "opencode");
+
+    expect(data.profile.user.login).toBe("martinxjonsson");
+    expect(requested).toEqual(["?groupBy=model&source=opencode"]);
+    expect(queryClient.getQueryData(queryKeys.profileDaily("martinxjonsson", "opencode"))).toEqual(
+      dailyBody,
+    );
+    expect(queryClient.getQueryData(queryKeys.profileDaily("martinxjonsson"))).toBeUndefined();
   });
 
   it("maps a tagged UserNotFound to not-found and drops the settled daily read", async () => {

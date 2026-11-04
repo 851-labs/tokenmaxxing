@@ -140,6 +140,14 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
     daily: (userId, query) =>
       Effect.gen(function* () {
         const key = query.groupBy === "source" ? usageDays.source : usageDays.model;
+        const conditions = [
+          eq(usageDays.userId, userId),
+          gte(usageDays.date, query.since),
+          lte(usageDays.date, query.until),
+        ];
+        if (query.source !== undefined) {
+          conditions.push(eq(usageDays.source, query.source));
+        }
 
         const rows = yield* database.use((db) =>
           db
@@ -151,13 +159,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
               totalTokens: usageAggregates.totalTokens(),
             })
             .from(usageDays)
-            .where(
-              and(
-                eq(usageDays.userId, userId),
-                gte(usageDays.date, query.since),
-                lte(usageDays.date, query.until),
-              ),
-            )
+            .where(and(...conditions))
             .groupBy(usageDays.date, sql`group_key`)
             .orderBy(asc(usageDays.date), asc(sql`group_key`)),
         );

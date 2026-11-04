@@ -131,7 +131,11 @@ const profileStats = {
 async function makeProfileService(
   shadowBanned: boolean,
   onLeaderboardRank?: (input: { since: string | null; userId: string }) => void,
-  onDaily?: (query: { since?: string | undefined; until?: string | undefined }) => void,
+  onDaily?: (query: {
+    source?: string | undefined;
+    since?: string | undefined;
+    until?: string | undefined;
+  }) => void,
 ) {
   return Effect.runPromise(
     makeProfilesService().pipe(
@@ -327,6 +331,26 @@ describe("ProfilesService.getDaily", () => {
 
     expect(response.range).toEqual({ firstDate: "2026-06-20", lastDate: "2026-06-22" });
     expect(queries).toEqual([{ groupBy: "model", since: "2026-06-20", until: "2026-06-22" }]);
+  });
+
+  it("passes the source filter through to the repository query", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-21T23:30:00Z"));
+    const queries: Array<{ source?: string | undefined }> = [];
+
+    try {
+      const service = await makeProfileService(false, undefined, (query) => queries.push(query));
+      const response = await Effect.runPromise(
+        service.getDaily("target", { groupBy: "model", source: "opencode" }, null),
+      );
+
+      expect(response.days).toHaveLength(1);
+      expect(queries).toEqual([
+        { groupBy: "model", source: "opencode", since: "2026-01-01", until: "2026-06-22" },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("fails an inverted range without querying", async () => {

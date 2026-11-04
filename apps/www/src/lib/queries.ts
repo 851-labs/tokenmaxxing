@@ -1,5 +1,5 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
-import type { LeaderboardMetric, LeaderboardWindow } from "@tokenmaxxing/api-contract";
+import type { LeaderboardMetric, LeaderboardWindow, UsageSource } from "@tokenmaxxing/api-contract";
 
 import { fetchViewer, runApi } from "./api";
 
@@ -20,7 +20,11 @@ const queryKeys = {
   me: ["me"],
   /** Prefix of both the profile summary and its daily rows. */
   profile: (login: string) => ["profile", login] as const,
-  profileDaily: (login: string) => ["profile", login, "daily"] as const,
+  /** The profile's daily rows; `source` scopes them to one agent. */
+  profileDaily: (login: string, source?: UsageSource) =>
+    source === undefined
+      ? (["profile", login, "daily"] as const)
+      : (["profile", login, "daily", source] as const),
   stats: ["stats"],
   tokens: ["me", "tokens"],
 } as const;
@@ -91,11 +95,16 @@ function cliLoginRequestQueryOptions(code: string) {
   });
 }
 
-function profileDailyQueryOptions(login: string) {
+function profileDailyQueryOptions(login: string, source?: UsageSource) {
   return queryOptions({
-    queryKey: queryKeys.profileDaily(login),
+    queryKey: queryKeys.profileDaily(login, source),
     queryFn: () =>
-      runApi((client) => client.profiles.daily({ params: { login }, query: { groupBy: "model" } })),
+      runApi((client) =>
+        client.profiles.daily({
+          params: { login },
+          query: { groupBy: "model", ...(source === undefined ? {} : { source }) },
+        }),
+      ),
     staleTime: 30_000,
   });
 }
