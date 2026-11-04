@@ -14,7 +14,10 @@ interface ChartSegment {
 }
 
 interface StackedDay {
+  /** The bar's first day. */
   date: string;
+  /** Last day of a multi-day bar; absent (or equal to `date`) for a single day. */
+  endDate?: string;
   /** Series pre-sorted by overall rank. */
   segments: ChartSegment[];
   total: number;

@@ -5,6 +5,7 @@ import {
   formatCount,
   formatDateTimeUtc,
   formatDay,
+  formatDayRange,
   formatInteger,
   formatMonth,
   formatMonthLong,
@@ -100,6 +101,14 @@ describe("date formatters", () => {
     expect(formatMonth("2026-07")).toBe("Jul");
     expect(formatMonth("2026-07-01")).toBe("Jul");
     expect(formatMonthLong("2026-06")).toBe("June 2026");
+  });
+
+  it("collapses shared parts of a day span and reads one day as formatDay", () => {
+    // ICU sets the range dash between thin spaces.
+    expect(formatDayRange("2026-10-20", "2026-10-22")).toBe("Oct 20\u2009–\u200922, 2026");
+    expect(formatDayRange("2026-10-30", "2026-11-01")).toBe("Oct 30\u2009–\u2009Nov 1, 2026");
+    expect(formatDayRange("2025-12-30", "2026-01-01")).toBe("Dec 30, 2025\u2009–\u2009Jan 1, 2026");
+    expect(formatDayRange("2026-06-21", "2026-06-21")).toBe(formatDay("2026-06-21"));
   });
 
   it("prints timestamps deterministically in UTC", () => {

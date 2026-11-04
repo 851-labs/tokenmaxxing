@@ -34,6 +34,17 @@ function barLayout(count: number, fill: number, cap: number, floor = 0): BarLayo
   return { barWidth, slot };
 }
 
+/**
+ * Bars that fill their slot but for a `gap` between neighbors, so the plot
+ * reads as one continuous series. The gap gives way to at most a quarter of
+ * the slot, which keeps hundreds of bars from vanishing into gaps.
+ */
+function filledBarLayout(count: number, gap: number): BarLayout {
+  const slot = CHART_WIDTH / Math.max(count, 1);
+
+  return { barWidth: slot - Math.min(gap, slot / 4), slot };
+}
+
 /** Left edge of column `index` — where its full-height hover target starts. */
 function slotX(layout: BarLayout, index: number): number {
   return layout.slot * index;
@@ -92,6 +103,7 @@ export {
   CHART_TICKS,
   CHART_WIDTH,
   columnAt,
+  filledBarLayout,
   linearScale,
   maxValue,
   niceMax,
