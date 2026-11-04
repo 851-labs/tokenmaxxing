@@ -9,6 +9,7 @@ import { ProfilesRepositoryLive } from "../profiles/d1";
 import { ProfilesRepository } from "../profiles/service";
 import { StatsRepositoryLive } from "../stats/d1";
 import { StatsRepository } from "../stats/service";
+import { statsRangeStartsFrom } from "../testing/stats";
 import { buildService } from "../testing/effect";
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
 import { seedUser } from "../testing/seed";
@@ -85,12 +86,13 @@ describe("usage aggregates over int64-overflowing rows", () => {
       repository.snapshot({
         limit: 10,
         until,
-        windows: { last30d: "2026-07-01", ytd: "2026-01-01" },
+        ranges: statsRangeStartsFrom("2026-07-01", "2026-01-01"),
       }),
     );
 
-    expect(snapshot.windows.ytd.totals.totalTokens).toBe(1.2e19);
-    expect(snapshot.windows.ytd.totals.cacheReadTokens).toBe(1.2e19);
+    expect(snapshot.ranges.ytd.totals.totalTokens).toBe(1.2e19);
+    expect(snapshot.ranges.ytd.totals.cacheReadTokens).toBe(1.2e19);
+    expect(snapshot.daily.map((day) => day.totalTokens)).toEqual([4e18, 4e18, 4e18]);
   });
 
   it("reads profile stats, rank and daily rows", async () => {

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery, type QueryClient } from "@tanstack/react-query";
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
-import type { ProfileResponse } from "@tokenmaxxing/api-contract";
+import type { ProfileResponse, UsageRangeId } from "@tokenmaxxing/api-contract";
 
 import { AnimatedNumber, AnimatedText } from "../../components/animated-value";
 import { Heatmap } from "../../components/charts/heatmap";
@@ -14,7 +14,8 @@ import { Avatar } from "../../components/ui/avatar";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { Code } from "../../components/ui/code";
-import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
+import { FilterBar } from "../../components/filter-bar";
+import { SegmentedControl } from "../../components/ui/segmented-control";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import { isNotFoundApiError } from "../../lib/api";
 import { formatDayRange, formatInteger, formatTokens, formatUsd } from "../../lib/format";
@@ -28,28 +29,17 @@ import {
   profileUrl,
 } from "../../lib/og";
 import {
-  DEFAULT_PROFILE_TIMEFRAME,
   deriveProfileCharts,
   deriveProfileTrendCharts,
   deriveWindowStats,
-  timeframeRange,
   type DailyRange,
   type DailyRow,
-  type ProfileTimeframe,
 } from "./-lib/profile-charts";
 import { profileDailyQueryOptions, profileQueryOptions, queryKeys } from "../../lib/queries";
 import { pageHead } from "../../lib/seo";
+import { DEFAULT_USAGE_RANGE, USAGE_RANGE_OPTIONS, usageRangeWindow } from "../../lib/usage-ranges";
 
 type ProfileStats = (typeof ProfileResponse.Type)["stats"];
-
-const TIMEFRAME_OPTIONS = [
-  { label: "2W", value: "2w" },
-  { label: "1M", value: "1m" },
-  { label: "2M", value: "2m" },
-  { label: "3M", value: "3m" },
-  { label: "6M", value: "6m" },
-  { label: "YTD", value: "ytd" },
-] as const satisfies readonly SegmentedOption<ProfileTimeframe>[];
 
 const Route = createFileRoute("/$user")({
   loader: ({ context, params }) => loadProfile(context.queryClient, params.user),
@@ -182,7 +172,7 @@ function ProfileDashboard({
   stats: ProfileStats;
 }) {
   const charts = useMemo(() => deriveProfileCharts(rows, range), [range, rows]);
-  const [timeframe, setTimeframe] = useState<ProfileTimeframe>(DEFAULT_PROFILE_TIMEFRAME);
+  const [timeframe, setTimeframe] = useState<UsageRangeId>(DEFAULT_USAGE_RANGE);
 
   return (
     <>
@@ -256,10 +246,10 @@ function ProfileStatCards({
   range: DailyRange;
   rows: readonly DailyRow[];
   stats: ProfileStats;
-  timeframe: ProfileTimeframe;
+  timeframe: UsageRangeId;
 }) {
   const windowStats = useMemo(
-    () => deriveWindowStats(rows, timeframeRange(range, timeframe)),
+    () => deriveWindowStats(rows, usageRangeWindow(range, timeframe)),
     [range, rows, timeframe],
   );
 
@@ -289,36 +279,27 @@ function ProfileStatCards({
   );
 }
 
-/**
- * The dashboard's filters, pinned under the site header (`h-14`) while the
- * sections they filter scroll by. The span on the left names the days covered.
- */
+/** The dashboard's time range, over the stat cards and trend charts it filters. */
 function ProfileFilterBar({
   onTimeframeChange,
   range,
   timeframe,
 }: {
-  onTimeframeChange: (timeframe: ProfileTimeframe) => void;
+  onTimeframeChange: (timeframe: UsageRangeId) => void;
   range: DailyRange;
-  timeframe: ProfileTimeframe;
+  timeframe: UsageRangeId;
 }) {
-  const window = timeframeRange(range, timeframe);
+  const window = usageRangeWindow(range, timeframe);
 
   return (
-    <div
-      className="sticky top-14 z-40 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-y border-border bg-background/80 px-4 py-2 backdrop-blur"
-      data-sticky-chrome=""
-    >
-      <p className="text-sm tabular-nums text-muted-foreground">
-        {formatDayRange(window.firstDate, window.lastDate)}
-      </p>
+    <FilterBar span={formatDayRange(window.firstDate, window.lastDate)}>
       <SegmentedControl
         label="Time range"
         onChange={onTimeframeChange}
-        options={TIMEFRAME_OPTIONS}
+        options={USAGE_RANGE_OPTIONS}
         value={timeframe}
       />
-    </div>
+    </FilterBar>
   );
 }
 
@@ -330,7 +311,7 @@ function ProfileTrends({
 }: {
   range: DailyRange;
   rows: readonly DailyRow[];
-  timeframe: ProfileTimeframe;
+  timeframe: UsageRangeId;
 }) {
   const trends = useMemo(
     () => deriveProfileTrendCharts(rows, range, timeframe),

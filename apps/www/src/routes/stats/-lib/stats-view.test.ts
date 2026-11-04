@@ -1,153 +1,192 @@
 import { describe, expect, it } from "vite-plus/test";
 import type {
-  StatsChartPoint,
+  StatsDailyPoint,
+  StatsRange,
+  StatsRankedMetric,
   StatsResponse,
+  StatsSeriesPoint,
   StatsTotals,
-  StatsWindow,
+  UsageRangeId,
 } from "@tokenmaxxing/api-contract";
 
-import { modelColor } from "../../../components/charts/model-colors";
-import {
-  deriveAggregateCharts,
-  formatUsageRange,
-  latestPlausibleDate,
-  selectStatsWindow,
-  ytdLabel,
-} from "./stats-view";
+import { deriveStatsView } from "./stats-view";
 
-describe("selectStatsWindow", () => {
-  it("bounds dates by the server clock, not the viewer's", () => {
-    expect(latestPlausibleDate("2026-06-22T18:30:00.000Z")).toBe("2026-06-23");
-    expect(latestPlausibleDate("2026-12-31T23:59:59.000Z")).toBe("2027-01-01");
-  });
+describe("deriveStatsView", () => {
+  it("charts the range from its start through the server's UTC today", () => {
+    // Generated on Jun 22 UTC: a device east of UTC can already date usage
+    // the 23rd, and year-3089 rows (seen in production) are corrupt. Neither
+    // gets a bar; both still count in the server's totals.
+    const view = deriveStatsView(
+      stats({
+        daily: [day("2026-06-20", 1), day("2026-06-22", 2), day("2026-06-23", 4)],
+        models: [cell("2026-06-20", "opus", 1), cell("2026-06-23", "opus", 4)],
+        since: { "2w": "2026-06-20" },
+      }),
+      "2w",
+      "tokens",
+    );
 
-  it("keeps a user's local tomorrow but drops corrupt far-future rows", () => {
-    // generatedAt is 2026-06-22 UTC: a user east of UTC can already be on the
-    // 23rd, while year-3089 rows (seen in production) are corrupt.
-    const data = stats({
-      rows: [row("2026-06-20", 1), row("2026-06-23", 2), row("3089-08-23", 4)],
-      totals: { firstDate: "2026-06-20", lastDate: "3089-08-23" },
-    });
-
-    const view = selectStatsWindow(data, "30d");
-    const charts = deriveAggregateCharts(view);
-
-    expect(view.dailyByModel.map((entry) => entry.date)).toEqual(["2026-06-20", "2026-06-23"]);
-    expect(view.chartRange).toEqual({ first: "2026-06-20", last: "2026-06-23" });
-    expect(charts.spend.days.map((day) => [day.date, day.total])).toEqual([
+    expect(view.window).toEqual({ firstDate: "2026-06-20", lastDate: "2026-06-22" });
+    expect(view.models.chart.days.map((bar) => [bar.date, bar.total])).toEqual([
       ["2026-06-20", 1],
       ["2026-06-21", 0],
       ["2026-06-22", 0],
-      ["2026-06-23", 2],
     ]);
   });
 
-  it("starts the chart at the window start even if totals reach further back", () => {
-    const data = stats({
-      rows: [row("1970-01-01", 9), row("2026-06-01", 1)],
-      totals: { firstDate: "1970-01-01", lastDate: "2026-06-01" },
-    });
-
-    expect(selectStatsWindow(data, "30d").chartRange).toEqual({
-      first: "2026-05-24",
-      last: "2026-06-01",
-    });
-  });
-
-  it("filters each window by its own start date", () => {
-    const data = stats({
-      rows: [row("2025-12-31", 1), row("2026-01-01", 2), row("2026-06-01", 3)],
-    });
-
-    expect(selectStatsWindow(data, "ytd").dailyByModel.map((entry) => entry.date)).toEqual([
-      "2026-01-01",
-      "2026-06-01",
-    ]);
-    expect(selectStatsWindow(data, "30d").dailyByModel.map((entry) => entry.date)).toEqual([
-      "2026-06-01",
-    ]);
-  });
-
-  it("charts every day between the window's first and last usage", () => {
-    const data = stats({
-      rows: [row("2026-06-20", 1), row("2026-06-22", 2)],
-      totals: { firstDate: "2026-06-20", lastDate: "2026-06-22" },
-    });
-
-    const charts = deriveAggregateCharts(selectStatsWindow(data, "30d"));
-
-    expect(charts.spend.days.map((day) => [day.date, day.total])).toEqual([
-      ["2026-06-20", 1],
-      ["2026-06-21", 0],
-      ["2026-06-22", 2],
-    ]);
-    expect(charts.sessions.days.map((day) => day.total)).toEqual([1, 0, 1]);
-  });
-
-  it("colors each model the same on both tabs, the same as profiles", () => {
-    const models = ["claude-opus-5", "gpt-5.6-sol", "gpt-6-astra"];
-    const data = stats({
-      rows: models.map((key, index) => ({ ...row("2026-06-20", index + 1), key })),
-      totals: { firstDate: "2026-06-20", lastDate: "2026-06-20" },
-    });
-    // The YTD tab additionally charts a model the 30d tab never sees.
-    const ytd = stats({
-      rows: [...data.windows.ytd.dailyByModel, { ...row("2026-03-01", 9), key: "gpt-5.5" }],
-      totals: { firstDate: "2026-03-01", lastDate: "2026-06-20" },
-    });
-
-    for (const view of [selectStatsWindow(data, "30d"), selectStatsWindow(ytd, "ytd")]) {
-      const charts = deriveAggregateCharts(view);
-      for (const chart of [charts.spend, charts.tokens, charts.sessions]) {
-        for (const entry of chart.legend) {
-          expect(entry.color, entry.series).toBe(modelColor(entry.series));
-        }
-      }
-    }
-  });
-
-  it("labels year-to-date with the server's year, not a hard-coded one", () => {
-    const data = stats({ rows: [] });
-
-    expect(selectStatsWindow(data, "ytd").label).toBe("2026");
-    expect(
-      ytdLabel({
-        ...data,
-        windows: { ...data.windows, ytd: { ...data.windows.ytd, since: "2027-01-01" } },
-      }),
-    ).toBe("2027");
-  });
-
-  it("charts nothing before any usage exists", () => {
-    const charts = deriveAggregateCharts(selectStatsWindow(stats({ rows: [] }), "30d"));
-
-    expect(charts.spend.days).toEqual([]);
-    expect(formatUsageRange(null)).toBe("No usage yet");
-    expect(formatUsageRange({ first: "2026-06-01", last: "2026-06-23" })).toBe(
-      "2026-06-01 to 2026-06-23",
+  it("buckets a long range into equal bars ending today", () => {
+    const view = deriveStatsView(
+      stats({ daily: [day("2026-06-22", 1)], since: { ytd: "2026-01-01" } }),
+      "ytd",
+      "tokens",
     );
+
+    // Jan 1 – Jun 22 is 173 days: 3-day bars, the oldest (Jan 1–2) partial.
+    expect(view.bucketDays).toBe(3);
+    expect(view.models.chart.days.at(-1)).toMatchObject({
+      date: "2026-06-20",
+      endDate: "2026-06-22",
+    });
+    expect(view.models.chart.days[0]).toMatchObject({ date: "2026-01-01", endDate: "2026-01-02" });
+  });
+
+  it("tables exactly the charted series, with server user counts and an Other row", () => {
+    const models = Array.from({ length: 11 }, (_, index) =>
+      cell("2026-06-22", `model-${String(index).padStart(2, "0")}`, 11 - index),
+    );
+    const view = deriveStatsView(
+      stats({
+        daily: [day("2026-06-22", 66)],
+        models,
+        modelsByTokens: [ranked("model-00", 7)],
+      }),
+      "2w",
+      "tokens",
+    );
+
+    const rows = view.models.rows;
+    expect(rows.map((row) => row.key)).toEqual([
+      ...Array.from({ length: 9 }, (_, index) => `model-0${index}`),
+      "Other",
+    ]);
+    expect(rows[0]).toMatchObject({ label: "model-00", totalTokens: 11, userCount: 7 });
+    // Ranked only by the server's top list; unranked series show no users.
+    expect(rows[1]?.userCount).toBeNull();
+    expect(rows.at(-1)).toMatchObject({ label: "Other", totalTokens: 3, userCount: null });
+    expect(rows.reduce((sum, row) => sum + row.percent, 0)).toBeCloseTo(100);
+    expect(rows.map((row) => row.color)).toEqual(view.models.chart.legend.map((e) => e.color));
+  });
+
+  it("labels agents by name and ranks every section by the selected metric", () => {
+    const data = stats({
+      daily: [day("2026-06-22", 30)],
+      models: [cell("2026-06-22", "opus", 1, 20), cell("2026-06-22", "gpt", 9, 10)],
+      modelsBySpend: [ranked("opus", 1)],
+      modelsByTokens: [ranked("gpt", 2)],
+      sources: [
+        { ...ranked("codex", 3), spendUsd: 10, totalTokens: 9 },
+        { ...ranked("claude", 4), spendUsd: 20, totalTokens: 1 },
+      ],
+      sourceCells: [cell("2026-06-22", "claude", 1, 20), cell("2026-06-22", "codex", 9, 10)],
+    });
+
+    const bySpend = deriveStatsView(data, "2w", "spend");
+    const byTokens = deriveStatsView(data, "2w", "tokens");
+
+    expect(bySpend.models.rows.map((row) => row.key)).toEqual(["opus", "gpt"]);
+    expect(byTokens.models.rows.map((row) => row.key)).toEqual(["gpt", "opus"]);
+    expect(bySpend.agents.rows.map((row) => row.label)).toEqual(["Claude Code", "OpenAI Codex"]);
+    expect([bySpend.cards.topModel, byTokens.cards.topModel]).toEqual(["opus", "gpt"]);
+    expect([bySpend.cards.topAgent, byTokens.cards.topAgent]).toEqual([
+      "Claude Code",
+      "OpenAI Codex",
+    ]);
+  });
+
+  it("derives the cards from the range's exact totals and its busiest day", () => {
+    const view = deriveStatsView(
+      stats({
+        daily: [day("2026-06-20", 5, 900), day("2026-06-21", 50, 10), day("2026-06-22", 7, 100)],
+        totals: { cacheReadTokens: 750, spendUsd: 62, totalTokens: 1_000, userCount: 4 },
+      }),
+      "2w",
+      "spend",
+    );
+
+    expect(view.cards).toMatchObject({
+      busiestDay: { date: "2026-06-21", value: 50 },
+      cacheReadPercent: 75,
+      spendPerUser: 15.5,
+      spendUsd: 62,
+      totalTokens: 1_000,
+      userCount: 4,
+    });
+    expect(deriveStatsView(stats({ daily: [] }), "2w", "spend").cards).toMatchObject({
+      busiestDay: null,
+      spendPerUser: 0,
+      topAgent: null,
+      topModel: null,
+    });
+  });
+
+  it("averages daily active users over each bar's own days", () => {
+    const daily = [
+      { ...day("2026-01-01", 0), userCount: 30 },
+      { ...day("2026-06-21", 0), userCount: 10 },
+      { ...day("2026-06-22", 0), userCount: 20 },
+    ];
+    const view = deriveStatsView(stats({ daily, since: { ytd: "2026-01-01" } }), "ytd", "tokens");
+
+    // Three-day bars: the newest averages Jun 20–22, the partial oldest Jan 1–2.
+    expect(view.activeUsers.at(-1)).toMatchObject({ date: "2026-06-20", total: 10 });
+    expect(view.activeUsers[0]).toMatchObject({ date: "2026-01-01", total: 15 });
+  });
+
+  it("has no window before any usage exists", () => {
+    const view = deriveStatsView(stats({ daily: [] }), "2m", "tokens");
+
+    expect(view.window).toBeNull();
+    expect(view.models.chart.days).toEqual([]);
+    expect(view.activeUsers).toEqual([]);
   });
 });
 
-function row(date: string, spendUsd: number): StatsChartPoint {
-  return { date, key: "claude-opus", rowCount: 1, spendUsd, totalTokens: 10 };
+function day(date: string, spendUsd: number, totalTokens = 0): StatsDailyPoint {
+  return { date, spendUsd, totalTokens, userCount: 1 };
+}
+
+function cell(date: string, key: string, totalTokens: number, spendUsd = 0): StatsSeriesPoint {
+  return { date, key, spendUsd, totalTokens };
+}
+
+function ranked(key: string, userCount: number): StatsRankedMetric {
+  return { key, rowCount: 1, spendUsd: 0, totalTokens: 0, userCount };
 }
 
 function stats({
-  rows,
+  daily,
+  models = [],
+  modelsBySpend = [],
+  modelsByTokens = [],
+  since = {},
+  sourceCells = [],
+  sources = [],
   totals = {},
 }: {
-  rows: StatsChartPoint[];
+  daily: StatsDailyPoint[];
+  models?: StatsSeriesPoint[];
+  modelsBySpend?: StatsRankedMetric[];
+  modelsByTokens?: StatsRankedMetric[];
+  since?: Partial<Record<UsageRangeId, string>>;
+  sourceCells?: StatsSeriesPoint[];
+  sources?: StatsRankedMetric[];
   totals?: Partial<StatsTotals>;
 }): StatsResponse {
-  // The API slices chart rows per window; hand each window the whole list so
-  // these tests pin the client-side bounds too.
-  const window = (since: string): StatsWindow => ({
-    dailyByModel: rows,
-    modelsBySpend: [],
-    modelsByTokens: [],
-    since,
-    sources: [],
+  const range = (start: string): StatsRange => ({
+    modelsBySpend,
+    modelsByTokens,
+    since: start,
+    sources,
     totals: {
       activeDays: 0,
       cacheCreationTokens: 0,
@@ -166,10 +205,18 @@ function stats({
   });
 
   return {
-    generatedAt: "2026-06-22T00:00:00.000Z",
-    windows: {
-      last30d: window("2026-05-24"),
-      ytd: window("2026-01-01"),
+    daily,
+    dailyByModel: models,
+    dailyBySource: sourceCells,
+    generatedAt: "2026-06-22T18:30:00.000Z",
+    ranges: {
+      "1m": range(since["1m"] ?? "2026-05-24"),
+      "2m": range(since["2m"] ?? "2026-04-24"),
+      "2w": range(since["2w"] ?? "2026-06-09"),
+      "3m": range(since["3m"] ?? "2026-03-25"),
+      "6m": range(since["6m"] ?? "2025-12-23"),
+      ytd: range(since.ytd ?? "2026-01-01"),
     },
+    until: "2026-06-23",
   };
 }

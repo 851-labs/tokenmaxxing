@@ -85,12 +85,15 @@ function StackedBars({
   days,
   highlight = null,
   mode = "absolute",
+  totalLabel = (total) => `${valueFormatter(total)} total`,
   valueFormatter,
 }: {
   ariaLabel: string;
   days: readonly StackedDay[];
   highlight?: string | null;
   mode?: StackedBarsMode;
+  /** The tooltip line under the date; defaults to "<total> total". */
+  totalLabel?: (total: number) => string;
   valueFormatter: ValueFormatter;
 }) {
   const cursor = useChartCursor(days.length);
@@ -144,7 +147,7 @@ function StackedBars({
                   ? formatPercent(percentOf(segment.value, active.total))
                   : valueFormatter(segment.value),
               )}
-              subtitle={`${valueFormatter(active.total)} total`}
+              subtitle={totalLabel(active.total)}
               title={formatDayRange(active.date, active.endDate ?? active.date)}
             />
           ) : null}

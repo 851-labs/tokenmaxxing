@@ -13,23 +13,41 @@ function statsSearch(href: string) {
   });
   const match = router.matchRoutes(router.state.location).at(-1);
 
-  return { routeId: match?.routeId, search: match?.search };
+  // The root route passes raw params through, so keep only what /stats validates.
+  const search = match?.search as { metric?: unknown; range?: unknown } | undefined;
+  return { routeId: match?.routeId, search: { metric: search?.metric, range: search?.range } };
 }
 
 describe("/stats search", () => {
-  it("opens year to date from legacy ?window=2026 links", () => {
-    // The default parser turns the bare 2026 into a number, not the string.
-    expect(statsSearch("/stats?window=2026")).toEqual({
+  it("opens the default range and metric without params", () => {
+    expect(statsSearch("/stats")).toEqual({
       routeId: "/stats",
-      search: { window: "ytd" },
+      search: { metric: "tokens", range: "2m" },
     });
-    expect(statsSearch('/stats?window="2026"').search).toEqual({ window: "ytd" });
   });
 
-  it("keeps current tab values and falls back to 30d for anything else", () => {
-    expect(statsSearch("/stats?window=ytd").search).toEqual({ window: "ytd" });
-    expect(statsSearch("/stats?window=30d").search).toEqual({ window: "30d" });
-    expect(statsSearch("/stats?window=2025").search).toEqual({ window: "30d" });
-    expect(statsSearch("/stats").search).toEqual({ window: "30d" });
+  it("keeps valid ranges and metrics and falls back for anything else", () => {
+    expect(statsSearch("/stats?range=6m&metric=spend").search).toEqual({
+      metric: "spend",
+      range: "6m",
+    });
+    expect(statsSearch("/stats?range=5y&metric=vibes").search).toEqual({
+      metric: "tokens",
+      range: "2m",
+    });
+  });
+
+  it("maps legacy ?window= links onto ranges", () => {
+    expect(statsSearch("/stats?window=30d").search).toEqual({ metric: "tokens", range: "1m" });
+    expect(statsSearch("/stats?window=ytd").search).toEqual({ metric: "tokens", range: "ytd" });
+    // The default parser turns the bare 2026 into a number, not the string.
+    expect(statsSearch("/stats?window=2026").search).toEqual({ metric: "tokens", range: "ytd" });
+    expect(statsSearch('/stats?window="2026"').search).toEqual({ metric: "tokens", range: "ytd" });
+    expect(statsSearch("/stats?window=2025").search).toEqual({ metric: "tokens", range: "2m" });
+    // An explicit range wins over a leftover window.
+    expect(statsSearch("/stats?window=ytd&range=2w").search).toEqual({
+      metric: "tokens",
+      range: "2w",
+    });
   });
 });

@@ -9,6 +9,7 @@ import { ProfilesRepositoryLive } from "./profiles/d1";
 import { ProfilesRepository } from "./profiles/service";
 import { StatsRepositoryLive } from "./stats/d1";
 import { StatsRepository } from "./stats/service";
+import { statsRangeStartsFrom } from "./testing/stats";
 import { makeTestDatabase, type TestDatabase } from "./testing/sqlite-d1";
 import { buildService } from "./testing/effect";
 import { seedUsage, seedUser } from "./testing/seed";
@@ -75,26 +76,30 @@ describe("public usage visibility", () => {
       stats.snapshot({
         limit: 10,
         until,
-        windows: { last30d: "2026-06-10", ytd: "2026-01-01" },
+        ranges: statsRangeStartsFrom("2026-06-10", "2026-01-01"),
       }),
     );
 
     expect(entries.map((entry) => [entry.rank, entry.user.login])).toEqual([[1, "visible"]]);
     expect(visibleRank).toBe(1);
     expect(bannedRank).toBeNull();
-    expect(hidden.windows.ytd.totals).toMatchObject({
+    expect(hidden.ranges.ytd.totals).toMatchObject({
       deviceCount: 1,
       rowCount: 1,
       spendUsd: 1,
       totalTokens: 100,
       userCount: 1,
     });
-    for (const window of Object.values(hidden.windows)) {
-      expect(window.dailyByModel).toEqual([
-        { date: "2026-07-09", key: "visible-model", rowCount: 1, spendUsd: 1, totalTokens: 100 },
-      ]);
-      expect(window.sources.map((row) => row.key)).toEqual(["codex"]);
-      expect(window.modelsByTokens.map((row) => row.key)).toEqual(["visible-model"]);
+    expect(hidden.daily).toEqual([
+      { date: "2026-07-09", spendUsd: 1, totalTokens: 100, userCount: 1 },
+    ]);
+    expect(hidden.dailyByModel).toEqual([
+      { date: "2026-07-09", key: "visible-model", spendUsd: 1, totalTokens: 100 },
+    ]);
+    expect(hidden.dailyBySource.map((row) => row.key)).toEqual(["codex"]);
+    for (const range of Object.values(hidden.ranges)) {
+      expect(range.sources.map((row) => row.key)).toEqual(["codex"]);
+      expect(range.modelsByTokens.map((row) => row.key)).toEqual(["visible-model"]);
     }
 
     sqlite.prepare("update users set shadow_banned_at = null where id = 'banned'").run();
@@ -109,19 +114,19 @@ describe("public usage visibility", () => {
       stats.snapshot({
         limit: 10,
         until,
-        windows: { last30d: "2026-06-10", ytd: "2026-01-01" },
+        ranges: statsRangeStartsFrom("2026-06-10", "2026-01-01"),
       }),
     );
     expect(restoredBannedRank).toBe(1);
     expect(restoredVisibleRank).toBe(2);
-    expect(restored.windows.ytd.totals).toMatchObject({
+    expect(restored.ranges.ytd.totals).toMatchObject({
       deviceCount: 2,
       rowCount: 2,
       spendUsd: 101,
       totalTokens: 10_100,
       userCount: 2,
     });
-    expect(restored.windows.ytd.modelsByTokens[0]?.key).toBe("fake-model");
+    expect(restored.ranges.ytd.modelsByTokens[0]?.key).toBe("fake-model");
   });
 
   it("applies the same date window as the leaderboard", async () => {
@@ -253,18 +258,19 @@ describe("future-dated usage rows", () => {
       stats.snapshot({
         limit: 10,
         until,
-        windows: { last30d: "2026-08-25", ytd: "2026-01-01" },
+        ranges: statsRangeStartsFrom("2026-08-25", "2026-01-01"),
       }),
     );
-    for (const window of Object.values(snapshot.windows)) {
-      expect(window.totals).toMatchObject({
+    for (const range of Object.values(snapshot.ranges)) {
+      expect(range.totals).toMatchObject({
         lastDate: "2026-09-20",
         spendUsd: 11,
         totalTokens: 101,
       });
     }
-    for (const window of Object.values(snapshot.windows)) {
-      expect(window.dailyByModel.map((row) => row.date)).toEqual(["2026-09-20"]);
+    expect(snapshot.until).toBe(until);
+    for (const series of [snapshot.daily, snapshot.dailyByModel, snapshot.dailyBySource]) {
+      expect(series.map((row) => row.date)).toEqual(["2026-09-20"]);
     }
 
     const profile = await Effect.runPromise(

@@ -1,20 +1,23 @@
 import { Context, Effect, Option } from "effect";
 
-import type { StatsResponse, StatsWindowId } from "@tokenmaxxing/api-contract";
+import { USAGE_RANGE_DAYS, UsageRangeId } from "@tokenmaxxing/api-contract";
+import type { StatsResponse } from "@tokenmaxxing/api-contract";
 
 import type { JsonCache } from "../cloudflare/edge-cache";
 import type { DatabaseError } from "../database";
 import { latestUsageDateKey, trailingWindowStart, yearStartDayKey } from "../date-keys";
 
 const STATS_RANK_LIMIT = 10;
-const THIRTY_DAYS = 30;
-/** /stats is a global aggregate over every usage row; minutes of staleness are fine. */
-const STATS_CACHE_TTL_SECONDS = 300;
+/**
+ * /stats is a global aggregate over every usage row, recomputed for six
+ * ranges on a miss; ten minutes of staleness is fine.
+ */
+const STATS_CACHE_TTL_SECONDS = 600;
 
 type StatsSnapshot = Omit<StatsResponse, "generatedAt">;
 
-/** Inclusive YYYY-MM-DD lower bound per window. */
-type StatsWindowStarts = Record<StatsWindowId, string>;
+/** Inclusive YYYY-MM-DD lower bound per range. */
+type StatsRangeStarts = Record<UsageRangeId, string>;
 
 interface StatsServiceShape {
   getStats(): Effect.Effect<StatsResponse>;
@@ -25,7 +28,7 @@ interface StatsRepositoryShape {
     limit: number;
     /** Inclusive YYYY-MM-DD upper bound applied to every aggregate. */
     until: string;
-    windows: StatsWindowStarts;
+    ranges: StatsRangeStarts;
   }): Effect.Effect<StatsSnapshot, DatabaseError>;
 }
 
@@ -61,7 +64,7 @@ const makeStatsService = Effect.fn("makeStatsService")(function* (
         .snapshot({
           limit: STATS_RANK_LIMIT,
           until: latestUsageDateKey(generatedAt),
-          windows: statsWindowStarts(generatedAt),
+          ranges: statsRangeStarts(generatedAt),
         })
         .pipe(Effect.orDie);
 
@@ -75,11 +78,14 @@ const makeStatsService = Effect.fn("makeStatsService")(function* (
   });
 });
 
-function statsWindowStarts(now: Date): StatsWindowStarts {
-  return {
-    last30d: trailingWindowStart(THIRTY_DAYS, now),
-    ytd: yearStartDayKey(now),
-  };
+function statsRangeStarts(now: Date): StatsRangeStarts {
+  const starts = {} as StatsRangeStarts;
+  for (const range of UsageRangeId.literals) {
+    const days = USAGE_RANGE_DAYS[range];
+    starts[range] = days === null ? yearStartDayKey(now) : trailingWindowStart(days, now);
+  }
+
+  return starts;
 }
 
 export {
@@ -87,8 +93,8 @@ export {
   STATS_CACHE_TTL_SECONDS,
   STATS_RANK_LIMIT,
   StatsRepository,
+  statsRangeStarts,
   StatsService,
-  statsWindowStarts,
 };
 
-export type { StatsRepositoryShape, StatsSnapshot, StatsWindowStarts };
+export type { StatsRangeStarts, StatsRepositoryShape, StatsSnapshot };
