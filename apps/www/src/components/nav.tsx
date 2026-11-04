@@ -25,7 +25,7 @@ function Nav() {
           className="hidden items-baseline gap-6 justify-self-center sm:flex"
           aria-label="Primary"
         >
-          {/* In-page anchors: only the one whose hash is in the URL is current. */}
+          {/* The home anchors are current only when their hash is in the URL. */}
           <Link
             activeOptions={{ includeHash: true }}
             activeProps={{ className: "text-foreground" }}
@@ -34,6 +34,13 @@ function Nav() {
             to="/"
           >
             Leaderboard
+          </Link>
+          <Link
+            activeProps={{ className: "text-foreground" }}
+            className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            to="/stats"
+          >
+            Stats
           </Link>
           <Link
             activeOptions={{ includeHash: true }}

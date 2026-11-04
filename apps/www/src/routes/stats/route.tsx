@@ -3,6 +3,7 @@ import { createFileRoute, stripSearchParams, useNavigate } from "@tanstack/react
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { UsageRangeId } from "@tokenmaxxing/api-contract";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AnimatedNumber, AnimatedText } from "../../components/animated-value";
 import { StackedBars, type StackedBarsMode } from "../../components/charts/stacked-bars";
@@ -38,12 +39,28 @@ const StatsSearchInput = Schema.Struct({
   window: optionalSearchParam(LegacyStatsWindow),
 });
 
-const decodeStatsSearch = Schema.decodeUnknownSync(StatsSearchInput);
+const StatsSearch = Schema.Struct({ metric: StatsMetric, range: UsageRangeId });
 
-interface StatsSearch {
-  metric: StatsMetric;
-  range: UsageRangeId;
-}
+type StatsSearch = typeof StatsSearch.Type;
+
+/**
+ * Every param is optional in links (the encoded side), and anything missing
+ * or invalid decodes to the defaults; a legacy `window` becomes the range.
+ */
+const statsSearchSchema = Schema.toStandardSchemaV1(
+  StatsSearchInput.pipe(
+    Schema.decodeTo(
+      StatsSearch,
+      SchemaTransformation.transform<StatsSearch, typeof StatsSearchInput.Type>({
+        decode: (input) => ({
+          metric: input.metric,
+          range: input.range ?? input.window ?? DEFAULT_USAGE_RANGE,
+        }),
+        encode: (search) => search,
+      }),
+    ),
+  ),
+);
 
 const DEFAULT_STATS_SEARCH = {
   metric: DEFAULT_STATS_METRIC,
@@ -61,10 +78,7 @@ const CHART_MODE_OPTIONS = [
 ] as const satisfies readonly SegmentedOption<StackedBarsMode>[];
 
 const Route = createFileRoute("/stats")({
-  validateSearch: (raw: Record<string, unknown>): StatsSearch => {
-    const search = decodeStatsSearch(raw);
-    return { metric: search.metric, range: search.range ?? search.window ?? DEFAULT_USAGE_RANGE };
-  },
+  validateSearch: statsSearchSchema,
   search: {
     middlewares: [stripSearchParams<StatsSearch>(DEFAULT_STATS_SEARCH)],
   },
