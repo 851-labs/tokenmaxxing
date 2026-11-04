@@ -17,6 +17,7 @@ import {
   type UsageRepositoryShape,
 } from "./service";
 import { RawUsageStorageError } from "./raw-store";
+import { PARSER_VERSION } from "./ccusage";
 
 const user = {
   avatarUrl: null,
@@ -330,7 +331,7 @@ describe("UsageService.ingestRaw", () => {
           ) as unknown as string,
           payloadBytes: JSON.stringify(rawReports[0]!.payload).length,
           payloadJson: JSON.stringify(rawReports[0]!.payload),
-          parserVersion: "ccusage-v20-raw-6",
+          parserVersion: PARSER_VERSION,
           reportKind: "daily",
           source: "codex",
         }),
@@ -341,7 +342,7 @@ describe("UsageService.ingestRaw", () => {
     expect(upsertChunk).toHaveBeenCalledWith(
       "user_123",
       "device_123",
-      [{ ...usageDay, countedBy: "ccusage-v20-raw-6" }],
+      [{ ...usageDay, countedBy: PARSER_VERSION }],
       expect.any(Date),
     );
     expect(pruneChunk).toHaveBeenCalledWith(

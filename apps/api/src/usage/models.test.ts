@@ -26,6 +26,14 @@ describe("normalizeCcusageModelName", () => {
     ["omp", "[pi] ~/models/qwen3-coder-30b-Q4_K_M.gguf", "qwen3-coder-30b-Q4_K_M.gguf"],
     ["omp", "[omp] C:\\Users\\alice\\models\\phi-5.gguf", "phi-5.gguf"],
     ["omp", "[pi] openai/gpt-5.5", "openai/gpt-5.5"],
+    // Claude versions take Anthropic's dashed spelling; other models keep their dots.
+    ["opencode", "claude-opus-5.5", "claude-opus-5-5"],
+    ["codex", "claude-3.5-sonnet", "claude-3-5-sonnet"],
+    ["omp", "[pi] claude-sonnet-5.5", "claude-sonnet-5-5"],
+    ["hermes", "Claude-Haiku-4.5", "Claude-Haiku-4-5"],
+    ["claude", "claude-opus-5-5", "claude-opus-5-5"],
+    ["opencode", "anthropic/claude-opus-5.5", "anthropic/claude-opus-5.5"],
+    ["codex", "gpt-5.5", "gpt-5.5"],
   ])("normalizes %s model %s as %s", (source, model, expected) => {
     expect(normalizeCcusageModelName(source, model)).toBe(expected);
   });
