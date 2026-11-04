@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { modelColor } from "../../../components/charts/model-colors";
-import { deriveProfileCharts, type DailyRange, type DailyRow } from "./profile-charts";
+import {
+  deriveProfileCharts,
+  deriveProfileTrendCharts,
+  deriveWindowStats,
+  timeframeRange,
+  type DailyRange,
+  type DailyRow,
+} from "./profile-charts";
 
 describe("deriveProfileCharts", () => {
   it("fills sparse usage rows across the server-provided chart range", () => {
@@ -227,6 +234,91 @@ describe("deriveProfileCharts", () => {
       { color: expect.any(String), series: "claude-opus-4-8", value: 4 },
     ]);
     expect(derived.spendByDate.get("2026-06-21")).toBe(4);
+  });
+});
+
+describe("deriveProfileTrendCharts", () => {
+  const range: DailyRange = { firstDate: "2026-01-01", lastDate: "2026-11-03" };
+
+  it("ends every timeframe on the last day and clamps it to the loaded range", () => {
+    expect(timeframeRange(range, "2w")).toEqual({
+      firstDate: "2026-10-21",
+      lastDate: "2026-11-03",
+    });
+    expect(timeframeRange(range, "ytd")).toEqual(range);
+    expect(timeframeRange({ firstDate: "2026-01-01", lastDate: "2026-01-10" }, "3m")).toEqual({
+      firstDate: "2026-01-01",
+      lastDate: "2026-01-10",
+    });
+  });
+
+  it("keeps short timeframes daily", () => {
+    const month = deriveProfileTrendCharts([], range, "1m");
+    expect(month.bucketDays).toBe(1);
+    expect(month.spend.days).toHaveLength(30);
+
+    const trends = deriveProfileTrendCharts([], range, "2m");
+    expect(trends.bucketDays).toBe(1);
+    expect(trends.spend.days).toHaveLength(60);
+    expect(trends.spend.days.at(-1)).toMatchObject({ date: "2026-11-03", endDate: "2026-11-03" });
+  });
+
+  it("sums long timeframes into equal N-day bars ending on the last day", () => {
+    const rows = [
+      { ...dailyRow({ key: "claude-opus-5-5", spendUsd: 2, totalTokens: 20 }), date: "2026-11-03" },
+      { ...dailyRow({ key: "claude-opus-5-5", spendUsd: 3, totalTokens: 30 }), date: "2026-10-30" },
+      { ...dailyRow({ key: "gpt-5.5", spendUsd: 5, totalTokens: 50 }), date: "2026-10-29" },
+      { ...dailyRow({ key: "gpt-5.5", spendUsd: 100, totalTokens: 1 }), date: "2025-12-31" },
+    ];
+
+    const trends = deriveProfileTrendCharts(rows, range, "ytd");
+
+    // 307 days in at most 62 bars: 5-day bars, the oldest one partial.
+    expect(trends.bucketDays).toBe(5);
+    expect(trends.spend.days).toHaveLength(62);
+    expect(trends.spend.days.at(0)).toMatchObject({ date: "2026-01-01", endDate: "2026-01-02" });
+    expect(trends.spend.days.at(-1)).toMatchObject({
+      date: "2026-10-30",
+      endDate: "2026-11-03",
+      total: 5,
+    });
+    expect(trends.spend.days.at(-2)).toMatchObject({
+      date: "2026-10-25",
+      endDate: "2026-10-29",
+      total: 5,
+    });
+    // Rows outside the window never reach the bars or the legend.
+    expect(trends.spend.legend.map((entry) => [entry.series, entry.percent])).toEqual([
+      ["claude-opus-5-5", 50],
+      ["gpt-5.5", 50],
+    ]);
+  });
+});
+
+describe("deriveWindowStats", () => {
+  it("sums only the window's rows and ranks the top model by spend", () => {
+    const rows = [
+      { ...dailyRow({ key: "gpt-5.5", spendUsd: 100, totalTokens: 1_000 }), date: "2026-10-01" },
+      { ...dailyRow({ key: "claude-opus-5-5", spendUsd: 3, totalTokens: 30 }), date: "2026-11-02" },
+      { ...dailyRow({ key: "gpt-5.5", spendUsd: 2, totalTokens: 20 }), date: "2026-11-02" },
+      { ...dailyRow({ key: "gpt-5.5", spendUsd: 0, totalTokens: 0 }), date: "2026-11-03" },
+    ];
+
+    expect(deriveWindowStats(rows, { firstDate: "2026-11-01", lastDate: "2026-11-03" })).toEqual({
+      activeDays: 2,
+      spendUsd: 5,
+      topModel: "claude-opus-5-5",
+      totalTokens: 50,
+    });
+  });
+
+  it("reports no top model for a window without usage", () => {
+    expect(deriveWindowStats([], { firstDate: "2026-11-01", lastDate: "2026-11-03" })).toEqual({
+      activeDays: 0,
+      spendUsd: 0,
+      topModel: null,
+      totalTokens: 0,
+    });
   });
 });
 

@@ -126,6 +126,12 @@ const dayLong = new Intl.DateTimeFormat("en-US", {
   weekday: "short",
   year: "numeric",
 });
+const dayShort = new Intl.DateTimeFormat("en-US", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+  year: "numeric",
+});
 const dateTimeUtc = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   hour: "numeric",
@@ -139,6 +145,13 @@ const dateTimeUtc = new Intl.DateTimeFormat("en-US", {
 /** Opaque YYYY-MM-DD keys render via UTC so no local-tz shifting occurs. */
 function formatDay(date: string): string {
   return dayLong.format(new Date(`${date}T00:00:00Z`));
+}
+
+/** An inclusive span of YYYY-MM-DD keys, e.g. "Oct 20 – 22, 2026"; one day reads as `formatDay`. */
+function formatDayRange(first: string, last: string): string {
+  return first === last
+    ? formatDay(first)
+    : dayShort.formatRange(new Date(`${first}T00:00:00Z`), new Date(`${last}T00:00:00Z`));
 }
 
 /** Short month name for a YYYY-MM (or YYYY-MM-DD) key, e.g. "Jun". */
@@ -162,6 +175,7 @@ export {
   formatCount,
   formatDateTimeUtc,
   formatDay,
+  formatDayRange,
   formatInteger,
   formatMonth,
   formatMonthLong,

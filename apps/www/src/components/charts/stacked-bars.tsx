@@ -1,24 +1,31 @@
 import { useMemo, useState } from "react";
 
-import { formatDay, formatMonth, formatPercent, percentOf } from "../../lib/format";
+import { cn } from "../../lib/cn";
+import { formatDayRange, formatMonth, formatPercent, percentOf } from "../../lib/format";
 import { barAnchor, BarChart, ColumnSpotlight, type AxisLabel } from "./axis";
 import {
   barCenter,
-  barLayout,
+  type BarLayout,
   barX,
   CHART_WIDTH,
+  filledBarLayout,
   linearScale,
   maxValue,
   niceMax,
   round2,
 } from "./scale";
-import { segmentTooltipRows, type LegendEntry, type StackedDay } from "./series";
+import {
+  MODEL_SERIES_LIMIT,
+  segmentTooltipRows,
+  type LegendEntry,
+  type StackedDay,
+} from "./series";
 import { ChartLiveRegion, ChartTooltip } from "./tooltip";
 import { useChartCursor } from "./use-chart-cursor";
 
 /**
- * Daily metric, one bar per day stacked by model. Hover (or arrow keys)
- * reveals the per-series breakdown.
+ * A metric over time, one bar per day (or per multi-day bucket) stacked by
+ * model. Hover (or arrow keys) reveals the per-series breakdown.
  */
 
 type ValueFormatter = (value: number) => string;
@@ -35,6 +42,8 @@ const HEIGHT = 280;
 const TOP_PADDING = 14;
 const PLOT_HEIGHT = HEIGHT - TOP_PADDING;
 const PERCENT_MAX = 100;
+/** Space between neighboring bars, in plot units (about 2–4 px on screen). */
+const BAR_GAP = 4;
 
 /**
  * One path per series rather than one rect per (day, series): a year of
@@ -45,7 +54,7 @@ function seriesPaths(
   days: readonly StackedDay[],
   mode: StackedBarsMode,
   y: (value: number) => number,
-  layout: ReturnType<typeof barLayout>,
+  layout: BarLayout,
 ): SeriesPath[] {
   const paths = new Map<string, SeriesPath>();
   const width = round2(layout.barWidth);
@@ -92,23 +101,24 @@ function StackedBars({
     [days, mode],
   );
   const y = useMemo(() => linearScale(max, PLOT_HEIGHT), [max]);
-  const layout = useMemo(() => barLayout(days.length, 0.72, 16, 1.25), [days.length]);
+  const layout = useMemo(() => filledBarLayout(days.length, BAR_GAP), [days.length]);
   const axisFormatter = mode === "share" ? formatPercentAxis : valueFormatter;
   const paths = useMemo(() => seriesPaths(days, mode, y, layout), [days, layout, mode, y]);
 
   const monthLabels = useMemo(
     (): AxisLabel[] =>
-      days.flatMap((day, index) =>
-        day.date.endsWith("-01") || index === 0
-          ? [
+      days.flatMap((day, index) => {
+        const month = index === 0 ? day.date : monthStartIn(day);
+        return month === undefined
+          ? []
+          : [
               {
                 center: barCenter(layout, index) / CHART_WIDTH,
                 key: day.date,
-                label: formatMonth(day.date),
+                label: formatMonth(month),
               },
-            ]
-          : [],
-      ),
+            ];
+      }),
     [days, layout],
   );
 
@@ -135,7 +145,7 @@ function StackedBars({
                   : valueFormatter(segment.value),
               )}
               subtitle={`${valueFormatter(active.total)} total`}
-              title={formatDay(active.date)}
+              title={formatDayRange(active.date, active.endDate ?? active.date)}
             />
           ) : null}
         </ChartLiveRegion>
@@ -156,11 +166,27 @@ function StackedBars({
   );
 }
 
+/** The month whose 1st falls inside the bar, if any; a bar spans at most one month start. */
+function monthStartIn(day: StackedDay): string | undefined {
+  if (day.date.endsWith("-01")) {
+    return day.date;
+  }
+  const last = day.endDate ?? day.date;
+
+  return last.slice(0, 7) === day.date.slice(0, 7) ? undefined : last;
+}
+
 function formatPercentAxis(value: number): string {
   return formatPercent(value, 0);
 }
 
-/** Ranked, vertical legend that sits beside the chart: rank · dot · series · share. */
+const LEGEND_ROW_CLASS_NAME = "flex items-center gap-3 rounded px-2 py-1 text-sm";
+
+/**
+ * Ranked, vertical legend that sits beside the chart: rank · dot · series · share.
+ * Invisible rows pad it to the series limit, so it keeps one height as the
+ * charted range changes and switching ranges never shifts the page.
+ */
 function Legend({
   entries,
   onHover,
@@ -175,7 +201,7 @@ function Legend({
     >
       {entries.map((entry, index) => (
         <li
-          className="flex items-center gap-3 rounded px-2 py-1 text-sm hover:bg-muted"
+          className={cn(LEGEND_ROW_CLASS_NAME, "hover:bg-muted")}
           key={entry.series}
           onPointerEnter={() => onHover?.(entry.series)}
         >
@@ -185,6 +211,11 @@ function Legend({
           <span className="size-2.5 shrink-0 rounded-full" style={{ background: entry.color }} />
           <span className="flex-1 truncate">{entry.series}</span>
           <span className="tabular-nums text-muted-foreground">{formatPercent(entry.percent)}</span>
+        </li>
+      ))}
+      {Array.from({ length: Math.max(MODEL_SERIES_LIMIT - entries.length, 0) }, (_, index) => (
+        <li aria-hidden="true" className={cn(LEGEND_ROW_CLASS_NAME, "invisible")} key={index}>
+          {"\u00a0"}
         </li>
       ))}
     </ol>
