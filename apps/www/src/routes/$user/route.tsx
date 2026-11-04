@@ -4,6 +4,7 @@ import { useSuspenseQuery, type QueryClient } from "@tanstack/react-query";
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import type { ProfileResponse } from "@tokenmaxxing/api-contract";
 
+import { AnimatedNumber, AnimatedText } from "../../components/animated-value";
 import { Heatmap } from "../../components/charts/heatmap";
 import { MonthBars } from "../../components/charts/month-bars";
 import { StackedChartPanel } from "../../components/charts/stacked-bars";
@@ -264,10 +265,19 @@ function ProfileStatCards({
 
   return (
     <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-4">
-      <StatCard label="Spend" value={formatUsd(windowStats.spendUsd)} />
-      <StatCard label="Tokens" value={formatTokens(windowStats.totalTokens)} />
-      <StatCard label="Top spend model" value={windowStats.topModel ?? "—"} />
-      <StatCard label="Active days" value={formatInteger(windowStats.activeDays)} />
+      <StatCard label="Spend" value={<AnimatedNumber kind="usd" value={windowStats.spendUsd} />} />
+      <StatCard
+        label="Tokens"
+        value={<AnimatedNumber kind="tokens" value={windowStats.totalTokens} />}
+      />
+      <StatCard
+        label="Top spend model"
+        value={<AnimatedText className="inline-block" text={windowStats.topModel ?? "—"} />}
+      />
+      <StatCard
+        label="Active days"
+        value={<AnimatedNumber kind="integer" value={windowStats.activeDays} />}
+      />
       <StatCard label="Current streak" value={formatInteger(stats.currentStreakDays)} />
       <StatCard label="Longest streak" value={formatInteger(stats.longestStreakDays)} />
       <StatCard label="Sessions" value={formatInteger(stats.sessionCount)} />

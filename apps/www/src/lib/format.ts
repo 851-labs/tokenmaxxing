@@ -4,33 +4,41 @@
  * `en-US` (and UTC for dates) so SSR and hydration render identical strings.
  */
 
-const usd0 = new Intl.NumberFormat("en-US", {
+const USD0_OPTIONS = {
   currency: "USD",
   maximumFractionDigits: 0,
   style: "currency",
-});
+} as const satisfies Intl.NumberFormatOptions;
 
-const usd2 = new Intl.NumberFormat("en-US", {
+const USD2_OPTIONS = {
   currency: "USD",
   maximumFractionDigits: 2,
   minimumFractionDigits: 2,
   style: "currency",
-});
+} as const satisfies Intl.NumberFormatOptions;
 
-const integer = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const USD_COMPACT_OPTIONS = {
+  currency: "USD",
+  maximumFractionDigits: 1,
+  minimumFractionDigits: 0,
+  notation: "compact",
+  style: "currency",
+} as const satisfies Intl.NumberFormatOptions;
+
+const INTEGER_OPTIONS = { maximumFractionDigits: 0 } as const satisfies Intl.NumberFormatOptions;
+
+const usd0 = new Intl.NumberFormat("en-US", USD0_OPTIONS);
+
+const usd2 = new Intl.NumberFormat("en-US", USD2_OPTIONS);
+
+const integer = new Intl.NumberFormat("en-US", INTEGER_OPTIONS);
 
 const compact = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
   notation: "compact",
 });
 
-const usdCompact = new Intl.NumberFormat("en-US", {
-  currency: "USD",
-  maximumFractionDigits: 1,
-  minimumFractionDigits: 0,
-  notation: "compact",
-  style: "currency",
-});
+const usdCompact = new Intl.NumberFormat("en-US", USD_COMPACT_OPTIONS);
 
 /**
  * Compact notation tops out at "T", so anything this large (or non-finite)
@@ -78,6 +86,71 @@ function formatTokens(value: number): string {
   }
 
   return value.toFixed(0);
+}
+
+/**
+ * A number as an animated display (NumberFlow) renders it: `value` formatted
+ * en-US with `format`, between `prefix` and `suffix`. Each `*Display` below
+ * mirrors its `format*` twin exactly (format.test.ts holds them equal), and is
+ * null where that twin prints a cap or a dash instead of a number.
+ */
+interface NumberDisplay {
+  /** No scientific or engineering notation: NumberFlow can't animate them. */
+  format: Omit<Intl.NumberFormatOptions, "notation"> & { notation?: "compact" | "standard" };
+  prefix?: string;
+  suffix?: string;
+  value: number;
+}
+
+/** {@link formatUsd} as a {@link NumberDisplay}. */
+function usdDisplay(value: number): NumberDisplay | null {
+  const magnitude = Math.abs(value);
+  if (Number.isNaN(value) || magnitude >= DISPLAY_CEILING) {
+    return null;
+  }
+  const format =
+    magnitude >= 1e6 ? USD_COMPACT_OPTIONS : magnitude >= 100 ? USD0_OPTIONS : USD2_OPTIONS;
+
+  return { format, value };
+}
+
+/** Units `formatTokens` steps through, largest first. */
+const TOKEN_UNITS = [
+  { decimals: 2, divisor: 1e12, suffix: "T" },
+  { decimals: 2, divisor: 1e9, suffix: "B" },
+  { decimals: 1, divisor: 1e6, suffix: "M" },
+  { decimals: 1, divisor: 1e3, suffix: "K" },
+] as const;
+
+/** {@link formatTokens} as a {@link NumberDisplay}. */
+function tokensDisplay(value: number): NumberDisplay | null {
+  const magnitude = Math.abs(value);
+  if (Number.isNaN(value) || magnitude >= DISPLAY_CEILING) {
+    return null;
+  }
+  const unit = TOKEN_UNITS.find((candidate) => magnitude >= candidate.divisor);
+  if (unit === undefined) {
+    // `toFixed` prints -0 as "0"; Intl would keep the sign.
+    return { format: { maximumFractionDigits: 0, useGrouping: false }, value: value || 0 };
+  }
+
+  return {
+    format: {
+      maximumFractionDigits: unit.decimals,
+      minimumFractionDigits: unit.decimals,
+      // `toFixed` never groups, so a value just under the next unit reads "1000.0M".
+      useGrouping: false,
+    },
+    suffix: unit.suffix,
+    value: value / unit.divisor,
+  };
+}
+
+/** {@link formatInteger} as a {@link NumberDisplay}. */
+function integerDisplay(value: number): NumberDisplay | null {
+  return Number.isNaN(value) || Math.abs(value) >= DISPLAY_CEILING
+    ? null
+    : { format: INTEGER_OPTIONS, value };
 }
 
 /** Grouped digits for counts; values past the display ceiling go compact. */
@@ -182,5 +255,10 @@ export {
   formatPercent,
   formatTokens,
   formatUsd,
+  integerDisplay,
   percentOf,
+  tokensDisplay,
+  usdDisplay,
 };
+
+export type { NumberDisplay };
