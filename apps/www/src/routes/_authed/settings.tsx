@@ -4,6 +4,7 @@ import type { CliTokenSummary, DeviceSummary } from "@tokenmaxxing/api-contract"
 import { Key, Laptop } from "@phosphor-icons/react/ssr";
 
 import { LocalDateTime } from "../../components/local-date-time";
+import { ReadmeCardSection } from "../../components/readme-card-section";
 import { Button } from "../../components/ui/button";
 import { Code } from "../../components/ui/code";
 import { ErrorText } from "../../components/ui/error-text";
@@ -44,6 +45,7 @@ function SettingsPage() {
   return (
     <div className="flex flex-col gap-10 px-4 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+      <ReadmeCardSection login={me.user.login} />
       <DevicesSection login={me.user.login} />
       <TokensSection />
     </div>
