@@ -8,6 +8,7 @@ import {
   formatDayRange,
   formatInteger,
   formatMonth,
+  formatMonthDay,
   formatMonthLong,
   formatPercent,
   formatTokens,
@@ -145,6 +146,7 @@ describe("date formatters", () => {
     expect(formatDay("2026-06-21")).toBe("Sun, Jun 21, 2026");
     expect(formatMonth("2026-07")).toBe("Jul");
     expect(formatMonth("2026-07-01")).toBe("Jul");
+    expect(formatMonthDay("2026-01-01")).toBe("Jan 1");
     expect(formatMonthLong("2026-06")).toBe("June 2026");
   });
 

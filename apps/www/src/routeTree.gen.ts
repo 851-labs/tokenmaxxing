@@ -24,6 +24,7 @@ import { Route as TermsRouteImport } from './routes/terms'
 import { Route as homeIndexRouteImport } from './routes/(home)/index'
 import { Route as AuthedInternalRouteRouteImport } from './routes/_authed/internal/route'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed/settings'
+import { Route as CardChar123loginChar125DotsvgRouteImport } from './routes/card/{$login}[.]svg'
 import { Route as FaviconChar123loginChar125DotsvgRouteImport } from './routes/favicon/{$login}[.]svg'
 import { Route as LoginCliRouteImport } from './routes/login_.cli'
 import { Route as OgCardIndexRouteImport } from './routes/og-card/index'
@@ -104,6 +105,12 @@ const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AuthedRoute,
 } as any)
+const CardChar123loginChar125DotsvgRoute =
+  CardChar123loginChar125DotsvgRouteImport.update({
+    id: '/card/{$login}.svg',
+    path: '/card/{$login}.svg',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FaviconChar123loginChar125DotsvgRoute =
   FaviconChar123loginChar125DotsvgRouteImport.update({
     id: '/favicon/{$login}.svg',
@@ -147,6 +154,7 @@ export interface FileRoutesByFullPath {
   '/terms': typeof TermsRoute
   '/internal': typeof AuthedInternalRouteRoute
   '/settings': typeof AuthedSettingsRoute
+  '/card/{$login}.svg': typeof CardChar123loginChar125DotsvgRoute
   '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
@@ -168,6 +176,7 @@ export interface FileRoutesByTo {
   '/terms': typeof TermsRoute
   '/internal': typeof AuthedInternalRouteRoute
   '/settings': typeof AuthedSettingsRoute
+  '/card/{$login}.svg': typeof CardChar123loginChar125DotsvgRoute
   '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
@@ -190,6 +199,7 @@ export interface FileRoutesById {
   '/terms': typeof TermsRoute
   '/_authed/internal': typeof AuthedInternalRouteRoute
   '/_authed/settings': typeof AuthedSettingsRoute
+  '/card/{$login}.svg': typeof CardChar123loginChar125DotsvgRoute
   '/favicon/{$login}.svg': typeof FaviconChar123loginChar125DotsvgRoute
   '/login_/cli': typeof LoginCliRoute
   '/og-card/$login': typeof OgCardLoginRoute
@@ -214,6 +224,7 @@ export interface FileRouteTypes {
     | '/terms'
     | '/internal'
     | '/settings'
+    | '/card/{$login}.svg'
     | '/favicon/{$login}.svg'
     | '/login/cli'
     | '/og-card/$login'
@@ -235,6 +246,7 @@ export interface FileRouteTypes {
     | '/terms'
     | '/internal'
     | '/settings'
+    | '/card/{$login}.svg'
     | '/favicon/{$login}.svg'
     | '/login/cli'
     | '/og-card/$login'
@@ -256,6 +268,7 @@ export interface FileRouteTypes {
     | '/terms'
     | '/_authed/internal'
     | '/_authed/settings'
+    | '/card/{$login}.svg'
     | '/favicon/{$login}.svg'
     | '/login_/cli'
     | '/og-card/$login'
@@ -277,6 +290,7 @@ export interface RootRouteChildren {
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   TermsRoute: typeof TermsRoute
+  CardChar123loginChar125DotsvgRoute: typeof CardChar123loginChar125DotsvgRoute
   FaviconChar123loginChar125DotsvgRoute: typeof FaviconChar123loginChar125DotsvgRoute
   LoginCliRoute: typeof LoginCliRoute
   OgCardLoginRoute: typeof OgCardLoginRoute
@@ -392,6 +406,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedSettingsRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/card/{$login}.svg': {
+      id: '/card/{$login}.svg'
+      path: '/card/{$login}.svg'
+      fullPath: '/card/{$login}.svg'
+      preLoaderRoute: typeof CardChar123loginChar125DotsvgRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/favicon/{$login}.svg': {
       id: '/favicon/{$login}.svg'
       path: '/favicon/{$login}.svg'
@@ -456,6 +477,7 @@ const rootRouteChildren: RootRouteChildren = {
   RobotsDottxtRoute: RobotsDottxtRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   TermsRoute: TermsRoute,
+  CardChar123loginChar125DotsvgRoute: CardChar123loginChar125DotsvgRoute,
   FaviconChar123loginChar125DotsvgRoute: FaviconChar123loginChar125DotsvgRoute,
   LoginCliRoute: LoginCliRoute,
   OgCardLoginRoute: OgCardLoginRoute,
