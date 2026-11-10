@@ -5,6 +5,13 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Fixed
+
+- Usage sync now requires ccusage 20.0.49 or newer, so turns from OpenCode's Claude Agent
+  provider count once, under Claude. Older ccusage releases also counted them under OpenCode,
+  priced from the `opus` model alias, which roughly doubled that usage. Days already synced keep
+  the higher count until the server's parser version changes.
+
 ### Server
 
 - A re-send no longer lowers usage when local logs went missing. The CLI re-sends the last 21 days,
