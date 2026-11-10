@@ -12,13 +12,14 @@ import type { CcusageSource } from "./sources";
 import { type CcusageEnv, ccusageSourceArgs, ccusageSourceEnv } from "./source-env";
 
 /**
- * Shells out to `bun x ccusage@^20.0.33 <source> daily --json --breakdown`, falling back to
+ * Shells out to `bun x ccusage@^20.0.49 <source> daily --json --breakdown`, falling back to
  * npx when bun is missing, cannot be started or does not take `bun x`. Runner and report
  * failures stay typed so the sync layer can distinguish them from valid empty reports.
  */
 
-// 20.0.33 reads Zstandard-compressed Codex rollouts (.jsonl.zst).
-const CCUSAGE_SPEC = "ccusage@^20.0.33";
+// 20.0.33 reads Zstandard-compressed Codex rollouts (.jsonl.zst); 20.0.49 stops counting
+// OpenCode Claude Agent turns under both Claude and OpenCode.
+const CCUSAGE_SPEC = "ccusage@^20.0.49";
 const RUN_TIMEOUT_MS = 180_000;
 const WINDOWS_NPX_SHIM = "npx.cmd";
 /** What `npm i -g bun` and pnpm put on PATH instead of bun.exe; cmd.exe has to run them. */
