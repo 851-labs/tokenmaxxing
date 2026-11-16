@@ -566,6 +566,12 @@ type LeaderboardWindow = typeof LeaderboardWindow.Type;
 const DEFAULT_LEADERBOARD_METRIC = "spend" as const satisfies LeaderboardMetric;
 const DEFAULT_LEADERBOARD_WINDOW = "30d" as const satisfies LeaderboardWindow;
 
+/** How many ranks a leaderboard page skips (query string): a non-negative integer. */
+const LeaderboardOffset = Schema.FiniteFromString.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(0),
+);
+
 /** One public user's usage over some window; the leaderboard adds `rank`. */
 const UserUsageMetric = Schema.Struct({
   activeDays: Schema.Number,
@@ -584,6 +590,12 @@ type LeaderboardEntry = typeof LeaderboardEntry.Type;
 const LeaderboardResponse = Schema.Struct({
   entries: Schema.Array(LeaderboardEntry),
   metric: LeaderboardMetric,
+  /**
+   * The `offset` of the next page, or null on the last one. The server always
+   * sends it; it is optional so a client still decodes a response cached from
+   * before pagination (treat a missing key as the last page).
+   */
+  nextOffset: Schema.optionalKey(Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)))),
   window: LeaderboardWindow,
 });
 
@@ -946,6 +958,7 @@ export {
   IngestUsageInput,
   LeaderboardEntry,
   LeaderboardMetric,
+  LeaderboardOffset,
   LeaderboardResponse,
   LeaderboardWindow,
   ListAccountsResponse,

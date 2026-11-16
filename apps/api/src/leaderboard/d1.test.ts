@@ -95,6 +95,27 @@ describe("D1 leaderboard ranking", () => {
     expect(entries.map((entry) => entry.user.login)).toEqual(["bravo", "charlie"]);
   });
 
+  it("skips the first `offset` ranks and keeps later ranks", async () => {
+    usage("alpha", "2026-07-01", 1, 1);
+    usage("bravo", "2026-07-01", 4, 4);
+    usage("charlie", "2026-07-01", 3, 3);
+    usage("delta", "2026-07-01", 2, 2);
+    const leaderboard = await makeLeaderboard();
+
+    const second = await Effect.runPromise(
+      leaderboard.list({ limit: 2, metric: "spend", offset: 2, since: null, until }),
+    );
+    const past = await Effect.runPromise(
+      leaderboard.list({ limit: 2, metric: "spend", offset: 4, since: null, until }),
+    );
+
+    expect(second.map((entry) => [entry.rank, entry.user.login])).toEqual([
+      [3, "delta"],
+      [4, "alpha"],
+    ]);
+    expect(past).toEqual([]);
+  });
+
   it("windows usage by an inclusive since date", async () => {
     usage("alpha", "2026-06-30", 100, 100);
     usage("alpha", "2026-07-01", 1, 1);

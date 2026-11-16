@@ -4,7 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { MIN_USAGE_DATE_KEY, UserNotFound } from "@tokenmaxxing/api-contract";
+import { MIN_USAGE_DATE_KEY, UserNotFound, utcDayKey } from "@tokenmaxxing/api-contract";
 
 import { AdminService } from "../admin/service";
 import { SESSION_COOKIE } from "../auth/cookies";
@@ -21,6 +21,7 @@ import { ServicesLive } from "../services";
 import { StatsService } from "../stats/service";
 import { makeTestApp, TEST_CORS_ORIGIN, type TestApp } from "../testing/http";
 import { makeFakeRateLimiter } from "../testing/rate-limiter";
+import { seedUsage, seedUser } from "../testing/seed";
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
 import { TokensService } from "../tokens/service";
 import { RawUsageObjectStore } from "../usage/raw-store";
@@ -319,6 +320,9 @@ describe("API HTTP responses", () => {
     it.each([
       ["/leaderboard?metric=bogus", "Invalid query parameter `metric`."],
       ["/leaderboard?window=forever", "Invalid query parameter `window`."],
+      ["/leaderboard?offset=-1", "Invalid query parameter `offset`."],
+      ["/leaderboard?offset=1.5", "Invalid query parameter `offset`."],
+      ["/leaderboard?offset=next", "Invalid query parameter `offset`."],
       ["/profiles/alex/daily?since=2026-02-30", "Invalid query parameter `since`."],
       ["/profiles/alex/daily?until=tomorrow", "Invalid query parameter `until`."],
     ])("answers GET %s with a 400 naming the field", async (path, message) => {
@@ -696,6 +700,76 @@ describe("api wiring over real services", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("set-cookie")).toContain(`${SESSION_COOKIE}=;`);
   });
+  it("pages the leaderboard with continuous ranks under the same filters", async () => {
+    const today = utcDayKey(new Date());
+    // Token order is u000..u200; spend order is the reverse.
+    const logins = Array.from({ length: 201 }, (_, index) => `u${String(index).padStart(3, "0")}`);
+    for (const [index, login] of logins.entries()) {
+      seedUser(database.sqlite, { id: login });
+      seedUsage(database.sqlite, {
+        costUsd: index,
+        date: today,
+        deviceId: `${login}-device`,
+        totalTokens: 1_000 - index,
+        userId: login,
+      });
+    }
+    // Tops all-time tokens, but falls outside the 7-day window.
+    seedUser(database.sqlite, { id: "old" });
+    seedUsage(database.sqlite, {
+      date: "2020-01-01",
+      deviceId: "old-device",
+      totalTokens: 1_000_000,
+      userId: "old",
+    });
+
+    const pages: {
+      entries: { rank: number; user: { login: string } }[];
+      [key: string]: unknown;
+    }[] = [];
+    let offset: number | null = 0;
+    while (offset !== null) {
+      const query = offset === 0 ? "" : `&offset=${offset}`;
+      const response = await serve(
+        fetch,
+        apiRequest(`/leaderboard?metric=tokens&window=7d${query}`),
+      );
+      expect(response.status).toBe(200);
+      const page = (await response.json()) as (typeof pages)[number] & {
+        nextOffset: number | null;
+      };
+      pages.push(page);
+      offset = page.nextOffset;
+    }
+
+    expect(pages.map(({ entries, ...rest }) => ({ ...rest, rows: entries.length }))).toEqual([
+      { metric: "tokens", nextOffset: 100, rows: 100, window: "7d" },
+      { metric: "tokens", nextOffset: 200, rows: 100, window: "7d" },
+      { metric: "tokens", nextOffset: null, rows: 1, window: "7d" },
+    ]);
+    const entries = pages.flatMap((page) => page.entries);
+    expect(entries.map((entry) => entry.rank)).toEqual(logins.map((_, index) => index + 1));
+    expect(entries.map((entry) => entry.user.login)).toEqual(logins);
+  });
+
+  it("ends the leaderboard with a null nextOffset when the last page is full", async () => {
+    for (let index = 0; index < 100; index += 1) {
+      const login = `u${String(index).padStart(3, "0")}`;
+      seedUser(database.sqlite, { id: login });
+      seedUsage(database.sqlite, {
+        costUsd: 100 - index,
+        date: "2026-07-01",
+        deviceId: `${login}-device`,
+        userId: login,
+      });
+    }
+
+    const first = await serve(fetch, apiRequest("/leaderboard?window=all"));
+    const past = await serve(fetch, apiRequest("/leaderboard?window=all&offset=500"));
+
+    expect(await first.json()).toMatchObject({ nextOffset: null, window: "all" });
+    expect(await past.json()).toMatchObject({ entries: [], nextOffset: null });
+  });
 });
 
 /** Stub services; AppConfig counts how often the router graph is built. */
@@ -728,7 +802,10 @@ function makeHarness() {
         AuthService.of({ ...stub(AuthService), resolveSession: () => Effect.succeedNone }),
       ),
       Layer.succeed(CliLoginService, stub(CliLoginService)),
-      Layer.succeed(LeaderboardService, LeaderboardService.of({ list: () => Effect.succeed([]) })),
+      Layer.succeed(
+        LeaderboardService,
+        LeaderboardService.of({ list: () => Effect.succeed({ entries: [], nextOffset: null }) }),
+      ),
       Layer.succeed(OAuthProviders, stub(OAuthProviders)),
       Layer.succeed(ProfilesService, profiles),
       Layer.succeed(RateLimiter, unlimitedRateLimiter),
