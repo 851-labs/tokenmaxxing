@@ -18,7 +18,7 @@ import { Effect, Option, Schema } from "effect";
  * lets re-sent days come back lower or drop models (see `keptDays`). A bump
  * re-counts every device's trailing window once, losses included.
  */
-const PARSER_VERSION = "ccusage-v20-raw-7";
+const PARSER_VERSION = "ccusage-v20-raw-8";
 
 const MAX_MODELS_PER_DAY = 256;
 

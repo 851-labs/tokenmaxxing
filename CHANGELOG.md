@@ -5,6 +5,13 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+### Server
+
+- The parser version moves to `ccusage-v20-raw-8`, so each device re-counts its trailing window
+  once and days can come back lower. CLIs that run ccusage 20.0.49 or newer stop counting OpenCode
+  Claude Agent turns under both the claude and opencode sources, and their stored days were
+  otherwise kept at the doubled count.
+
 ## 0.7.9 - 2026-11-15
 
 ### Fixed
