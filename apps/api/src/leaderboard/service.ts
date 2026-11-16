@@ -25,6 +25,10 @@ interface LeaderboardPage {
   entries: (typeof LeaderboardEntry.Type)[];
   /** The offset of the next page; null when this is the last one. */
   nextOffset: number | null;
+  /** Users ranked under the page's metric and window. */
+  total: number;
+  /** The viewer's rank under the same metric and window; null when signed out or unranked. */
+  viewerRank: number | null;
 }
 
 interface LeaderboardServiceShape {
@@ -33,20 +37,31 @@ interface LeaderboardServiceShape {
     window: typeof LeaderboardWindow.Type,
     /** Ranks to skip; the page starts at rank `offset + 1`. */
     offset?: number,
+    /** The signed-in viewer, whose rank the page reports; null when signed out. */
+    viewerId?: string | null,
   ): Effect.Effect<LeaderboardPage>;
 }
 
+interface LeaderboardRankingInput {
+  metric: typeof LeaderboardMetric.Type;
+  /** Inclusive YYYY-MM-DD lower bound; null = all time. */
+  since: string | null;
+  /** Inclusive YYYY-MM-DD upper bound. */
+  until: string;
+}
+
 interface LeaderboardRepositoryShape {
-  list(input: {
-    limit: number;
-    metric: typeof LeaderboardMetric.Type;
-    /** Ranks to skip; defaults to 0. */
-    offset?: number;
-    /** Inclusive YYYY-MM-DD lower bound; null = all time. */
-    since: string | null;
-    /** Inclusive YYYY-MM-DD upper bound. */
-    until: string;
-  }): Effect.Effect<(typeof LeaderboardEntry.Type)[], DatabaseError>;
+  list(
+    input: LeaderboardRankingInput & {
+      limit: number;
+      /** Ranks to skip; defaults to 0. */
+      offset?: number;
+    },
+  ): Effect.Effect<(typeof LeaderboardEntry.Type)[], DatabaseError>;
+  /** The ranking's size and one user's rank in it (null when unranked or no user). */
+  summary(
+    input: LeaderboardRankingInput & { userId: string | null },
+  ): Effect.Effect<{ total: number; userRank: number | null }, DatabaseError>;
 }
 
 class LeaderboardService extends Context.Service<LeaderboardService, LeaderboardServiceShape>()(
@@ -62,23 +77,33 @@ const makeLeaderboardService = Effect.fn("makeLeaderboardService")(function* () 
   const repository = yield* LeaderboardRepository;
 
   return LeaderboardService.of({
-    list: Effect.fn("LeaderboardService.list")(function* (metric, window, offset = 0) {
+    list: Effect.fn("LeaderboardService.list")(function* (
+      metric,
+      window,
+      offset = 0,
+      viewerId = null,
+    ) {
       const now = new Date();
-      // One extra row says whether another page follows, without a count query.
-      const rows = yield* repository
-        .list({
-          limit: LEADERBOARD_PAGE_SIZE + 1,
-          metric,
-          offset,
-          since: leaderboardWindowStart(window, now),
-          until: latestUsageDateKey(now),
-        })
-        .pipe(Effect.orDie);
+      const ranking = {
+        metric,
+        since: leaderboardWindowStart(window, now),
+        until: latestUsageDateKey(now),
+      };
+      const [rows, summary] = yield* Effect.all(
+        [
+          // One extra row says whether another page follows.
+          repository.list({ ...ranking, limit: LEADERBOARD_PAGE_SIZE + 1, offset }),
+          repository.summary({ ...ranking, userId: viewerId }),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.orDie);
       const hasMore = rows.length > LEADERBOARD_PAGE_SIZE;
 
       return {
         entries: hasMore ? rows.slice(0, LEADERBOARD_PAGE_SIZE) : rows,
         nextOffset: hasMore ? offset + LEADERBOARD_PAGE_SIZE : null,
+        total: summary.total,
+        viewerRank: summary.userRank,
       };
     }),
   });

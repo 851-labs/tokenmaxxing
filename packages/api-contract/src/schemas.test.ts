@@ -294,6 +294,22 @@ describe("stats responses", () => {
       ).rejects.toThrow();
     }
   });
+
+  it("decodes the ranked total and viewer rank, and responses without them", async () => {
+    const legacy = { entries: [], metric: "spend", nextOffset: null, window: "30d" };
+    const decode = Schema.decodeUnknownPromise(LeaderboardResponse);
+
+    await expect(decode(legacy)).resolves.toEqual(legacy);
+    for (const fields of [
+      { total: 0, viewerRank: null },
+      { total: 1_284, viewerRank: 342 },
+    ]) {
+      await expect(decode({ ...legacy, ...fields })).resolves.toEqual({ ...legacy, ...fields });
+    }
+    for (const fields of [{ total: -1 }, { total: 1.5 }, { viewerRank: 0 }, { viewerRank: 2.5 }]) {
+      await expect(decode({ ...legacy, ...fields })).rejects.toThrow();
+    }
+  });
 });
 
 describe("admin fleet responses", () => {

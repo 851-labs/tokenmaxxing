@@ -175,4 +175,31 @@ describe("D1 leaderboard ranking", () => {
     ]);
     expect(profileRanks).toEqual(entries.map((entry) => entry.rank));
   });
+
+  it("counts the ranked users and finds one user's rank on the same board", async () => {
+    usage("alpha", "2026-06-30", 100, 100);
+    usage("bravo", "2026-07-01", 4, 4);
+    usage("charlie", "2026-07-01", 3, 3);
+    usage("delta", "2026-07-01", 2, 2);
+    seedUser(database.sqlite, { id: "banned", shadowBannedAt: 1 });
+    usage("banned", "2026-07-01", 1_000, 1_000);
+    const leaderboard = await makeLeaderboard();
+    const summary = (userId: string | null, since: string | null = null) =>
+      Effect.runPromise(leaderboard.summary({ metric: "spend", since, until, userId }));
+    const board = await Effect.runPromise(
+      leaderboard.list({ limit: 10, metric: "spend", since: null, until }),
+    );
+
+    // Every ranked user's summary rank matches their leaderboard row.
+    for (const entry of board) {
+      expect(await summary(entry.user.login)).toEqual({ total: 4, userRank: entry.rank });
+    }
+    expect(board.map((entry) => entry.user.login)).not.toContain("banned");
+    expect(await summary("banned")).toEqual({ total: 4, userRank: null });
+    expect(await summary(null)).toEqual({ total: 4, userRank: null });
+    // alpha's only usage falls before the window.
+    expect(await summary("alpha", "2026-07-01")).toEqual({ total: 3, userRank: null });
+    expect(await summary("delta", "2026-07-01")).toEqual({ total: 3, userRank: 3 });
+    expect(await summary(null, "2027-01-01")).toEqual({ total: 0, userRank: null });
+  });
 });

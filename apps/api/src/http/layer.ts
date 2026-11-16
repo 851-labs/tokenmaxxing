@@ -282,9 +282,10 @@ const leaderboardHandlers = HttpApiBuilder.group(TokenmaxxingApi, "leaderboard",
       const metric = query.metric ?? DEFAULT_LEADERBOARD_METRIC;
       const window = query.window ?? DEFAULT_LEADERBOARD_WINDOW;
 
-      const { entries, nextOffset } = yield* leaderboard.list(metric, window, query.offset);
-      yield* cacheControl(PUBLIC_READ_CACHE_CONTROL);
-      return { entries, metric, nextOffset, window };
+      const page = yield* leaderboard.list(metric, window, query.offset, yield* viewerUserId);
+      // The page carries the viewer's rank, so a signed-in response is private.
+      yield* cacheControl(yield* viewerCacheControl());
+      return { ...page, metric, window };
     }),
   ),
 );

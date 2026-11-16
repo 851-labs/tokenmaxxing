@@ -166,7 +166,7 @@ function HeroSection() {
 
 function FaqSection() {
   return (
-    <section className="scroll-mt-14 pt-8" id="faq" aria-labelledby="homepage-faq-title">
+    <section className="scroll-mt-14 pt-14" id="faq" aria-labelledby="homepage-faq-title">
       <h2 id="homepage-faq-title" className="px-4 text-lg font-semibold tracking-tight">
         FAQ
       </h2>

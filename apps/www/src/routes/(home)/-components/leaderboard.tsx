@@ -1,18 +1,18 @@
-import { useSuspenseInfiniteQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type {
   LeaderboardMetric,
   LeaderboardResponse,
   LeaderboardWindow,
 } from "@tokenmaxxing/api-contract";
-import { useState } from "react";
+import { type Ref, useEffect, useRef, useState } from "react";
 
 import { Avatar } from "../../../components/ui/avatar";
 import { Button } from "../../../components/ui/button";
 import { ErrorText } from "../../../components/ui/error-text";
 import { cn } from "../../../lib/cn";
-import { formatTokens, formatUsd } from "../../../lib/format";
-import { leaderboardQueryOptions } from "../../../lib/queries";
+import { formatInteger, formatTokens, formatUsd } from "../../../lib/format";
+import { leaderboardQueryOptions, meQueryOptions } from "../../../lib/queries";
 
 type LeaderboardEntry = (typeof LeaderboardResponse.Type)["entries"][number];
 
@@ -46,36 +46,128 @@ const LOGIN_CELL = "whitespace-nowrap py-3 pr-2 pl-0.5 sm:pr-3";
 const HEADER_ROW_BG = "bg-[color-mix(in_oklab,var(--color-muted)_50%,var(--color-background))]";
 const BODY_ROW_BG =
   "bg-background hover:bg-[color-mix(in_oklab,var(--color-muted)_40%,var(--color-background))]";
+/** How long "Find me" marks the viewer's row: `--animate-row-highlight` in styles.css. */
+const HIGHLIGHT_MS = 2_400;
 
 /**
- * The ranked table plus a "Load more" button that appends the next page under
- * the same metric and window. The API ranks every page against the full
- * board, so ranks continue across pages; the button disappears on the last.
+ * The ranked table plus a footer row: how much of the board is loaded, a
+ * "Find me" jump to the signed-in viewer's row, and "Load 100 more", which
+ * appends the next page under the same metric and window. The API ranks every
+ * page against the full board, so ranks continue across pages.
  */
 function Leaderboard({ metric, window }: { metric: LeaderboardMetric; window: LeaderboardWindow }) {
   const { data, fetchNextPage, hasNextPage, isFetchNextPageError, isFetchingNextPage } =
     useSuspenseInfiniteQuery(leaderboardQueryOptions(metric, window));
+  const viewer = useQuery(meQueryOptions).data?.user ?? null;
+  const [finding, setFinding] = useState(false);
+  // A fresh object per jump, so finding the same row twice scrolls again.
+  const [highlight, setHighlight] = useState<{ login: string } | null>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+
   const entries = uniqueByLogin(data.pages.flatMap((page) => page.entries));
+  // The newest page has the freshest count and rank; both are absent on
+  // responses cached before the API sent them.
+  const latest = data.pages.at(-1);
+  const viewerRank = viewer === null ? null : (latest?.viewerRank ?? null);
+
+  useEffect(() => {
+    if (highlight === null) {
+      return;
+    }
+    const row = [...(boardRef.current?.querySelectorAll<HTMLElement>("tbody tr") ?? [])].find(
+      (candidate) => candidate.dataset["login"] === highlight.login,
+    );
+    const reduceMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    row?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    // Keyboard users continue from their own row.
+    row?.querySelector<HTMLElement>("[data-login-link]")?.focus({ preventScroll: true });
+    const timer = setTimeout(() => setHighlight(null), HIGHLIGHT_MS);
+    return () => clearTimeout(timer);
+  }, [highlight]);
+
+  /** Loads pages until the viewer's row is on the board, then jumps to it. */
+  async function findViewer(login: string) {
+    setFinding(true);
+    try {
+      let result: {
+        data?: typeof data | undefined;
+        hasNextPage: boolean;
+        isFetchNextPageError: boolean;
+      } = { data, hasNextPage, isFetchNextPageError: false };
+      while (
+        !result.data?.pages.some((page) => page.entries.some((entry) => entry.user.login === login))
+      ) {
+        if (!result.hasNextPage || result.isFetchNextPageError) {
+          return;
+        }
+        result = await fetchNextPage();
+      }
+      setHighlight({ login });
+    } finally {
+      setFinding(false);
+    }
+  }
 
   return (
     <>
-      <LeaderboardTable entries={entries} />
-      {hasNextPage ? (
-        <div className="flex flex-col items-center gap-2 px-4 pt-4">
-          <Button
-            aria-busy={isFetchingNextPage}
-            disabled={isFetchingNextPage}
-            onClick={() => void fetchNextPage()}
-            size="sm"
-            variant="outline"
-          >
-            {isFetchingNextPage ? "Loading…" : "Load more"}
-          </Button>
-          {isFetchNextPageError ? <ErrorText>Couldn't load more rows. Try again.</ErrorText> : null}
+      <LeaderboardTable boardRef={boardRef} entries={entries} highlighted={highlight?.login} />
+      {entries.length > 0 ? (
+        <div className="flex h-[49px] w-full items-center justify-between gap-3 border-b border-border px-2 text-sm sm:px-3">
+          {/* Phones drop "Showing" and "100" so the row fits on one line. */}
+          <span className="min-w-0 truncate font-mono tabular-nums text-muted-foreground">
+            <span className="max-sm:hidden">Showing </span>
+            {progressText(entries, latest?.total)}
+          </span>
+          <div className="flex shrink-0 items-center gap-1 whitespace-nowrap sm:gap-2">
+            {viewer !== null && viewerRank !== null ? (
+              <Button
+                aria-busy={finding}
+                className="max-sm:px-1.5"
+                disabled={finding || isFetchingNextPage}
+                onClick={() => void findViewer(viewer.login)}
+                size="sm"
+                variant="ghost"
+              >
+                Find me
+                <span className="font-mono tabular-nums">#{formatInteger(viewerRank)}</span>
+              </Button>
+            ) : null}
+            {hasNextPage ? (
+              <Button
+                aria-busy={isFetchingNextPage}
+                disabled={finding || isFetchingNextPage}
+                onClick={() => void fetchNextPage()}
+                size="sm"
+                variant="outline"
+              >
+                {isFetchingNextPage ? (
+                  "Loading…"
+                ) : (
+                  <>
+                    Load<span className="max-sm:hidden"> 100</span> more
+                  </>
+                )}
+              </Button>
+            ) : null}
+          </div>
         </div>
+      ) : null}
+      {isFetchNextPageError ? (
+        <ErrorText className="px-4 pt-3 text-center">Couldn't load more rows. Try again.</ErrorText>
       ) : null}
     </>
   );
+}
+
+/**
+ * "1–200 of 1,284". The range ends at the last loaded rank (a row that moved
+ * between pages can leave fewer rows than ranks), and the total never reads
+ * below it if the board shrank since the first page.
+ */
+function progressText(entries: readonly LeaderboardEntry[], total: number | undefined): string {
+  const last = entries.at(-1)?.rank ?? entries.length;
+  const range = `1–${formatInteger(last)}`;
+  return total === undefined ? range : `${range} of ${formatInteger(Math.max(total, last))}`;
 }
 
 /**
@@ -93,7 +185,16 @@ function uniqueByLogin(entries: readonly LeaderboardEntry[]): LeaderboardEntry[]
   });
 }
 
-function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] }) {
+function LeaderboardTable({
+  boardRef,
+  entries,
+  highlighted,
+}: {
+  boardRef: Ref<HTMLDivElement>;
+  entries: readonly LeaderboardEntry[];
+  /** The login whose row is tinted after "Find me". */
+  highlighted: string | undefined;
+}) {
   const [scrolled, setScrolled] = useState(false);
 
   if (entries.length === 0) {
@@ -111,6 +212,7 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
     // (never the page), and it is focusable so keyboards can scroll it too.
     <div
       aria-label="Leaderboard table"
+      ref={boardRef}
       className="group/board overflow-x-auto overscroll-x-contain border-y border-border outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
       data-scrolled={scrolled ? "" : undefined}
       onScroll={(event) => setScrolled(event.currentTarget.scrollLeft > 0)}
@@ -157,7 +259,10 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
               className={cn(
                 "transition-colors [&>td]:border-b [&>td]:border-border last:[&>td]:border-b-0",
                 BODY_ROW_BG,
+                "data-highlighted:animate-row-highlight",
               )}
+              data-highlighted={entry.user.login === highlighted ? "" : undefined}
+              data-login={entry.user.login}
               key={entry.user.login}
             >
               <td className={PINNED_CELL}>
@@ -180,6 +285,7 @@ function LeaderboardTable({ entries }: { entries: readonly LeaderboardEntry[] })
               <td className={LOGIN_CELL}>
                 <Link
                   className="font-medium hover:underline"
+                  data-login-link=""
                   params={{ user: entry.user.login }}
                   to="/$user"
                 >

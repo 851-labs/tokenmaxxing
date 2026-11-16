@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 
 import { Drizzle } from "../database";
-import { topUsers } from "../usage/ranking";
+import { rankingSummary, topUsers } from "../usage/ranking";
 import { LeaderboardRepository, LeaderboardService, makeLeaderboardService } from "./service";
 
 const makeD1LeaderboardRepository = Effect.fn("makeD1LeaderboardRepository")(function* () {
@@ -9,6 +9,13 @@ const makeD1LeaderboardRepository = Effect.fn("makeD1LeaderboardRepository")(fun
 
   return LeaderboardRepository.of({
     list: (input) => database.use((db) => topUsers(db, input)),
+    summary: (input) =>
+      database
+        .use((db) => rankingSummary(db, input))
+        .pipe(
+          // An aggregate without GROUP BY always yields exactly one row.
+          Effect.map(([row]) => ({ total: row?.total ?? 0, userRank: row?.userRank ?? null })),
+        ),
   });
 });
 

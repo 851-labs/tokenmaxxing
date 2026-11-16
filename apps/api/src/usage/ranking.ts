@@ -96,6 +96,26 @@ function userRank(db: DrizzleD1Database, options: RankingOptions & { userId: str
     .limit(1);
 }
 
-export { leaderboardWindowStart, rankedUsers, topUsers, userRank };
+/**
+ * How many users the ranking holds, and one user's rank in it (null when they
+ * have no visible usage in the window, or no user is given), in one pass.
+ */
+function rankingSummary(
+  db: DrizzleD1Database,
+  options: RankingOptions & { userId: string | null },
+) {
+  const ranked = rankedUsers(db, options);
+
+  return db
+    .select({
+      total: sql<number>`count(*)`.mapWith(Number),
+      userRank: sql<
+        number | null
+      >`max(case when ${ranked.userId} = ${options.userId} then ${ranked.rank} end)`,
+    })
+    .from(ranked);
+}
+
+export { leaderboardWindowStart, rankedUsers, rankingSummary, topUsers, userRank };
 
 export type { RankingOptions };
