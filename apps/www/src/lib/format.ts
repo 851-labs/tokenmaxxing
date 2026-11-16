@@ -231,6 +231,11 @@ const dayShort = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
   year: "numeric",
 });
+const monthDay = new Intl.DateTimeFormat("en-US", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+});
 const dateTimeUtc = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   hour: "numeric",
@@ -251,6 +256,11 @@ function formatDayRange(first: string, last: string): string {
   return first === last
     ? formatDay(first)
     : dayShort.formatRange(new Date(`${first}T00:00:00Z`), new Date(`${last}T00:00:00Z`));
+}
+
+/** A YYYY-MM-DD key without the year, e.g. "Oct 20" — for compact chart axes. */
+function formatMonthDay(date: string): string {
+  return monthDay.format(new Date(`${date}T00:00:00Z`));
 }
 
 /** Short month name for a YYYY-MM (or YYYY-MM-DD) key, e.g. "Jun". */
@@ -277,6 +287,7 @@ export {
   formatDayRange,
   formatInteger,
   formatMonth,
+  formatMonthDay,
   formatMonthLong,
   formatPercent,
   formatTokens,
