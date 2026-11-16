@@ -5,6 +5,8 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ## Unreleased
 
+## 0.7.9 - 2026-11-15
+
 ### Fixed
 
 - Usage sync now requires ccusage 20.0.49 or newer, so turns from OpenCode's Claude Agent
