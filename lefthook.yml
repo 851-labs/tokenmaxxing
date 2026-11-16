@@ -5,3 +5,17 @@ pre-commit:
       run: bun run check
     test:
       run: bun run test
+
+# Git never copies ignored files into a new worktree, so `bun run dev` there has
+# no OAuth keys. Copy the main checkout's dev .env into a new linked worktree
+# (never .env.production, and never over an existing .env).
+post-checkout:
+  commands:
+    worktree-env:
+      run: |
+        common=$(git rev-parse --path-format=absolute --git-common-dir)
+        [ "$(git rev-parse --path-format=absolute --git-dir)" = "$common" ] && exit 0
+        main=$(dirname "$common"); top=$(git rev-parse --show-toplevel)
+        if [ -f "$main/.env" ] && [ ! -e "$top/.env" ]; then
+          cp -p "$main/.env" "$top/.env" && echo "Copied .env from $main"
+        fi
