@@ -21,7 +21,7 @@ import { ServicesLive } from "../services";
 import { StatsService } from "../stats/service";
 import { makeTestApp, TEST_CORS_ORIGIN, type TestApp } from "../testing/http";
 import { makeFakeRateLimiter } from "../testing/rate-limiter";
-import { seedUsage, seedUser } from "../testing/seed";
+import { seedSession, seedUsage, seedUser } from "../testing/seed";
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
 import { TokensService } from "../tokens/service";
 import { RawUsageObjectStore } from "../usage/raw-store";
@@ -97,6 +97,11 @@ describe("api cache headers", () => {
       fetch,
       apiRequest("/profiles/visible/daily", { cookie: `${SESSION_COOKIE}=session-token` }),
     );
+    // Carries the viewer's rank, so it is per-viewer too.
+    const signedInLeaderboard = await serve(
+      fetch,
+      apiRequest("/leaderboard", { cookie: `${SESSION_COOKIE}=session-token` }),
+    );
     const health = await serve(fetch, apiRequest("/health"));
 
     expect(missing.status).toBe(404);
@@ -106,6 +111,8 @@ describe("api cache headers", () => {
     );
     expect(signedIn.status).toBe(200);
     expect(signedIn.headers.get("cache-control")).toBe("private, no-store");
+    expect(signedInLeaderboard.status).toBe(200);
+    expect(signedInLeaderboard.headers.get("cache-control")).toBe("private, no-store");
     expect(health.headers.get("cache-control")).toBeNull();
   });
 });
@@ -742,10 +749,12 @@ describe("api wiring over real services", () => {
       offset = page.nextOffset;
     }
 
-    expect(pages.map(({ entries, ...rest }) => ({ ...rest, rows: entries.length }))).toEqual([
-      { metric: "tokens", nextOffset: 100, rows: 100, window: "7d" },
-      { metric: "tokens", nextOffset: 200, rows: 100, window: "7d" },
-      { metric: "tokens", nextOffset: null, rows: 1, window: "7d" },
+    // `old` is outside the window, so the total counts only the 201 ranked here.
+    const rest = { metric: "tokens", total: 201, viewerRank: null, window: "7d" };
+    expect(pages.map(({ entries, ...fields }) => ({ ...fields, rows: entries.length }))).toEqual([
+      { ...rest, nextOffset: 100, rows: 100 },
+      { ...rest, nextOffset: 200, rows: 100 },
+      { ...rest, nextOffset: null, rows: 1 },
     ]);
     const entries = pages.flatMap((page) => page.entries);
     expect(entries.map((entry) => entry.rank)).toEqual(logins.map((_, index) => index + 1));
@@ -767,8 +776,48 @@ describe("api wiring over real services", () => {
     const first = await serve(fetch, apiRequest("/leaderboard?window=all"));
     const past = await serve(fetch, apiRequest("/leaderboard?window=all&offset=500"));
 
-    expect(await first.json()).toMatchObject({ nextOffset: null, window: "all" });
-    expect(await past.json()).toMatchObject({ entries: [], nextOffset: null });
+    expect(await first.json()).toMatchObject({ nextOffset: null, total: 100, window: "all" });
+    expect(await past.json()).toMatchObject({ entries: [], nextOffset: null, total: 100 });
+  });
+
+  it("ranks the signed-in viewer under the requested metric and window", async () => {
+    const today = utcDayKey(new Date());
+    // alex (user_1) leads spend, trails tokens, and has no usage in the last 7 days.
+    seedUsage(database.sqlite, {
+      costUsd: 50,
+      date: "2020-01-01",
+      deviceId: "alex-device",
+      totalTokens: 1,
+      userId: "user_1",
+    });
+    for (const [index, login] of ["bea", "cy"].entries()) {
+      seedUser(database.sqlite, { id: login });
+      seedUsage(database.sqlite, {
+        costUsd: index + 1,
+        date: today,
+        deviceId: `${login}-device`,
+        totalTokens: 1_000 * (index + 1),
+        userId: login,
+      });
+    }
+    const token = "viewer-session";
+    seedSession(database.sqlite, await Effect.runPromise(sha256Hex(token)), "user_1");
+    const read = async (query: string, headers: Record<string, string> = {}) => {
+      const response = await serve(fetch, apiRequest(`/leaderboard?${query}`, headers));
+      expect(response.status).toBe(200);
+      const { total, viewerRank } = (await response.json()) as Record<string, unknown>;
+      return { total, viewerRank };
+    };
+    const signedIn = { cookie: `${SESSION_COOKIE}=${token}` };
+
+    expect(await read("metric=spend&window=all", signedIn)).toEqual({ total: 3, viewerRank: 1 });
+    expect(await read("metric=tokens&window=all", signedIn)).toEqual({ total: 3, viewerRank: 3 });
+    expect(await read("metric=tokens&window=all&offset=100", signedIn)).toEqual({
+      total: 3,
+      viewerRank: 3,
+    });
+    expect(await read("metric=spend&window=7d", signedIn)).toEqual({ total: 2, viewerRank: null });
+    expect(await read("metric=spend&window=all")).toEqual({ total: 3, viewerRank: null });
   });
 });
 
@@ -804,7 +853,9 @@ function makeHarness() {
       Layer.succeed(CliLoginService, stub(CliLoginService)),
       Layer.succeed(
         LeaderboardService,
-        LeaderboardService.of({ list: () => Effect.succeed({ entries: [], nextOffset: null }) }),
+        LeaderboardService.of({
+          list: () => Effect.succeed({ entries: [], nextOffset: null, total: 0, viewerRank: null }),
+        }),
       ),
       Layer.succeed(OAuthProviders, stub(OAuthProviders)),
       Layer.succeed(ProfilesService, profiles),

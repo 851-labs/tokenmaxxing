@@ -596,6 +596,16 @@ const LeaderboardResponse = Schema.Struct({
    * before pagination (treat a missing key as the last page).
    */
   nextOffset: Schema.optionalKey(Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)))),
+  /**
+   * How many users rank under this metric and window. Always sent; optional
+   * so a response cached before it existed still decodes.
+   */
+  total: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /**
+   * The signed-in viewer's rank under this metric and window; null when
+   * signed out or unranked. Always sent; optional like `total`.
+   */
+  viewerRank: Schema.optionalKey(Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)))),
   window: LeaderboardWindow,
 });
 

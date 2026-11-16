@@ -45,6 +45,16 @@
   --font-sans: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --animate-value-swap: value-swap 300ms cubic-bezier(0.2, 0, 0, 1);
+  /* "Find me" on the leaderboard: hold an accent tint on the row, then fade it out. */
+  --animate-row-highlight: row-highlight 2.4s ease-in;
+
+  /* The final frame is the row's own background, so the tint fades into it. */
+  @keyframes row-highlight {
+    0%,
+    50% {
+      background-color: color-mix(in oklab, var(--color-accent) 16%, var(--color-background));
+    }
+  }
 
   /* A changed value settling into place (see AnimatedText). */
   @keyframes value-swap {
