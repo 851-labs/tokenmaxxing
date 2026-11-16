@@ -1,4 +1,4 @@
-import { queryOptions, type QueryClient } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import type { LeaderboardMetric, LeaderboardWindow } from "@tokenmaxxing/api-contract";
 
 import { fetchViewer, runApi } from "./api";
@@ -67,10 +67,23 @@ const statsQueryOptions = queryOptions({
   staleTime: 30_000,
 });
 
+/**
+ * The leaderboard, one API page per query page. Each page asks for the ranks
+ * after `offset` under the same metric and window; the first page sends no
+ * offset, so its URL (and shared cache entry) is the unpaged one. A missing
+ * `nextOffset` (a response cached before pagination) reads as the last page.
+ */
 function leaderboardQueryOptions(metric: LeaderboardMetric, window: LeaderboardWindow) {
-  return queryOptions({
+  return infiniteQueryOptions({
     queryKey: queryKeys.leaderboardList(metric, window),
-    queryFn: () => runApi((client) => client.leaderboard.list({ query: { metric, window } })),
+    queryFn: ({ pageParam }) =>
+      runApi((client) =>
+        client.leaderboard.list({
+          query: pageParam === 0 ? { metric, window } : { metric, offset: pageParam, window },
+        }),
+      ),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
     staleTime: 30_000,
   });
 }

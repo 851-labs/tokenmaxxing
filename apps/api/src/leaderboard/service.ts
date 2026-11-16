@@ -18,19 +18,30 @@ import { leaderboardWindowStart } from "../usage/ranking";
  * in the future can never count.
  */
 
-const LEADERBOARD_LIMIT = 100;
+/** Rows per page. */
+const LEADERBOARD_PAGE_SIZE = 100;
+
+interface LeaderboardPage {
+  entries: (typeof LeaderboardEntry.Type)[];
+  /** The offset of the next page; null when this is the last one. */
+  nextOffset: number | null;
+}
 
 interface LeaderboardServiceShape {
   list(
     metric: typeof LeaderboardMetric.Type,
     window: typeof LeaderboardWindow.Type,
-  ): Effect.Effect<(typeof LeaderboardEntry.Type)[]>;
+    /** Ranks to skip; the page starts at rank `offset + 1`. */
+    offset?: number,
+  ): Effect.Effect<LeaderboardPage>;
 }
 
 interface LeaderboardRepositoryShape {
   list(input: {
     limit: number;
     metric: typeof LeaderboardMetric.Type;
+    /** Ranks to skip; defaults to 0. */
+    offset?: number;
     /** Inclusive YYYY-MM-DD lower bound; null = all time. */
     since: string | null;
     /** Inclusive YYYY-MM-DD upper bound. */
@@ -51,20 +62,28 @@ const makeLeaderboardService = Effect.fn("makeLeaderboardService")(function* () 
   const repository = yield* LeaderboardRepository;
 
   return LeaderboardService.of({
-    list: Effect.fn("LeaderboardService.list")(function* (metric, window) {
+    list: Effect.fn("LeaderboardService.list")(function* (metric, window, offset = 0) {
       const now = new Date();
-      return yield* repository
+      // One extra row says whether another page follows, without a count query.
+      const rows = yield* repository
         .list({
-          limit: LEADERBOARD_LIMIT,
+          limit: LEADERBOARD_PAGE_SIZE + 1,
           metric,
+          offset,
           since: leaderboardWindowStart(window, now),
           until: latestUsageDateKey(now),
         })
         .pipe(Effect.orDie);
+      const hasMore = rows.length > LEADERBOARD_PAGE_SIZE;
+
+      return {
+        entries: hasMore ? rows.slice(0, LEADERBOARD_PAGE_SIZE) : rows,
+        nextOffset: hasMore ? offset + LEADERBOARD_PAGE_SIZE : null,
+      };
     }),
   });
 });
 
-export { LeaderboardRepository, LeaderboardService, makeLeaderboardService };
+export { LEADERBOARD_PAGE_SIZE, LeaderboardRepository, LeaderboardService, makeLeaderboardService };
 
-export type { LeaderboardRepositoryShape };
+export type { LeaderboardPage, LeaderboardRepositoryShape };

@@ -1,5 +1,5 @@
 import { usageDays, users } from "@tokenmaxxing/db";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq, gt, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 import type { LeaderboardMetric, LeaderboardWindow } from "@tokenmaxxing/api-contract";
@@ -58,8 +58,15 @@ function rankedUsers(db: DrizzleD1Database, { metric, since, until }: RankingOpt
     .as("ranked_users");
 }
 
-/** The first `limit` ranked users with their public identity, best first. */
-function topUsers(db: DrizzleD1Database, options: RankingOptions & { limit: number }) {
+/**
+ * Up to `limit` ranked users after the first `offset` ranks (default 0), with
+ * their public identity, best first. Ranks are unique and gapless, so paging
+ * by rank keeps them continuous across pages.
+ */
+function topUsers(
+  db: DrizzleD1Database,
+  options: RankingOptions & { limit: number; offset?: number },
+) {
   const ranked = rankedUsers(db, options);
 
   return db
@@ -73,6 +80,7 @@ function topUsers(db: DrizzleD1Database, options: RankingOptions & { limit: numb
     })
     .from(ranked)
     .innerJoin(users, eq(ranked.userId, users.id))
+    .where(gt(ranked.rank, options.offset ?? 0))
     .orderBy(asc(ranked.rank))
     .limit(options.limit);
 }

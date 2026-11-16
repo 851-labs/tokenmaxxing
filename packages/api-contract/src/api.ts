@@ -32,6 +32,7 @@ import {
   HealthResponse,
   IngestUsageInput,
   LeaderboardMetric,
+  LeaderboardOffset,
   LeaderboardResponse,
   LeaderboardWindow,
   ListAccountsResponse,
@@ -177,6 +178,7 @@ class LeaderboardGroup extends HttpApiGroup.make("leaderboard").add(
   HttpApiEndpoint.get("list", "/leaderboard", {
     query: {
       metric: Schema.optional(LeaderboardMetric),
+      offset: Schema.optional(LeaderboardOffset),
       window: Schema.optional(LeaderboardWindow),
     },
     success: LeaderboardResponse,

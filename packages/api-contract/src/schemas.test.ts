@@ -280,6 +280,20 @@ describe("stats responses", () => {
 
     expect(encoded.entries[0]?.user).toEqual(userMetric.user);
   });
+
+  it("decodes leaderboard pages, and pre-pagination responses without nextOffset", async () => {
+    const legacy = { entries: [], metric: "spend", window: "30d" };
+
+    await expect(Schema.decodeUnknownPromise(LeaderboardResponse)(legacy)).resolves.toEqual(legacy);
+    await expect(
+      Schema.decodeUnknownPromise(LeaderboardResponse)({ ...legacy, nextOffset: 100 }),
+    ).resolves.toEqual({ ...legacy, nextOffset: 100 });
+    for (const nextOffset of [-1, 1.5]) {
+      await expect(
+        Schema.decodeUnknownPromise(LeaderboardResponse)({ ...legacy, nextOffset }),
+      ).rejects.toThrow();
+    }
+  });
 });
 
 describe("admin fleet responses", () => {

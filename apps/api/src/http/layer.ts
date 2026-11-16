@@ -282,9 +282,9 @@ const leaderboardHandlers = HttpApiBuilder.group(TokenmaxxingApi, "leaderboard",
       const metric = query.metric ?? DEFAULT_LEADERBOARD_METRIC;
       const window = query.window ?? DEFAULT_LEADERBOARD_WINDOW;
 
-      const entries = yield* leaderboard.list(metric, window);
+      const { entries, nextOffset } = yield* leaderboard.list(metric, window, query.offset);
       yield* cacheControl(PUBLIC_READ_CACHE_CONTROL);
-      return { entries, metric, window };
+      return { entries, metric, nextOffset, window };
     }),
   ),
 );
