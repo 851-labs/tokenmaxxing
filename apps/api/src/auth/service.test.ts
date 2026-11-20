@@ -135,6 +135,104 @@ describe("AuthService provider linking", () => {
     expect(store.accounts.get(accountKey("google", "google_123"))?.userId).toBe(first.id);
   });
 
+  it("follows a GitHub username change on the next sign-in", async () => {
+    const { service, store } = await makeTestAuth();
+    const first = await Effect.runPromise(
+      service.signInWithProvider(githubProfile({ login: "alex" })),
+    );
+
+    const renamed = await Effect.runPromise(
+      service.signInWithProvider(githubProfile({ login: "Alex-Dev" })),
+    );
+
+    expect(renamed.user.id).toBe(first.user.id);
+    expect(renamed.user.login).toBe("alex-dev");
+    expect(store.users.get(first.user.id)?.login).toBe("alex-dev");
+  });
+
+  it("suffixes the new login when another user already holds it", async () => {
+    const { service, store } = await makeTestAuth();
+    store.users.set("squatter", currentUser({ id: "squatter", login: "alex-dev" }));
+    await Effect.runPromise(service.signInWithProvider(githubProfile({ login: "alex" })));
+
+    const renamed = await Effect.runPromise(
+      service.signInWithProvider(githubProfile({ login: "alex-dev" })),
+    );
+
+    expect(renamed.user.login).toBe("alex-dev-2");
+  });
+
+  it("never renames onto a Google-made, differently cased or reserved login", async () => {
+    const { service, store } = await makeTestAuth();
+    const google = await Effect.runPromise(
+      service.signInWithProvider(googleProfile({ email: "bob@example.com" })),
+    );
+    store.users.set("legacy", currentUser({ id: "legacy", login: "Carol" }));
+    const github = await Effect.runPromise(
+      service.signInWithProvider(githubProfile({ email: "gh@example.com", login: "alex" })),
+    );
+
+    const toBob = await Effect.runPromise(
+      service.signInWithProvider(githubProfile({ email: "gh@example.com", login: "bob" })),
+    );
+    // A second account renames from its own GitHub name, so each step starts clean.
+    await Effect.runPromise(
+      service.signInWithProvider(
+        githubProfile({ email: "c@example.com", login: "dave", providerAccountId: "gh_2" }),
+      ),
+    );
+    const toCarol = await Effect.runPromise(
+      service.signInWithProvider(
+        githubProfile({ email: "c@example.com", login: "carol", providerAccountId: "gh_2" }),
+      ),
+    );
+    await Effect.runPromise(
+      service.signInWithProvider(
+        githubProfile({ email: "s@example.com", login: "erin", providerAccountId: "gh_3" }),
+      ),
+    );
+    const toStats = await Effect.runPromise(
+      service.signInWithProvider(
+        githubProfile({ email: "s@example.com", login: "stats", providerAccountId: "gh_3" }),
+      ),
+    );
+
+    expect(google.user.login).toBe("bob");
+    expect(toBob.user).toMatchObject({ id: github.user.id, login: "bob-2" });
+    expect(store.users.get(google.user.id)?.login).toBe("bob");
+    expect(toCarol.user.login).toBe("carol-2");
+    expect(toStats.user.login).not.toBe("stats");
+    const logins = [...store.users.values()].map((user) => user.login.toLowerCase());
+    expect(new Set(logins).size).toBe(logins.length);
+  });
+
+  it("keeps a login that was not taken from the old GitHub username", async () => {
+    const { service, store } = await makeTestAuth();
+    store.users.set("other", currentUser({ id: "other", login: "alex" }));
+    // Got "alex-2" at signup because "alex" was taken.
+    const first = await Effect.runPromise(
+      service.signInWithProvider(githubProfile({ email: "me@example.com", login: "alex" })),
+    );
+
+    const renamed = await Effect.runPromise(
+      service.signInWithProvider(githubProfile({ email: "me@example.com", login: "alex-dev" })),
+    );
+
+    expect(first.user.login).toBe("alex-2");
+    expect(renamed.user.login).toBe("alex-2");
+  });
+
+  it("ignores a GitHub username change that only changes case", async () => {
+    const { service } = await makeTestAuth();
+    await Effect.runPromise(service.signInWithProvider(githubProfile({ login: "alex" })));
+
+    const result = await Effect.runPromise(
+      service.signInWithProvider(githubProfile({ login: "ALEX" })),
+    );
+
+    expect(result.user.login).toBe("alex");
+  });
+
   it("links a new provider to the current session user", async () => {
     const { service, store } = await makeTestAuth();
     const user = currentUser({ id: "current", login: "current" });
@@ -288,6 +386,17 @@ async function makeTestAuth() {
           .filter((account) => account.userId === userId)
           .map(({ profile }) => profile),
       ),
+    renameUser: (userId, login) =>
+      Effect.sync(() => {
+        const user = store.users.get(userId);
+        if (user === undefined) {
+          throw new Error(`missing test user ${userId}`);
+        }
+
+        const renamed = { ...user, login };
+        store.users.set(userId, renamed);
+        return renamed;
+      }),
     mergeUsers: ({ sourceUserId, targetUserId }) =>
       Effect.sync(() => {
         const target = store.users.get(targetUserId);

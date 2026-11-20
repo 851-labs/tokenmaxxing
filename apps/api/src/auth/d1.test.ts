@@ -209,6 +209,90 @@ describe("D1 listLoginsLike", () => {
   });
 });
 
+describe("D1 profile fields on sign-in", () => {
+  let database: TestDatabase;
+
+  const github = {
+    avatarUrl: "https://avatars.example/old.png",
+    email: null,
+    emailVerified: false,
+    login: "alex",
+    name: "Alex",
+    provider: "github",
+    providerAccountId: "gh-1",
+  } as const;
+
+  beforeEach(() => {
+    database = makeTestDatabase();
+    seedUser(database.sqlite, { id: "alex", login: "alex" });
+  });
+
+  afterEach(() => database.close());
+
+  function makeRepository() {
+    return buildService(
+      AuthRepository,
+      AuthRepositoryLive.pipe(Layer.provide(database.drizzleLayer)),
+    );
+  }
+
+  it("follows a new GitHub avatar and display name", async () => {
+    const repository = await makeRepository();
+    await Effect.runPromise(repository.linkAccount("alex", github));
+
+    const user = await Effect.runPromise(
+      repository.linkAccount("alex", {
+        ...github,
+        avatarUrl: "https://avatars.example/new.png",
+        name: "Alex Dev",
+      }),
+    );
+
+    expect(user).toMatchObject({ avatarUrl: "https://avatars.example/new.png", name: "Alex Dev" });
+  });
+
+  it("keeps values that came from another provider", async () => {
+    const repository = await makeRepository();
+    await Effect.runPromise(
+      repository.linkAccount("alex", {
+        ...github,
+        avatarUrl: "https://google.example/me.png",
+        login: null,
+        name: "Alex G",
+        provider: "google",
+        providerAccountId: "g-1",
+      }),
+    );
+
+    const user = await Effect.runPromise(repository.linkAccount("alex", github));
+    const again = await Effect.runPromise(
+      repository.linkAccount("alex", { ...github, name: "Alex Dev" }),
+    );
+
+    expect(user).toMatchObject({ avatarUrl: "https://google.example/me.png", name: "Alex G" });
+    expect(again).toMatchObject({ avatarUrl: "https://google.example/me.png", name: "Alex G" });
+  });
+
+  it("keeps the stored name when GitHub clears it", async () => {
+    const repository = await makeRepository();
+    await Effect.runPromise(repository.linkAccount("alex", github));
+
+    const user = await Effect.runPromise(repository.linkAccount("alex", { ...github, name: null }));
+
+    expect(user.name).toBe("Alex");
+  });
+
+  it("renames a user and fails for a missing one", async () => {
+    const repository = await makeRepository();
+
+    const renamed = await Effect.runPromise(repository.renameUser("alex", "alex-dev"));
+    const missing = await Effect.runPromiseExit(repository.renameUser("nobody", "x"));
+
+    expect(renamed.login).toBe("alex-dev");
+    expect(Exit.isFailure(missing)).toBe(true);
+  });
+});
+
 function mapValues(
   record: Record<string, number>,
   map: (value: number, key: string) => number,
