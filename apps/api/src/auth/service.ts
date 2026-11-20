@@ -58,6 +58,8 @@ interface AuthRepositoryShape {
   listLoginsLike(base: string): Effect.Effect<string[], DatabaseError>;
   linkAccount(userId: string, profile: OAuthProfile): Effect.Effect<AuthUser, DatabaseError>;
   listAccounts(userId: string): Effect.Effect<(typeof UserAccountSummary.Type)[], DatabaseError>;
+  /** Sets a user's login; the caller picks a free one. */
+  renameUser(userId: string, login: string): Effect.Effect<AuthUser, DatabaseError>;
   mergeUsers(input: {
     sourceUserId: string;
     targetUserId: string;
@@ -106,6 +108,8 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
         // list minus the merged-away owner — which mergeUsersInto excludes
         // explicitly — in the same createdAt/login order.
         const emailUsers = yield* verifiedEmailUsers(profile);
+        // Read before linkAccount overwrites the stored provider login.
+        const previousLogin = yield* previousGitHubLogin(profile, owner);
         const target = yield* linkTarget(profile, owner, emailUsers, options?.currentUser);
         if (Option.isNone(target)) {
           const login = yield* nextAvailableLogin(loginBaseFromProfile(profile));
@@ -119,7 +123,7 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
           emailUsers,
           Option.getOrUndefined(Option.map(owner, (existing) => existing.id)),
         );
-        return yield* mintSession(merged);
+        return yield* mintSession(yield* followGitHubRename(merged, profile, previousLogin));
       },
       (effect) => Effect.catchTag(effect, "DatabaseError", Effect.die),
     ),
@@ -208,6 +212,48 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
       }
 
       return merged;
+    });
+  }
+
+  /** The GitHub login stored on this identity at its last sign-in, if any. */
+  function previousGitHubLogin(profile: OAuthProfile, owner: Option.Option<AuthUser>) {
+    if (profile.provider !== "github" || Option.isNone(owner)) {
+      return Effect.succeed(null);
+    }
+
+    return repository
+      .listAccounts(owner.value.id)
+      .pipe(
+        Effect.map(
+          (accounts) =>
+            accounts.find(
+              (account) =>
+                account.provider === "github" &&
+                account.providerAccountId === profile.providerAccountId,
+            )?.login ?? null,
+        ),
+      );
+  }
+
+  /**
+   * Renames the user after a GitHub username change, but only while their
+   * login is still the one derived from the old GitHub username. A login
+   * that came from Google or got a suffix is left alone.
+   */
+  function followGitHubRename(user: AuthUser, profile: OAuthProfile, previousLogin: string | null) {
+    return Effect.gen(function* () {
+      if (previousLogin === null || profile.login === null) {
+        return user;
+      }
+
+      const previousBase = slugifyLogin(previousLogin);
+      const nextBase = slugifyLogin(profile.login);
+      if (nextBase === previousBase || user.login.toLowerCase() !== previousBase) {
+        return user;
+      }
+
+      const login = yield* nextAvailableLogin(nextBase);
+      return yield* repository.renameUser(user.id, login);
     });
   }
 
