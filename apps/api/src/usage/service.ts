@@ -33,8 +33,8 @@ import type { RawUsageStorageError } from "./raw-store";
  * into another device's history. Days later than UTC today + 1 are dropped
  * (not rejected): a skewed device clock should not block its real history.
  * Legacy sync rows that fail to decode are dropped the same way, one by one,
- * and so are rows outside the plausibility limits (see `./plausibility`):
- * those are logged with the user and device for moderation and counted on
+ * and so are rows outside the plausibility limits or under a name that
+ * cannot be a model id (see `./plausibility`): those are logged with the user and device for moderation and counted on
  * the device, while the rest of the sync goes through.
  */
 
