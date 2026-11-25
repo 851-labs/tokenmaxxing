@@ -1,6 +1,9 @@
-import { Effect } from "effect";
+import { Context, Data, Duration, Effect, Layer, Option } from "effect";
 import * as Schema from "effect/Schema";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { AppConfig } from "../config";
 import { makeOAuthHttp, type OAuthProvider } from "./provider";
@@ -109,4 +112,93 @@ const makeGitHubProvider = Effect.fn("makeGitHubProvider")(function* () {
   return provider;
 });
 
-export { makeGitHubProvider };
+/**
+ * GitHub account reads outside a sign-in, by the numeric account id stored on
+ * user_accounts (logins change; the id never does). Requests authenticate as
+ * the OAuth app (client id + secret, HTTP Basic), which GitHub rate-limits
+ * per app at 5,000 requests an hour instead of 60 per worker IP.
+ */
+interface GitHubAccountsShape {
+  /** The account's current login; none when GitHub no longer has it. */
+  currentLogin(accountId: string): Effect.Effect<Option.Option<string>, GitHubLookupFailed>;
+}
+
+class GitHubAccounts extends Context.Service<GitHubAccounts, GitHubAccountsShape>()(
+  "@tokenmaxxing/api/GitHubAccounts",
+) {}
+
+/** A lookup that did not produce an answer; callers carry on without it. */
+class GitHubLookupFailed extends Data.TaggedError("GitHubLookupFailed")<{
+  readonly cause?: unknown;
+  readonly reason: "rate-limited" | "request" | "status";
+  readonly status?: number;
+}> {}
+
+const GITHUB_LOOKUP_TIMEOUT = Duration.seconds(5);
+
+const GitHubAccount = Schema.Struct({ login: Schema.String });
+
+const makeGitHubAccounts = Effect.fn("makeGitHubAccounts")(function* () {
+  const { github } = yield* AppConfig;
+  const http = yield* HttpClient.HttpClient;
+  const authorization = `Basic ${btoa(`${github.clientId}:${github.clientSecret}`)}`;
+
+  return GitHubAccounts.of({
+    currentLogin: Effect.fn("GitHubAccounts.currentLogin")(function* (accountId) {
+      if (!/^\d+$/u.test(accountId)) {
+        return Option.none();
+      }
+
+      const response = yield* http
+        .execute(
+          HttpClientRequest.get(`https://api.github.com/user/${accountId}`, {
+            headers: {
+              accept: "application/vnd.github+json",
+              authorization,
+              "user-agent": "tokenmaxxing",
+              "x-github-api-version": "2022-11-28",
+            },
+          }),
+        )
+        .pipe(
+          Effect.timeout(GITHUB_LOOKUP_TIMEOUT),
+          Effect.mapError((cause) => new GitHubLookupFailed({ cause, reason: "request" })),
+        );
+      if (response.status === 404) {
+        return Option.none();
+      }
+      if (
+        response.status === 429 ||
+        (response.status === 403 && response.headers["x-ratelimit-remaining"] === "0")
+      ) {
+        return yield* Effect.fail(
+          new GitHubLookupFailed({ reason: "rate-limited", status: response.status }),
+        );
+      }
+      if (response.status < 200 || response.status >= 300) {
+        return yield* Effect.fail(
+          new GitHubLookupFailed({ reason: "status", status: response.status }),
+        );
+      }
+
+      const account = yield* HttpClientResponse.schemaBodyJson(GitHubAccount)(response).pipe(
+        Effect.mapError((cause) => new GitHubLookupFailed({ cause, reason: "request" })),
+      );
+      return Option.some(account.login);
+    }),
+  });
+});
+
+const GitHubAccountsLive = Layer.effect(GitHubAccounts, makeGitHubAccounts()).pipe(
+  Layer.provide(FetchHttpClient.layer),
+);
+
+export {
+  GitHubAccounts,
+  GitHubAccountsLive,
+  GitHubLookupFailed,
+  makeGitHubAccounts,
+  makeGitHubProvider,
+};
+
+export type { GitHubAccountsShape };

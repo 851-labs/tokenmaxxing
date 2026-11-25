@@ -7,6 +7,7 @@ import {
   countRowsByUser,
   seedAccount,
   seedDevice,
+  seedLoginAlias,
   seedLoginRequest,
   seedRawBatch,
   seedSession,
@@ -61,6 +62,7 @@ describe("D1 mergeUsers", () => {
     });
     seedAccount(sqlite, { providerAccountId: "target-github", userId: "target" });
     seedSession(sqlite, "source-session", "source");
+    seedLoginAlias(sqlite, "source-old", "source");
     seedLoginRequest(sqlite, "source-login", "source");
     seedDevice(sqlite, { id: "source-device", userId: "source" });
     seedToken(sqlite, { deviceId: "source-device", id: "source-token", userId: "source" });
@@ -108,8 +110,20 @@ describe("D1 mergeUsers", () => {
     expect(Object.values(before).every((count) => count > 0)).toBe(true);
     expect(countRowsByUser(database.sqlite, "source")).toEqual(mapValues(before, () => 0));
     expect(countRowsByUser(database.sqlite, "target")).toEqual(
-      mapValues(before, (count, table) => count + (table === "user_accounts" ? 1 : 0)),
+      // The target keeps its own account and gains the source's login as an alias.
+      mapValues(
+        before,
+        (count, table) => count + (table === "user_accounts" || table === "login_aliases" ? 1 : 0),
+      ),
     );
+    expect(
+      database.sqlite
+        .prepare("select login, user_id as userId from login_aliases order by login")
+        .all(),
+    ).toEqual([
+      { login: "source", userId: "target" },
+      { login: "source-old", userId: "target" },
+    ]);
     expect(countRowsByUser(database.sqlite, "bystander")).toMatchObject({
       devices: 1,
       usage_days: 1,

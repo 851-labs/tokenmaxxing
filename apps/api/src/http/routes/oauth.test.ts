@@ -352,6 +352,7 @@ function oauthHandler(
       AuthService,
       AuthService.of({
         listAccounts: () => Effect.succeed([]),
+        refreshGitHubLogin: () => Effect.void,
         resolveSession: (token) =>
           options.resolveSession === "fail"
             ? Effect.die(new Error("D1 down"))

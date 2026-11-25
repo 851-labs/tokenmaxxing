@@ -54,7 +54,11 @@ const testConfig: AppConfig["Service"] = {
 
 async function makeTestApp(services: TestAppServices = {}): Promise<TestApp> {
   const admin = stub<AdminService["Service"]>("AdminService", services.admin);
-  const auth = stub<AuthService["Service"]>("AuthService", services.auth);
+  // CLI usage handlers trigger the daily GitHub login check; a no-op unless stubbed.
+  const auth = stub<AuthService["Service"]>("AuthService", {
+    refreshGitHubLogin: () => Effect.void,
+    ...services.auth,
+  });
   const cliLogin = stub<CliLoginService["Service"]>("CliLoginService", services.cliLogin);
   const leaderboard = stub<LeaderboardService["Service"]>(
     "LeaderboardService",

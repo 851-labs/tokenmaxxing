@@ -12,6 +12,7 @@ import {
 } from "../../lib/favicon-svg";
 import type { FaviconFallbackReason } from "../../lib/favicon-svg";
 import { notFoundResponse } from "../../lib/http";
+import { isOldLogin, loginRedirectResponse } from "../../lib/login-redirect";
 import { fetchPublicProfile } from "../../lib/public-api";
 
 type ProfileFaviconIdentity = typeof ProfileIdentityResponse.Type;
@@ -75,6 +76,9 @@ function makeProfileFaviconHandler(overrides: Partial<ProfileFaviconRouteDeps> =
 
     if (identity === null) {
       return notFoundResponse(NOT_FOUND_CACHE_CONTROL);
+    }
+    if (isOldLogin(params.login, identity.login)) {
+      return loginRedirectResponse(request, `/favicon/${encodeURIComponent(identity.login)}.svg`);
     }
 
     const cache = deps.cache();

@@ -2,6 +2,7 @@ import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { handleDefaultFaviconRequest } from "./favicon[.]svg";
 import type { FaviconCache } from "./favicon/{$login}[.]svg";
+import { LOGIN_REDIRECT_CACHE_CONTROL } from "../lib/login-redirect";
 import { makeProfileFaviconHandler } from "./favicon/{$login}[.]svg";
 
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -153,6 +154,24 @@ describe("profile favicon route", () => {
     expect(cache.matches()).toBe(0);
     expect(cache.keys()).toEqual([]);
     expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it("redirects an old login to the current one before touching the cache", async () => {
+    const cache = memoryCache();
+    const handler = makeProfileFaviconHandler({
+      cache: () => cache,
+      loadIdentity: async () => ({ avatarUrl: null, login: "alex-dev" }),
+    });
+
+    const response = await handler(routeContext("Alex", "?v=10"));
+
+    expect(response.status).toBe(301);
+    expect(response.headers.get("location")).toBe(
+      "https://tokenmaxxing.sh/favicon/alex-dev.svg?v=10",
+    );
+    expect(response.headers.get("cache-control")).toBe(LOGIN_REDIRECT_CACHE_CONTROL);
+    expect(cache.matches()).toBe(0);
+    expect(cache.keys()).toEqual([]);
   });
 
   it("returns not found for an unknown profile", async () => {

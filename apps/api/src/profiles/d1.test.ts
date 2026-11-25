@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
 import { buildService } from "../testing/effect";
-import { seedAccount, seedSourceStats, seedUsage, seedUser } from "../testing/seed";
+import { seedAccount, seedLoginAlias, seedSourceStats, seedUsage, seedUser } from "../testing/seed";
 import { ProfilesRepositoryLive } from "./d1";
 import { ProfilesRepository } from "./service";
 
@@ -143,6 +143,36 @@ describe("D1 profiles repository", () => {
       expect(Option.isNone(await Effect.runPromise(repository.findUserByLogin("missing")))).toBe(
         true,
       );
+    });
+
+    it("resolves an old login to its owner's current profile, case-insensitively", async () => {
+      seedUser(database.sqlite, { id: "alex", login: "alex-dev" });
+      seedLoginAlias(database.sqlite, "alex", "alex");
+      seedLoginAlias(database.sqlite, "alexander", "alex");
+      const repository = await makeRepository();
+
+      const byAlias = await Effect.runPromise(repository.findUserByLogin("Alex"));
+      const byOlder = await Effect.runPromise(repository.findUserByLogin("alexander"));
+      const byCurrent = await Effect.runPromise(repository.findUserByLogin("alex-dev"));
+
+      for (const found of [byAlias, byOlder, byCurrent]) {
+        expect(Option.map(found, ({ user }) => [user.id, user.login])).toEqual(
+          Option.some(["alex", "alex-dev"]),
+        );
+      }
+    });
+
+    it("prefers a current login over an alias of the same name", async () => {
+      // Only reachable through legacy data: a merge recording a login whose
+      // case variant is current elsewhere. The current holder wins.
+      seedUser(database.sqlite, { id: "current", login: "sam" });
+      seedUser(database.sqlite, { id: "former", login: "sam-new" });
+      seedLoginAlias(database.sqlite, "sam", "former");
+      const repository = await makeRepository();
+
+      const found = await Effect.runPromise(repository.findUserByLogin("sam"));
+
+      expect(Option.map(found, ({ user }) => user.id)).toEqual(Option.some("current"));
     });
 
     it("reports the stored GitHub login, not the tokenmaxxing one", async () => {

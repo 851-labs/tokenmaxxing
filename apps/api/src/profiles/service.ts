@@ -64,6 +64,7 @@ interface ProfileUser {
 type ProfileStatsWithoutRank = Omit<ProfileStats, "leaderboardRank">;
 
 interface ProfilesRepositoryShape {
+  /** By current login, else by an old one (login_aliases), case-insensitively. */
   findUserByLogin(login: string): Effect.Effect<Option.Option<ProfileUser>, DatabaseError>;
   leaderboardRank(input: {
     since: string | null;

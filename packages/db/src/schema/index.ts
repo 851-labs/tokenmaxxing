@@ -49,6 +49,12 @@ const userAccounts = sqliteTable(
     login: text("login"),
     name: text("name"),
     avatarUrl: text("avatar_url"),
+    /**
+     * When `login` was last confirmed against the provider (GitHub only): a
+     * sign-in, or the at-most-daily check that CLI syncs trigger. Claimed
+     * before the check runs, so concurrent syncs check once.
+     */
+    loginCheckedAt: integer("login_checked_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -57,6 +63,28 @@ const userAccounts = sqliteTable(
     index("user_accounts_user_idx").on(table.userId),
     index("user_accounts_email_idx").on(table.email),
   ],
+);
+
+/**
+ * Logins a user held before a rename (or a merged-away account's login).
+ * `login` is stored lowercased. An alias redirects to its owner's current
+ * profile and stays reserved for that owner: signup and renames never hand it
+ * to anyone else, and the owner may take it back. Migration triggers reject a
+ * `users.login` equal (case-insensitively) to another user's alias, so the
+ * database enforces the reservation even against a racing signup. Merges move
+ * aliases to the surviving user before deleting the other (the cascade only
+ * covers a user deleted outright).
+ */
+const loginAliases = sqliteTable(
+  "login_aliases",
+  {
+    login: text("login").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("login_aliases_user_idx").on(table.userId)],
 );
 
 /** id = sha256(token); the raw token lives only in the browser cookie. */
@@ -292,6 +320,8 @@ const usageRawBatches = sqliteTable(
 
 type User = typeof users.$inferSelect;
 type NewUser = typeof users.$inferInsert;
+type LoginAlias = typeof loginAliases.$inferSelect;
+type NewLoginAlias = typeof loginAliases.$inferInsert;
 type UserAccount = typeof userAccounts.$inferSelect;
 type NewUserAccount = typeof userAccounts.$inferInsert;
 type Session = typeof sessions.$inferSelect;
@@ -313,6 +343,7 @@ export {
   cliLoginRequests,
   cliTokens,
   devices,
+  loginAliases,
   sessions,
   usageDays,
   usageRawBatches,
@@ -325,9 +356,11 @@ export type {
   CliLoginRequest,
   CliToken,
   Device,
+  LoginAlias,
   NewCliLoginRequest,
   NewCliToken,
   NewDevice,
+  NewLoginAlias,
   NewSession,
   NewUserAccount,
   NewUsageDay,
