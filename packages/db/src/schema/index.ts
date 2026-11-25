@@ -69,7 +69,10 @@ const userAccounts = sqliteTable(
  * Logins a user held before a rename (or a merged-away account's login).
  * `login` is stored lowercased. An alias redirects to its owner's current
  * profile and stays reserved for that owner: signup and renames never hand it
- * to anyone else, and the owner may take it back. Migration triggers reject a
+ * to anyone else, and the owner may take it back. Only a user's five most
+ * recently held old logins are kept (renames and merges prune the rest, see
+ * MAX_LOGIN_ALIASES in the API), so nobody can reserve names without bound
+ * by renaming over and over. Migration triggers reject a
  * `users.login` equal (case-insensitively) to another user's alias, so the
  * database enforces the reservation even against a racing signup. Merges move
  * aliases to the surviving user before deleting the other (the cascade only

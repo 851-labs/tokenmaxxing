@@ -147,9 +147,9 @@ describe("profile loader", () => {
       statusCode: 301,
       to: "/$user",
     });
-    expect(isRedirect(error) && error.headers.get("cache-control")).toBe(
-      LOGIN_REDIRECT_CACHE_CONTROL,
-    );
+    // Revalidated on every use: the user may take the old login back.
+    expect(isRedirect(error) && error.headers.get("cache-control")).toBe("no-cache");
+    expect(LOGIN_REDIRECT_CACHE_CONTROL).toBe("no-cache");
   });
 
   it("rethrows other failures for the error boundary", async () => {

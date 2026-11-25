@@ -138,17 +138,15 @@ const GITHUB_LOOKUP_TIMEOUT = Duration.seconds(5);
 
 const GitHubAccount = Schema.Struct({ login: Schema.String });
 
-const makeGitHubAccounts = Effect.fn("makeGitHubAccounts")(function* () {
+const makeGitHubAccounts = Effect.fn("makeGitHubAccounts")(function* (
+  options: { timeout?: Duration.Input | undefined } = {},
+) {
   const { github } = yield* AppConfig;
   const http = yield* HttpClient.HttpClient;
   const authorization = `Basic ${btoa(`${github.clientId}:${github.clientSecret}`)}`;
 
-  return GitHubAccounts.of({
-    currentLogin: Effect.fn("GitHubAccounts.currentLogin")(function* (accountId) {
-      if (!/^\d+$/u.test(accountId)) {
-        return Option.none();
-      }
-
+  const lookup = (accountId: string) =>
+    Effect.gen(function* () {
       const response = yield* http
         .execute(
           HttpClientRequest.get(`https://api.github.com/user/${accountId}`, {
@@ -160,12 +158,9 @@ const makeGitHubAccounts = Effect.fn("makeGitHubAccounts")(function* () {
             },
           }),
         )
-        .pipe(
-          Effect.timeout(GITHUB_LOOKUP_TIMEOUT),
-          Effect.mapError((cause) => new GitHubLookupFailed({ cause, reason: "request" })),
-        );
+        .pipe(Effect.mapError((cause) => new GitHubLookupFailed({ cause, reason: "request" })));
       if (response.status === 404) {
-        return Option.none();
+        return Option.none<string>();
       }
       if (
         response.status === 429 ||
@@ -185,6 +180,22 @@ const makeGitHubAccounts = Effect.fn("makeGitHubAccounts")(function* () {
         Effect.mapError((cause) => new GitHubLookupFailed({ cause, reason: "request" })),
       );
       return Option.some(account.login);
+    });
+
+  return GitHubAccounts.of({
+    currentLogin: Effect.fn("GitHubAccounts.currentLogin")(function* (accountId) {
+      if (!/^\d+$/u.test(accountId)) {
+        return Option.none();
+      }
+
+      // One deadline for the whole lookup: a server that sends headers and
+      // then stalls the body must not hold the check (and its waitUntil).
+      return yield* lookup(accountId).pipe(
+        Effect.timeout(options.timeout ?? GITHUB_LOOKUP_TIMEOUT),
+        Effect.catchTag("TimeoutError", (cause) =>
+          Effect.fail(new GitHubLookupFailed({ cause, reason: "request" })),
+        ),
+      );
     }),
   });
 });

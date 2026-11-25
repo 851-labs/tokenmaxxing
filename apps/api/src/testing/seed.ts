@@ -108,10 +108,10 @@ function seedAccount(sqlite: DatabaseSync, account: SeedAccount): void {
     );
 }
 
-function seedLoginAlias(sqlite: DatabaseSync, login: string, userId: string): void {
+function seedLoginAlias(sqlite: DatabaseSync, login: string, userId: string, createdAt = 0): void {
   sqlite
-    .prepare("insert into login_aliases (login, user_id, created_at) values (?, ?, 0)")
-    .run(login, userId);
+    .prepare("insert into login_aliases (login, user_id, created_at) values (?, ?, ?)")
+    .run(login, userId, createdAt);
 }
 
 function seedSession(sqlite: DatabaseSync, id: string, userId: string): void {

@@ -4,12 +4,13 @@
  * login differs from the requested one (beyond case) means the URL used an
  * old login. Those URLs redirect permanently to the current one.
  *
- * The redirect is cached for an hour, not forever: a user may take an old
- * login back (renaming A → B → A on GitHub), and a browser holding a
- * forever-cached A → B hop would then loop between the two.
+ * The redirect is sent with `no-cache`: browsers and shared caches may keep
+ * it but must revalidate before every use. A user may take an old login back
+ * (renaming A → B → A on GitHub), and any cached A → B hop, even an
+ * hour-long one, would then loop between the two URLs.
  */
 
-const LOGIN_REDIRECT_CACHE_CONTROL = "public, max-age=3600";
+const LOGIN_REDIRECT_CACHE_CONTROL = "no-cache";
 
 const LOGIN_REDIRECT_HEADERS = { "cache-control": LOGIN_REDIRECT_CACHE_CONTROL };
 

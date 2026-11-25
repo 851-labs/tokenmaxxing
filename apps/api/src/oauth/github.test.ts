@@ -14,14 +14,14 @@ const config: AppConfig["Service"] = {
   productName: "Tokenmaxxing",
 };
 
-function makeAccounts(respond: () => Response) {
+function makeAccounts(respond: () => Response, options: { timeout?: number } = {}) {
   const requests: { authorization: string | undefined; url: string }[] = [];
   const http = HttpClient.make((request) => {
     requests.push({ authorization: request.headers["authorization"], url: request.url });
     return Effect.succeed(HttpClientResponse.fromWeb(request, respond()));
   });
   const accounts = Effect.runSync(
-    makeGitHubAccounts().pipe(
+    makeGitHubAccounts(options).pipe(
       Effect.provideService(AppConfig, config),
       Effect.provideService(HttpClient.HttpClient, http),
     ),
@@ -67,6 +67,24 @@ describe("GitHubAccounts.currentLogin", () => {
     });
     expect(Exit.isFailure(brokenExit) && brokenExit.cause.reasons[0]).toMatchObject({
       error: { _tag: "GitHubLookupFailed", reason: "status", status: 502 },
+    });
+  });
+
+  it("times out a body that stalls after the headers, not just the request", async () => {
+    // Headers arrive at once; the JSON body never finishes.
+    const stalled = () =>
+      new Response(
+        new ReadableStream({ start: (controller) => controller.enqueue(new Uint8Array([123])) }),
+        {
+          status: 200,
+        },
+      );
+    const { accounts } = makeAccounts(stalled, { timeout: 50 });
+
+    const exit = await Effect.runPromiseExit(accounts.currentLogin("1"));
+
+    expect(Exit.isFailure(exit) && exit.cause.reasons[0]).toMatchObject({
+      error: { _tag: "GitHubLookupFailed", cause: { _tag: "TimeoutError" }, reason: "request" },
     });
   });
 });

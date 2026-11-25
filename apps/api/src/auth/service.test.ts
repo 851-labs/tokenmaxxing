@@ -361,8 +361,47 @@ describe("AuthService GitHub rename on sign-in", () => {
     expect(reads).toBe(2);
   });
 
+  it("follows a Google-made login that equals the old GitHub login's slug", async () => {
+    // Pinned on purpose: the rule compares values, not origins. Google
+    // `alex@…` minted "alex", the linked GitHub account is also "alex", so
+    // a GitHub rename moves it like any GitHub-made login.
+    const { service, store } = await makeTestAuth();
+    const google = await Effect.runPromise(
+      service.signInWithProvider(googleProfile({ email: "alex@example.com" })),
+    );
+    await Effect.runPromise(service.signInWithProvider(githubProfile({ login: "alex" })));
+
+    const renamed = await Effect.runPromise(
+      service.signInWithProvider(githubProfile({ login: "alex-dev" })),
+    );
+
+    expect(google.user.login).toBe("alex");
+    expect(renamed.user).toMatchObject({ id: google.user.id, login: "alex-dev" });
+    expect(store.aliases.get("alex")).toBe(google.user.id);
+  });
+
+  it("puts the old GitHub login back when a sign-in rename gives up", async () => {
+    const { repository, service, store } = await makeTestAuth();
+    await Effect.runPromise(service.signInWithProvider(githubProfile({ login: "alex" })));
+    repository.renameUser = ({ to }) => Effect.fail(new LoginTaken({ login: to }));
+    const logs = makeTestLogger();
+
+    const result = await Effect.runPromise(
+      service
+        .signInWithProvider(githubProfile({ login: "alex-dev" }))
+        .pipe(Effect.provide(logs.layer)),
+    );
+
+    expect(result.user.login).toBe("alex");
+    expect(store.accounts.get(accountKey("github", "github_123"))?.profile.login).toBe("alex");
+    expect(logs.entries.map((entry) => entry.message)).toEqual([
+      "GitHub rename lost the race for a free login",
+      "GitHub rename follow failed on sign-in",
+    ]);
+  });
+
   it("still signs in when the rename fails", async () => {
-    const { repository, service } = await makeTestAuth();
+    const { repository, service, store } = await makeTestAuth();
     await Effect.runPromise(service.signInWithProvider(githubProfile({ login: "alex" })));
     repository.renameUser = () => Effect.fail(new DatabaseError({ cause: new Error("D1 down") }));
     const logs = makeTestLogger();
@@ -374,6 +413,7 @@ describe("AuthService GitHub rename on sign-in", () => {
     );
 
     expect(result.user.login).toBe("alex");
+    expect(store.accounts.get(accountKey("github", "github_123"))?.profile.login).toBe("alex");
     expect(logs.entries.map((entry) => entry.message)).toEqual([
       "GitHub rename follow failed on sign-in",
     ]);
@@ -601,6 +641,13 @@ async function makeTestAuth() {
             providerAccountId: profile.providerAccountId,
           })),
       ),
+    resetGitHubLoginCheck: (providerAccountId, { current, previous }) =>
+      Effect.sync(() => {
+        const account = store.accounts.get(accountKey("github", providerAccountId));
+        if (account !== undefined && account.profile.login === current) {
+          account.profile = { ...account.profile, login: previous };
+        }
+      }),
     setGitHubAccountLogin: (providerAccountId, login) =>
       Effect.sync(() => {
         const account = store.accounts.get(accountKey("github", providerAccountId));

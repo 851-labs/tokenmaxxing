@@ -12,7 +12,8 @@ import {
   type User,
   type UserAccount,
 } from "@tokenmaxxing/db";
-import { and, eq, exists, gt, isNull, like, lte, ne, or, type SQL } from "drizzle-orm";
+import { and, eq, exists, gt, isNull, like, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { Effect, Layer, Option } from "effect";
 
 import { DatabaseError, Drizzle, firstRow } from "../database";
@@ -207,10 +208,16 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
           );
         const results = yield* database
           .use((db): Promise<unknown[]> => {
+            // Re-recording a login the user already had refreshes its age,
+            // so the cap below keeps the most recently held ones.
             const recordAlias = db
               .insert(loginAliases)
               .values({ createdAt: now, login: from.toLowerCase(), userId })
-              .onConflictDoNothing();
+              .onConflictDoUpdate({
+                set: { createdAt: now },
+                setWhere: eq(loginAliases.userId, userId),
+                target: loginAliases.login,
+              });
             const releaseAlias = db
               .delete(loginAliases)
               .where(
@@ -225,8 +232,9 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
               .set({ login: to, updatedAt: now })
               .where(and(eq(users.id, userId), eq(users.login, from)))
               .returning();
+            const capAliases = pruneOldestAliases(db, userId);
             if (githubAccount === undefined) {
-              return db.batch([recordAlias, releaseAlias, rename]);
+              return db.batch([recordAlias, releaseAlias, capAliases, rename]);
             }
 
             const storeAccountLogin = db
@@ -240,7 +248,7 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
                   stillFrom(db),
                 ),
               );
-            return db.batch([recordAlias, releaseAlias, storeAccountLogin, rename]);
+            return db.batch([recordAlias, releaseAlias, capAliases, storeAccountLogin, rename]);
           })
           .pipe(
             Effect.catchTag("DatabaseError", (error) =>
@@ -272,6 +280,21 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
             providerAccountId: userAccounts.providerAccountId,
           }),
       ),
+    resetGitHubLoginCheck: (providerAccountId, { current, previous }) =>
+      Effect.gen(function* () {
+        yield* database.use((db) =>
+          db
+            .update(userAccounts)
+            .set({ login: previous, loginCheckedAt: null, updatedAt: new Date() })
+            .where(
+              and(
+                eq(userAccounts.provider, "github"),
+                eq(userAccounts.providerAccountId, providerAccountId),
+                eq(userAccounts.login, current),
+              ),
+            ),
+        );
+      }),
     setGitHubAccountLogin: (providerAccountId, login) =>
       Effect.gen(function* () {
         yield* database.use((db) =>
@@ -338,14 +361,26 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
               .where(eq(usageRawBatches.userId, sourceUserId)),
             // The merged-away login and its history stay with the person:
             // its URLs redirect to the target and nobody else can take it.
+            // The login is read inside the batch, not from `source` above,
+            // so a rename that landed since that read is the one reserved.
             db
               .update(loginAliases)
               .set({ userId: targetUserId })
               .where(eq(loginAliases.userId, sourceUserId)),
             db
               .insert(loginAliases)
-              .values({ createdAt: now, login: source.login.toLowerCase(), userId: targetUserId })
+              .select(
+                db
+                  .select({
+                    login: sql<string>`lower(${users.login})`.as("login"),
+                    userId: sql<string>`${targetUserId}`.as("user_id"),
+                    createdAt: sql<Date>`${now.getTime()}`.as("created_at"),
+                  })
+                  .from(users)
+                  .where(eq(users.id, sourceUserId)),
+              )
               .onConflictDoNothing(),
+            pruneOldestAliases(db, targetUserId),
             db
               .update(users)
               .set({
@@ -400,6 +435,9 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
   }
 });
 
+/** Old logins kept (redirecting and reserved) per user; older ones are released. */
+const MAX_LOGIN_ALIASES = 5;
+
 const AuthRepositoryLive = Layer.effect(AuthRepository, makeD1AuthRepository());
 
 const AuthServiceLive = Layer.effect(AuthService, makeAuthService()).pipe(
@@ -443,6 +481,26 @@ function isLoginConflict(cause: unknown): boolean {
   return false;
 }
 
+/**
+ * Deletes all but `userId`'s {@link MAX_LOGIN_ALIASES} most recently held
+ * old logins, releasing the rest: renaming a GitHub account over and over
+ * must not reserve an unbounded set of names. Newest first by when the login
+ * was left, then by insertion order (rowid) for ties within a millisecond.
+ */
+function pruneOldestAliases(db: DrizzleD1Database, userId: string) {
+  return db.delete(loginAliases).where(
+    and(
+      eq(loginAliases.userId, userId),
+      sql`rowid not in (
+          select rowid from ${loginAliases}
+          where ${loginAliases.userId} = ${userId}
+          order by ${loginAliases.createdAt} desc, rowid desc
+          limit ${MAX_LOGIN_ALIASES}
+        )`,
+    ),
+  );
+}
+
 function mergedShadowBan(
   source: Pick<User, "shadowBannedAt" | "shadowBannedByUserId">,
   target: Pick<User, "shadowBannedAt" | "shadowBannedByUserId">,
@@ -468,4 +526,4 @@ function toAccountProfile(account: UserAccount): OAuthProfile {
   };
 }
 
-export { AuthRepositoryLive, AuthServiceLive, mergedShadowBan };
+export { AuthRepositoryLive, AuthServiceLive, MAX_LOGIN_ALIASES, mergedShadowBan };

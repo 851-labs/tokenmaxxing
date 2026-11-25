@@ -104,6 +104,15 @@ interface AuthRepositoryShape {
     staleBefore: Date,
     now: Date,
   ): Effect.Effect<{ login: string | null; providerAccountId: string }[], DatabaseError>;
+  /**
+   * Undoes a sign-in's store of the GitHub login after its rename failed:
+   * puts `previous` back and clears `login_checked_at`, but only while the
+   * stored login is still `current` (a later sign-in may have moved it).
+   */
+  resetGitHubLoginCheck(
+    providerAccountId: string,
+    logins: { current: string; previous: string | null },
+  ): Effect.Effect<void, DatabaseError>;
   /** Stores a GitHub account's current login without renaming anyone. */
   setGitHubAccountLogin(
     providerAccountId: string,
@@ -173,20 +182,35 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
           emailUsers,
           Option.getOrUndefined(Option.map(owner, (existing) => existing.id)),
         );
+        const nextLogin = profile.login;
         const renamed =
-          previousLogin === null || profile.login === null
+          previousLogin === null || nextLogin === null
             ? merged
             : yield* followGitHubLogin(merged, {
-                next: profile.login,
+                next: nextLogin,
                 previous: previousLogin,
                 // linkAccount already stored the new GitHub login.
                 storeOn: null,
               }).pipe(
-                // A failed rename never fails the sign-in.
+                // A failed rename never fails the sign-in. linkAccount has
+                // already stored the new GitHub login and stamped the check,
+                // so put the old login back and clear the stamp: the next
+                // sign-in or daily CLI check then sees the change again.
                 Effect.catchCause((cause) =>
-                  Effect.logWarning("GitHub rename follow failed on sign-in", cause).pipe(
-                    Effect.as(merged),
-                  ),
+                  repository
+                    .resetGitHubLoginCheck(profile.providerAccountId, {
+                      current: nextLogin,
+                      previous: previousLogin,
+                    })
+                    .pipe(
+                      Effect.catchCause((resetCause) =>
+                        Effect.logWarning("GitHub login check reset failed", resetCause),
+                      ),
+                      Effect.andThen(
+                        Effect.logWarning("GitHub rename follow failed on sign-in", cause),
+                      ),
+                      Effect.as(merged),
+                    ),
                 ),
               );
         return yield* mintSession(renamed);
@@ -231,11 +255,13 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
           if (Option.isNone(user)) {
             return;
           }
+          // LoginTaken: gave up (already logged) with the stored login still
+          // old, so the next daily check tries again.
           yield* followGitHubLogin(user.value, {
             next: current.value,
             previous: account.login,
             storeOn: account.providerAccountId,
-          });
+          }).pipe(Effect.catchTag("LoginTaken", () => Effect.void));
         }
       },
       (effect) =>
@@ -265,14 +291,14 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
 
   /**
    * Renames `user` after their GitHub login changed from `previous` to
-   * `next`, but only while their login is still the one derived from
-   * `previous`: a login that came from Google, got a suffix, or differs only
-   * in case is left alone. The new login is the next free one built from
-   * `next` (taken, aliased and reserved names get a suffix; the user's own
-   * old logins are theirs to take back). `storeOn` names the GitHub account
-   * whose stored login moves to `next`, together with the rename; when the
-   * rename keeps losing a race, the stored login stays old so the next check
-   * tries again.
+   * `next`, but only while their login still equals the slug of `previous`
+   * (see {@link followedLoginBase}). The new login is the next free one
+   * built from `next` (taken, aliased and reserved names get a suffix; the
+   * user's own old logins are theirs to take back). `storeOn` names the
+   * GitHub account whose stored login moves to `next`, together with the
+   * rename. Fails with LoginTaken after the rename lost the race for a free
+   * login {@link RENAME_ATTEMPTS} times; with `storeOn`, the stored login
+   * then stays old so the next check tries again.
    */
   function followGitHubLogin(
     user: AuthUser,
@@ -323,7 +349,7 @@ const makeAuthService = Effect.fn("makeAuthService")(function* () {
         base,
         userId: user.id,
       });
-      return user;
+      return yield* Effect.fail(new LoginTaken({ login: base }));
     });
   }
 
@@ -452,8 +478,13 @@ function loginBaseFromProfile(profile: OAuthProfile): string {
 
 /**
  * The login base a GitHub rename moves a user to, or null to leave them be:
- * only while their login is still the slug of the old GitHub login, and only
- * when the slug actually changes (not for a case-only rename).
+ * only while their login equals the slug of the old GitHub login, and only
+ * when the slug actually changes (not for a case-only rename). The check is
+ * by value, not by where the login came from: a suffixed login (`bob-2`) or
+ * one that differs from the old GitHub slug stays put, but a login made from
+ * a Google email that happens to equal that slug (Google `alex@…` → `alex`,
+ * GitHub `alex`) follows the rename too. That is intended: it is the same
+ * name on both providers.
  */
 function followedLoginBase(
   currentLogin: string,
