@@ -152,6 +152,7 @@ async function makeProfileService(
           Effect.succeed(
             login === "target"
               ? Option.some({
+                  githubLogin: "Target-GH",
                   shadowBanned,
                   user: {
                     avatarUrl: null,
@@ -183,6 +184,7 @@ describe("ProfilesService shadow-ban visibility", () => {
           findUserByLogin: () =>
             Effect.succeed(
               Option.some({
+                githubLogin: null,
                 shadowBanned: false,
                 user: {
                   avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
@@ -233,7 +235,12 @@ describe("ProfilesService shadow-ban visibility", () => {
     const profile = await Effect.runPromise(service.getProfile("target", null));
 
     expect(profile).toMatchObject({ stats: { leaderboardRank: 7 } });
-    expect(profile.user).toEqual({ avatarUrl: null, login: "target", name: null });
+    expect(profile.user).toEqual({
+      avatarUrl: null,
+      githubLogin: "Target-GH",
+      login: "target",
+      name: null,
+    });
   });
 
   it("returns not found for anonymous and other viewers of a banned profile", async () => {

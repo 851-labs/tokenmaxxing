@@ -94,6 +94,7 @@ function profile({
     },
     user: {
       avatarUrl: "https://github.com/pondorasti.png",
+      githubLogin: login,
       login,
       name: null,
     },

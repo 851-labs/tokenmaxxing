@@ -33,7 +33,7 @@ const profileBody = {
     topModel: null,
     totalTokens: 0,
   },
-  user: { avatarUrl: null, login: "martinxjonsson", name: null },
+  user: { avatarUrl: null, githubLogin: "martinxjonsson", login: "martinxjonsson", name: null },
 };
 
 const dailyBody = { days: [], range: { firstDate: "2026-01-01", lastDate: "2026-09-22" } };
