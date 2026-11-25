@@ -7,6 +7,13 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ### Server
 
+- Ingest rejects fabricated usage rows it used to accept. Each usage row (one model on one day) is
+  now capped at 25B uncached input tokens, 10B output tokens, 10B cache-write tokens, 500B
+  cache-read and total tokens, and $250k. These caps were lowered from 1T tokens per field and $1M.
+  Rows whose model name cannot be a model id are rejected too: names with no letter, a single
+  character, markup or quote characters, non-ASCII or control characters, or a URL. Claude Code's
+  `<synthetic>` is still accepted. The parser version moves to `ccusage-v20-raw-9`, so a re-sent day
+  drops rows that are now rejected.
 - The parser version moves to `ccusage-v20-raw-8`, so each device re-counts its trailing window
   once and days can come back lower. CLIs that run ccusage 20.0.49 or newer stop counting OpenCode
   Claude Agent turns under both the claude and opencode sources, and their stored days were

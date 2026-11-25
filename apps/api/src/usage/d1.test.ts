@@ -786,6 +786,63 @@ describe("D1 usage repository", () => {
       ]);
     });
 
+    it("drops rows under names that cannot be model ids", async () => {
+      const logger = makeTestLogger();
+      const service = await makeService("2026-11-11T12:00:00.000Z");
+      // The 2026-11 spam shape: 40B input and 120B output tokens per model.
+      const spam = {
+        costUSD: 682_787.04,
+        inputTokens: 40_258_642_912,
+        outputTokens: 120_453_951_683,
+        totalTokens: 160_712_594_595,
+      };
+
+      const result = await Effect.runPromise(
+        service
+          .ingestRaw(identity, device, [
+            {
+              command: ["ccusage@^20", "codex", "daily", "--json", "--breakdown"],
+              payload: {
+                daily: [
+                  {
+                    costUSD: 3,
+                    date: "2026-11-10",
+                    models: {
+                      "<script>alert('hi')</script>": real,
+                      "aarush-kamat-on-top": spam,
+                      "gpt-5.5": real,
+                      "https://abstracteducation.loan/-owns-you": real,
+                      "{": real,
+                    },
+                  },
+                ],
+              },
+              reportKind: "daily",
+              source: "codex",
+            },
+          ])
+          .pipe(Effect.provide(logger.layer)),
+      );
+
+      expect(result.upserted).toBe(1);
+      expect(usageRows().map((row) => row.model)).toEqual(["gpt-5.5"]);
+      expect(deviceCounter()).toMatchObject({ rejectedUsageRows: 4 });
+      expect(logger.entries[0]?.args).toEqual([
+        expect.objectContaining({
+          rejected: 4,
+          sample: [
+            expect.objectContaining({ model: "{", reason: "model" }),
+            expect.objectContaining({ model: "<script>alert('hi')</script>", reason: "model" }),
+            expect.objectContaining({ model: "aarush-kamat-on-top", reason: "tokens" }),
+            expect.objectContaining({
+              model: "https://abstracteducation.loan/-owns-you",
+              reason: "model",
+            }),
+          ],
+        }),
+      ]);
+    });
+
     it("drops implausible legacy sync rows and accumulates the device counter", async () => {
       const logger = makeTestLogger();
       const service = await makeService("2026-10-05T12:00:00.000Z");
