@@ -3669,12 +3669,23 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "githubLogin": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
                         "avatarUrl",
                         "login",
-                        "name"
+                        "name",
+                        "githubLogin"
                       ],
                       "additionalProperties": false
                     }

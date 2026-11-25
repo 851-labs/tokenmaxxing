@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { makeTestDatabase, type TestDatabase } from "../testing/sqlite-d1";
 import { buildService } from "../testing/effect";
-import { seedSourceStats, seedUsage, seedUser } from "../testing/seed";
+import { seedAccount, seedSourceStats, seedUsage, seedUser } from "../testing/seed";
 import { ProfilesRepositoryLive } from "./d1";
 import { ProfilesRepository } from "./service";
 
@@ -143,6 +143,37 @@ describe("D1 profiles repository", () => {
       expect(Option.isNone(await Effect.runPromise(repository.findUserByLogin("missing")))).toBe(
         true,
       );
+    });
+
+    it("reports the stored GitHub login, not the tokenmaxxing one", async () => {
+      seedUser(database.sqlite, { id: "bob", login: "bob-2" });
+      seedAccount(database.sqlite, { login: "Bob", providerAccountId: "gh-1", userId: "bob" });
+      // A later linked GitHub identity and a Google one never replace the first.
+      seedAccount(database.sqlite, {
+        createdAt: 5,
+        login: "bob-alt",
+        providerAccountId: "gh-2",
+        userId: "bob",
+      });
+      seedAccount(database.sqlite, {
+        login: null,
+        provider: "google",
+        providerAccountId: "g-1",
+        userId: "bob",
+      });
+      seedUser(database.sqlite, { id: "carol", login: "carol" });
+      seedAccount(database.sqlite, {
+        provider: "google",
+        providerAccountId: "g-2",
+        userId: "carol",
+      });
+      const repository = await makeRepository();
+
+      const bob = await Effect.runPromise(repository.findUserByLogin("bob-2"));
+      const carol = await Effect.runPromise(repository.findUserByLogin("carol"));
+
+      expect(Option.map(bob, (found) => found.githubLogin)).toEqual(Option.some("Bob"));
+      expect(Option.map(carol, (found) => found.githubLogin)).toEqual(Option.some(null));
     });
   });
 

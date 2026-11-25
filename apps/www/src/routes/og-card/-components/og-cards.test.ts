@@ -45,6 +45,6 @@ function profile(): Profile {
       spendUsd: 123.45,
       totalTokens: 987_654,
     },
-    user: { avatarUrl: null, login: "pondorasti", name: null },
+    user: { avatarUrl: null, githubLogin: "pondorasti", login: "pondorasti", name: null },
   };
 }

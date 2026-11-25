@@ -286,6 +286,7 @@ function profile(): Profile {
     },
     user: {
       avatarUrl: "https://github.com/pondorasti.png",
+      githubLogin: "pondorasti",
       login: "pondorasti",
       name: null,
     },

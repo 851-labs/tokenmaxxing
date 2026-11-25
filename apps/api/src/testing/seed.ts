@@ -16,8 +16,10 @@ interface SeedUser {
 }
 
 interface SeedAccount {
+  createdAt?: number;
   email?: string | null;
   emailVerified?: boolean;
+  login?: string | null;
   provider?: "github" | "google";
   providerAccountId: string;
   userId: string;
@@ -91,8 +93,9 @@ function seedAccount(sqlite: DatabaseSync, account: SeedAccount): void {
   sqlite
     .prepare(
       `insert into user_accounts (
-        provider, provider_account_id, user_id, email, email_verified, created_at, updated_at
-      ) values (?, ?, ?, ?, ?, 0, 0)`,
+        provider, provider_account_id, user_id, email, email_verified, login, created_at,
+        updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, 0)`,
     )
     .run(
       account.provider ?? "github",
@@ -100,6 +103,8 @@ function seedAccount(sqlite: DatabaseSync, account: SeedAccount): void {
       account.userId,
       account.email ?? null,
       account.emailVerified === true ? 1 : 0,
+      account.login ?? null,
+      account.createdAt ?? 0,
     );
 }
 

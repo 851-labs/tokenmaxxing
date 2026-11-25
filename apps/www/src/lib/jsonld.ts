@@ -93,8 +93,13 @@ function profilePageSchema(profile: Profile): Record<string, unknown> {
     name: user.login,
     identifier: user.login,
     url,
-    sameAs: [`https://github.com/${user.login}`],
   };
+
+  // The GitHub account as GitHub last reported it. `user.login` is the
+  // tokenmaxxing username, which can be suffixed, Google-derived or stale.
+  if (user.githubLogin !== null) {
+    person.sameAs = [`https://github.com/${encodeURIComponent(user.githubLogin)}`];
+  }
 
   if (user.avatarUrl !== null) {
     person.image = user.avatarUrl;

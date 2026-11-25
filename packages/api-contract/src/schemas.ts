@@ -747,9 +747,23 @@ const ProfileStats = Schema.Struct({
 
 type ProfileStats = typeof ProfileStats.Type;
 
+/**
+ * The profile owner: PublicUser plus the login of their linked GitHub
+ * account, as GitHub last reported it. `login` is the tokenmaxxing username
+ * and can differ (a `-2` suffix, a Google-derived name, a since-renamed
+ * GitHub account), so links to GitHub use `githubLogin`; null when no GitHub
+ * account is linked.
+ */
+const ProfileUser = Schema.Struct({
+  ...PublicUser.fields,
+  githubLogin: Schema.NullOr(Schema.String),
+});
+
+type ProfileUser = typeof ProfileUser.Type;
+
 const ProfileResponse = Schema.Struct({
   stats: ProfileStats,
-  user: PublicUser,
+  user: ProfileUser,
 });
 
 type ProfileResponse = typeof ProfileResponse.Type;
@@ -986,6 +1000,7 @@ export {
   ProfileIdentityResponse,
   ProfileResponse,
   ProfileStats,
+  ProfileUser,
   PublicUser,
   RawUsageReportInput,
   ServiceAutoUpdate,

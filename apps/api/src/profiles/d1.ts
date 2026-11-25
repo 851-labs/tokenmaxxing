@@ -1,4 +1,4 @@
-import { usageDays, usageSourceStats, users } from "@tokenmaxxing/db";
+import { usageDays, usageSourceStats, userAccounts, users } from "@tokenmaxxing/db";
 import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { Effect, Layer, Option } from "effect";
 
@@ -19,7 +19,18 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
       Effect.gen(function* () {
         const rows = yield* database.use((db) =>
           db
-            .select({ shadowBannedAt: users.shadowBannedAt, user: authUserColumns })
+            .select({
+              // The oldest linked GitHub identity: the one signup took the
+              // login from. A subquery, so extra identities add no rows.
+              githubLogin: sql<string | null>`(
+                select ${userAccounts.login} from ${userAccounts}
+                where ${userAccounts.userId} = ${users.id} and ${userAccounts.provider} = 'github'
+                order by ${userAccounts.createdAt}, ${userAccounts.providerAccountId}
+                limit 1
+              )`,
+              shadowBannedAt: users.shadowBannedAt,
+              user: authUserColumns,
+            })
             .from(users)
             // Logins are minted lowercase (slugifyLogin), so lowercasing the
             // requested one makes lookups case-insensitive on the unique index.
@@ -29,6 +40,7 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
 
         return firstRow(rows).pipe(
           Option.map((row) => ({
+            githubLogin: row.githubLogin,
             shadowBanned: row.shadowBannedAt !== null,
             user: toAuthUser(row.user),
           })),

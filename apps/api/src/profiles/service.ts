@@ -54,6 +54,8 @@ interface ProfilesServiceShape {
 }
 
 interface ProfileUser {
+  /** The linked GitHub account's login as last reported by GitHub. */
+  githubLogin: string | null;
   shadowBanned: boolean;
   /** Internal identity; responses expose it only as a PublicUser. */
   user: AuthUser;
@@ -106,16 +108,16 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
       return yield* Effect.fail(new UserNotFound({ login }));
     }
 
-    return result.value.user;
+    return result.value;
   });
 
   return ProfilesService.of({
     getIdentity: Effect.fn("ProfilesService.getIdentity")(function* (login, viewerUserId) {
-      const user = yield* requireUser(login, viewerUserId);
+      const { user } = yield* requireUser(login, viewerUserId);
       return { avatarUrl: user.avatarUrl, login: user.login };
     }),
     getProfile: Effect.fn("ProfilesService.getProfile")(function* (login, viewerUserId) {
-      const user = yield* requireUser(login, viewerUserId);
+      const { githubLogin, user } = yield* requireUser(login, viewerUserId);
       const now = new Date();
       const until = latestUsageDateKey(now);
       const [stats, leaderboardRank] = yield* Effect.all(
@@ -130,10 +132,10 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
         { concurrency: "unbounded" },
       ).pipe(Effect.orDie);
 
-      return { stats: { ...stats, leaderboardRank }, user: toPublicUser(user) };
+      return { stats: { ...stats, leaderboardRank }, user: { ...toPublicUser(user), githubLogin } };
     }),
     getDaily: Effect.fn("ProfilesService.getDaily")(function* (login, query, viewerUserId) {
-      const user = yield* requireUser(login, viewerUserId);
+      const { user } = yield* requireUser(login, viewerUserId);
       const now = new Date();
       const bounds = yield* profileDailyBounds(query, now);
       const days = yield* repository

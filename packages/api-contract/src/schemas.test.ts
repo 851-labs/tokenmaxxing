@@ -764,7 +764,7 @@ describe("response sources", () => {
           topModel: null,
           totalTokens: 1,
         },
-        user: { avatarUrl: null, login: "alex", name: null },
+        user: { avatarUrl: null, githubLogin: "alex", login: "alex", name: null },
       }),
     ).resolves.toMatchObject({ stats: { sources: ["some-future-agent"] } });
   });
