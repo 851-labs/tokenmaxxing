@@ -3,6 +3,7 @@ import type { ProfileResponse } from "@tokenmaxxing/api-contract";
 import { profileOgDescription, profileOgTitle } from "./og";
 import {
   DISCORD_URL,
+  githubProfileUrl,
   NPM_INSTALL_COMMAND,
   NPM_URL,
   SITE_DESCRIPTION,
@@ -98,7 +99,7 @@ function profilePageSchema(profile: Profile): Record<string, unknown> {
   // The GitHub account as GitHub last reported it. `user.login` is the
   // tokenmaxxing username, which can be suffixed, Google-derived or stale.
   if (user.githubLogin !== null) {
-    person.sameAs = [`https://github.com/${encodeURIComponent(user.githubLogin)}`];
+    person.sameAs = [githubProfileUrl(user.githubLogin)];
   }
 
   if (user.avatarUrl !== null) {

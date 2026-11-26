@@ -23,12 +23,18 @@ function siteUrl(path: string): string {
   return new URL(path, SITE_ORIGIN).toString();
 }
 
+/** A GitHub account's profile page, from its login as GitHub reports it. */
+function githubProfileUrl(githubLogin: string): string {
+  return `https://github.com/${encodeURIComponent(githubLogin)}`;
+}
+
 export {
   CCUSAGE_URL,
   CHANGELOG_URL,
   DISCORD_URL,
   GITHUB_REPO,
   GITHUB_URL,
+  githubProfileUrl,
   NPM_INSTALL_COMMAND,
   NPM_PACKAGE,
   NPM_URL,

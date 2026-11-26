@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { CaretDown, LinkSimple } from "@phosphor-icons/react/ssr";
+import { CaretDown, Check, GithubLogo, LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery, type QueryClient } from "@tanstack/react-query";
 import {
   createFileRoute,
@@ -51,6 +51,7 @@ import {
 import { profileDailyQueryOptions, profileQueryOptions, queryKeys } from "../../lib/queries";
 import { optionalSearchParam, searchParam } from "../../lib/search";
 import { pageHead } from "../../lib/seo";
+import { githubProfileUrl } from "../../lib/site";
 import {
   DEFAULT_USAGE_RANGE,
   USAGE_RANGE_MENU_OPTIONS,
@@ -206,8 +207,11 @@ function ProfilePage() {
           <Avatar alt={`${owner.login} avatar`} priority size={56} src={owner.avatarUrl} />
           <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{owner.login}</h1>
         </div>
-        {/* Shares the view on screen: active filters ride along. */}
-        <ProfileShareButton url={sharedProfileUrl(profileUrl(profile), agent, timeframe)} />
+        <div className="flex shrink-0 items-stretch gap-2">
+          <ProfileGithubLink githubLogin={owner.githubLogin} />
+          {/* Shares the view on screen: active filters ride along. */}
+          <ProfileShareButton url={sharedProfileUrl(profileUrl(profile), agent, timeframe)} />
+        </div>
       </header>
 
       {daily.days.length === 0 ? (
@@ -318,6 +322,41 @@ function AgentFilterMenu({
   );
 }
 
+/**
+ * The linked GitHub account, which is not always the login the page shows (a
+ * suffixed or Google-made login, or a renamed account). Profiles without one
+ * get no button.
+ */
+function ProfileGithubLink({ githubLogin }: { githubLogin: string | null }) {
+  if (githubLogin === null) {
+    return null;
+  }
+
+  const label = `${githubLogin} on GitHub`;
+
+  return (
+    <a
+      aria-label={label}
+      // A square as tall as the Share button beside it: `p-2` around the
+      // 1rem icon adds up to Share's line of text plus its `py-1.5` (Share is
+      // the same square on phones), and the row stretches the two to one
+      // height.
+      className={cn(buttonClassName({ variant: "outline" }), "p-2")}
+      href={githubProfileUrl(githubLogin)}
+      rel="noopener noreferrer"
+      target="_blank"
+      title={label}
+    >
+      <GithubLogo aria-hidden className="size-4" />
+    </a>
+  );
+}
+
+/**
+ * Copies the profile link. On phones it is an icon-only square like the GitHub
+ * button beside it, so the two leave the login the room Share alone used to;
+ * the label comes back from `sm` up.
+ */
 function ProfileShareButton({ url }: { url: string }) {
   const { copiedKey, copy } = useCopyToClipboard();
   const copied = copiedKey !== null;
@@ -325,13 +364,17 @@ function ProfileShareButton({ url }: { url: string }) {
   return (
     <Button
       aria-label={copied ? "Profile link copied" : "Share profile"}
-      className="shrink-0"
+      // `max-sm:p-2` is the GitHub button's square around a 1rem icon.
+      className="shrink-0 max-sm:p-2"
       onClick={() => void copy(url, "profile")}
       size="sm"
       variant="outline"
     >
-      <LinkSimple className="size-4" />
-      {copied ? "Copied" : "Share"}
+      {/* Without the label the icon has to confirm the copy; with it, the
+          label does and the icon stays a link. */}
+      {copied ? <Check className="size-4 sm:hidden" /> : null}
+      <LinkSimple className={cn("size-4", copied && "max-sm:hidden")} />
+      <span className="max-sm:sr-only">{copied ? "Copied" : "Share"}</span>
     </Button>
   );
 }
@@ -569,4 +612,4 @@ function ProfileTrends({
   );
 }
 
-export { loadProfile, Route };
+export { loadProfile, ProfileGithubLink, ProfileShareButton, Route };
