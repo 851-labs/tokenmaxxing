@@ -34,12 +34,21 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
   const updateUserFromProfile = Effect.fn("AuthRepository.updateUserFromProfile")(function* (
     userId: string,
     profile: OAuthProfile,
+    previous: Pick<UserAccount, "avatarUrl" | "name"> | undefined,
     now: Date,
   ) {
     const user = yield* findUserOrFail(userId);
+    // A field follows this provider while it is empty or still holds the
+    // value this identity gave last time, so a new avatar or display name
+    // carries over without overwriting a value that came from another
+    // provider. A value the provider clears keeps the stored one.
+    const follow = (current: string | null, before: string | null, incoming: string | null) =>
+      current === null || (previous !== undefined && current === before)
+        ? (incoming ?? current)
+        : current;
     const next = {
-      avatarUrl: user.avatarUrl ?? profile.avatarUrl,
-      name: user.name ?? profile.name,
+      avatarUrl: follow(user.avatarUrl, previous?.avatarUrl ?? null, profile.avatarUrl),
+      name: follow(user.name, previous?.name ?? null, profile.name),
     };
     if (next.avatarUrl === user.avatarUrl && next.name === user.name) {
       return toAuthUser(user);
@@ -158,7 +167,29 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
     linkAccount: (userId, profile) =>
       Effect.gen(function* () {
         const now = new Date();
-        const user = yield* updateUserFromProfile(userId, profile, now);
+        // What this identity sent at its last sign-in, read before the upsert
+        // below overwrites it.
+        const previous = firstRow(
+          yield* database.use((db) =>
+            db
+              .select({ avatarUrl: userAccounts.avatarUrl, name: userAccounts.name })
+              .from(userAccounts)
+              .where(
+                and(
+                  eq(userAccounts.provider, profile.provider),
+                  eq(userAccounts.providerAccountId, profile.providerAccountId),
+                  eq(userAccounts.userId, userId),
+                ),
+              )
+              .limit(1),
+          ),
+        );
+        const user = yield* updateUserFromProfile(
+          userId,
+          profile,
+          Option.getOrUndefined(previous),
+          now,
+        );
         yield* database.use((db) =>
           db
             .insert(userAccounts)
