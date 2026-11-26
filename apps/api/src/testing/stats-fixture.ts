@@ -10,9 +10,10 @@ import { shiftDayKey } from "@tokenmaxxing/api-contract";
  *   few future-dated rows past the ingest ceiling.
  * - A few users and models hold most rows; most models are a long tail.
  * - Models repeat across sources, and users across devices.
- * - Shadow-banned users, including one "whale" whose fabricated one-off model
- *   ids make up half the table (as in production), all inside two months.
- * - A device whose rows belong to two users, one of them banned.
+ * - Shadow-banned users who upload like anyone else, and one banned "whale"
+ *   whose fabricated one-off model ids make up half the table (as in
+ *   production), all inside two months.
+ * - A device with rows of two users, a banned one and a visible one.
  * - Costs are arbitrary doubles (so float sums are order-sensitive), some
  *   zero; token counts are integers up to the ingest caps' order of magnitude.
  *
@@ -35,6 +36,8 @@ interface StatsFixtureSummary {
   users: number;
   bannedUsers: number;
   devices: number;
+  /** The device both a banned and a visible user have rows on; null with too few users. */
+  sharedDevice: { bannedUserId: string; deviceId: string; visibleUserId: string } | null;
 }
 
 /** Production row share per source, most used first. */
@@ -76,6 +79,19 @@ const SHARED_MODELS = [
   "gpt-6-codex",
   "gemini-4-pro",
 ];
+
+/**
+ * User `index` is banned when `index % 40 === 6` and never uploads when
+ * `index % 4 === 3`. 40 is a multiple of 4 and 6 is not 3 modulo 4, so no
+ * banned user is one of the silent ones.
+ */
+const BANNED_EVERY = 40;
+const BANNED_OFFSET = 6;
+const INACTIVE_EVERY = 4;
+const INACTIVE_OFFSET = 3;
+
+/** The shadow-banned user holding `whaleRows`. */
+const STATS_FIXTURE_WHALE_ID = "user-whale";
 
 const DAYS_BACK = 700;
 const DAYS_AHEAD = 3;
@@ -180,7 +196,8 @@ function seedStatsFixture(sqlite: DatabaseSync, options: StatsFixtureOptions): S
 
   sqlite.exec("begin");
 
-  // Users: about one in forty is banned, about one in four never uploads.
+  // Users: about one in forty is banned, about one in four never uploads. The
+  // two rules never pick the same user, so every banned user has rows to hide.
   interface FixtureUser {
     banned: boolean;
     devices: string[];
@@ -195,28 +212,40 @@ function seedStatsFixture(sqlite: DatabaseSync, options: StatsFixtureOptions): S
   let devices = 0;
   for (let index = 0; index < options.users; index += 1) {
     const id = `user-${String(index).padStart(5, "0")}`;
-    const banned = index % 40 === 7;
+    const banned = index % BANNED_EVERY === BANNED_OFFSET;
     insertUser.run(id, id, banned ? 1 : null);
     const user: FixtureUser = { banned, devices: [], id, sources: [] };
-    for (let device = 0; device <= (pickInt(3) % 2) + (random() < 0.1 ? 1 : 0); device += 1) {
+    // One device mostly, two for a third of users, now and then one more.
+    const deviceCount = 1 + (pickInt(3) % 2) + (random() < 0.1 ? 1 : 0);
+    for (let device = 0; device < deviceCount; device += 1) {
       const deviceId = `${id}-device-${device}`;
       insertDevice.run(deviceId, id, deviceId);
       user.devices.push(deviceId);
       devices += 1;
     }
-    for (let source = 0; source <= pickInt(3); source += 1) {
+    const sourceCount = 1 + pickInt(3);
+    for (let source = 0; source < sourceCount; source += 1) {
       user.sources.push(pickSource());
     }
     users.push(user);
   }
-  // A device that changed hands: its older rows still carry the banned owner.
+  // A device that changed hands: a visible user uploads from it now, and the
+  // banned owner's own rows are still on it.
   const [firstBanned] = users.filter((user) => user.banned);
   const [firstVisible] = users.filter((user) => !user.banned);
+  let sharedDevice: StatsFixtureSummary["sharedDevice"] = null;
   if (firstBanned !== undefined && firstVisible !== undefined) {
-    firstVisible.devices.push(firstBanned.devices[0]!);
+    const [deviceId] = firstBanned.devices;
+    firstBanned.devices = [deviceId!];
+    firstVisible.devices.push(deviceId!);
+    sharedDevice = {
+      bannedUserId: firstBanned.id,
+      deviceId: deviceId!,
+      visibleUserId: firstVisible.id,
+    };
   }
 
-  const active = users.filter((_, index) => index % 4 !== 3);
+  const active = users.filter((_, index) => index % INACTIVE_EVERY !== INACTIVE_OFFSET);
   const pickUser = makeWeightedPicker(
     active.map((_, rank) => 1 / (rank + 1) ** 0.9),
     random,
@@ -251,7 +280,7 @@ function seedStatsFixture(sqlite: DatabaseSync, options: StatsFixtureOptions): S
 
   // The whale: two rows per fabricated model id, 20 to 80 days back.
   if (options.whaleRows > 0) {
-    const whale = "user-whale";
+    const whale = STATS_FIXTURE_WHALE_ID;
     insertUser.run(whale, whale, 1);
     insertDevice.run("whale-device", whale, "whale-device");
     devices += 1;
@@ -272,10 +301,11 @@ function seedStatsFixture(sqlite: DatabaseSync, options: StatsFixtureOptions): S
     bannedUsers: users.filter((user) => user.banned).length + (options.whaleRows > 0 ? 1 : 0),
     devices,
     rows: inserted,
+    sharedDevice,
     users: users.length + (options.whaleRows > 0 ? 1 : 0),
   };
 }
 
-export { seedStatsFixture };
+export { seedStatsFixture, STATS_FIXTURE_WHALE_ID };
 
 export type { StatsFixtureOptions, StatsFixtureSummary };

@@ -41,7 +41,8 @@ function visibleUsage<TQuery extends SQLiteSelect>(query: TQuery, options: Visib
  * which looks up every row in the window (banned users' included) in the table
  * and then its user: over a year in production that reads four times the rows
  * and takes over three times as long. A query that selects only user, date,
- * cost and total tokens never touches the table at all.
+ * cost and total tokens never touches the table at all. `users` must be the
+ * last table the query has in its FROM clause so far.
  *
  * @example visibleUsageByUser(db.select(fields).from(users).$dynamic(), { since, until })
  */

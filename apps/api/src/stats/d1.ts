@@ -135,17 +135,41 @@ function rangeColumn(field: string, index: number): string {
   return `${field}_${index}`;
 }
 
-/** Every aggregate once per range start, each over that range's rows only. */
-function rangeColumns(aggregates: Aggregates<string>, starts: readonly string[]) {
+const RANGE_STARTS = sql.identifier("range_starts");
+
+/** The `range_starts` column holding the start of the range at `index`. */
+function rangeStart(index: number): SQL {
+  return sql`${RANGE_STARTS}.${sql.identifier(`start_${index}`)}`;
+}
+
+/**
+ * The range starts as a one-row table for a statement's FROM clause. Each
+ * start is bound here once and read by name in every filter, so a statement's
+ * bound parameters grow with the ranges alone and not with ranges times
+ * aggregates (D1 allows 100).
+ */
+function rangeStartsTable(starts: readonly string[]): SQL {
+  const columns = starts.map(
+    (since, index) => sql`${since} as ${sql.identifier(`start_${index}`)}`,
+  );
+
+  return sql`(select ${sql.join(columns, sql`, `)}) as ${RANGE_STARTS}`;
+}
+
+/**
+ * Every aggregate once per range, each over that range's rows only. The
+ * statement must select from `rangeStartsTable`.
+ */
+function rangeColumns(aggregates: Aggregates<string>, rangeCount: number) {
   const columns: Record<string, SQL.Aliased<number>> = {};
-  starts.forEach((since, index) => {
+  for (let index = 0; index < rangeCount; index += 1) {
     for (const [field, aggregate] of Object.entries(aggregates)) {
       columns[rangeColumn(field, index)] =
-        sql<number>`${aggregate()} filter (where ${usageDays.date} >= ${since})`.as(
+        sql<number>`${aggregate()} filter (where ${usageDays.date} >= ${rangeStart(index)})`.as(
           rangeColumn(field, index),
         );
     }
-  });
+  }
 
   return columns;
 }
@@ -166,9 +190,12 @@ function rangeValues<Field extends string>(
 
 /**
  * The `limit` keys with the most `metric` in one range, out of rows covering
- * every range. A key with no rows in the range is not part of it. Exact ties
- * go to the later key: SQL leaves their order open, and that is the order
- * SQLite returned them in when `order by <metric> desc limit` made this cut.
+ * every range. A key with no rows in the range is not part of it.
+ *
+ * The worker defines the order of exact ties: the later key first, in
+ * JavaScript string order. SQL never fixed one. When `order by <metric> desc
+ * limit` made this cut, tied keys came back however SQLite's sorter left
+ * them, so which of them made the cut was an accident of the plan.
  */
 function rankedKeys(
   rows: ReadonlyArray<Readonly<Record<string, unknown>>>,
@@ -189,7 +216,11 @@ function rankedKeys(
 /** Each range's sums, row count and distinct users and devices, as one row. */
 function rangeTotals(db: DrizzleD1Database, window: UsageWindow, starts: readonly string[]) {
   return visibleUsageByUser(
-    db.select(rangeColumns(TOTAL_AGGREGATES, starts)).from(users).$dynamic(),
+    db
+      .select(rangeColumns(TOTAL_AGGREGATES, starts.length))
+      .from(rangeStartsTable(starts))
+      .crossJoin(users)
+      .$dynamic(),
     window,
   );
 }
@@ -205,9 +236,10 @@ function rangeKeys(
     db
       .select({
         key: sql<string>`${keyColumn}`.as("rank_key"),
-        ...rangeColumns(RANKED_AGGREGATES, starts),
+        ...rangeColumns(RANKED_AGGREGATES, starts.length),
       })
-      .from(users)
+      .from(rangeStartsTable(starts))
+      .crossJoin(users)
       .$dynamic(),
     window,
   ).groupBy(sql`rank_key`);
