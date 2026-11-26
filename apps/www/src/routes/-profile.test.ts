@@ -136,16 +136,16 @@ describe("profile loader", () => {
     });
   });
 
-  it("keeps the agent filter across the canonical-login redirect", async () => {
+  it("keeps the filters across the canonical-login redirect", async () => {
     respond = (path) => (path.endsWith("/daily") ? json(dailyBody) : json(profileBody));
 
     const error = await rejection(
-      loadProfile(new QueryClient(), "MartinXJonsson", { agent: "opencode" }),
+      loadProfile(new QueryClient(), "MartinXJonsson", { agent: "opencode", range: "6m" }),
     );
 
     expect(isRedirect(error) && error.options).toMatchObject({
       params: { user: "martinxjonsson" },
-      search: { agent: "opencode" },
+      search: { agent: "opencode", range: "6m" },
       statusCode: 301,
     });
   });
@@ -160,9 +160,9 @@ describe("profile loader", () => {
       return json(profileBody);
     };
 
-    await loadProfile(new QueryClient(), "martinxjonsson", { agent: "opencode" });
+    await loadProfile(new QueryClient(), "martinxjonsson", { agent: "opencode", range: "6m" });
 
-    // The agent filter never reaches the API: it is applied in the browser.
+    // The filters never reach the API: they are applied in the browser.
     expect(requested).toEqual(["?groupBy=sourceModel"]);
   });
 
