@@ -214,6 +214,8 @@ describe("profile GitHub link", () => {
     // Icon only: the accessible name is the label, the logo is decorative.
     expect(link?.textContent).toBe("");
     expect(link?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    // The solid GitHub mark, in the button's text colour.
+    expect(link?.querySelector("svg")?.getAttribute("fill")).toBe("currentColor");
   });
 
   it("renders nothing for a profile without a GitHub account", () => {

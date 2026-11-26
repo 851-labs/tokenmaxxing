@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { CaretDown, Check, GithubLogo, LinkSimple } from "@phosphor-icons/react/ssr";
+import { CaretDown, Check, LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery, type QueryClient } from "@tanstack/react-query";
 import {
   createFileRoute,
@@ -23,6 +23,7 @@ import { Button, buttonClassName } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { Code } from "../../components/ui/code";
 import { FilterBar } from "../../components/filter-bar";
+import { GithubMark } from "../../components/github-mark";
 import { Menu } from "../../components/ui/menu";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import { agentLabel } from "../../lib/agents";
@@ -347,7 +348,7 @@ function ProfileGithubLink({ githubLogin }: { githubLogin: string | null }) {
       target="_blank"
       title={label}
     >
-      <GithubLogo aria-hidden className="size-4" />
+      <GithubMark className="size-4" />
     </a>
   );
 }
