@@ -129,8 +129,8 @@ function SegmentedControl<Value extends string>({
           <button
             aria-checked={checked}
             className={cn(
-              "relative z-10 whitespace-nowrap px-2.5 py-1 text-xs font-medium outline-none transition-colors",
-              "text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent",
+              "relative z-10 whitespace-nowrap px-2.5 py-1 text-xs font-medium transition-colors",
+              "text-muted-foreground hover:text-foreground",
               "aria-checked:text-background aria-checked:hover:text-background",
               indicator === null && "aria-checked:bg-foreground",
             )}

@@ -40,7 +40,10 @@ const SCROLL_SLOP = 4;
 
 /** Tailwind classes that make the focused chart surface visible. */
 const CHART_FOCUS_CLASS_NAME =
-  "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  // The site-wide ring (styles.css), held off the plot. This used to pair
+  // `outline-none` with `focus-visible:outline-2`, which in Tailwind v4 leaves
+  // the outline style at none, so the focused chart showed no ring at all.
+  "focus-visible:outline-offset-2";
 
 function nextCursorIndex(
   current: number | null,

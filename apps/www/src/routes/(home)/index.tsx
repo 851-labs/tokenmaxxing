@@ -173,7 +173,7 @@ function FaqSection() {
       <div className="mt-4 divide-y divide-border border-y border-border">
         {FAQ_ITEMS.map((item) => (
           <Collapsible.Root className="px-4 py-4" key={item.question}>
-            <Collapsible.Trigger className="group flex w-full cursor-pointer items-center gap-2 bg-transparent p-0 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-accent">
+            <Collapsible.Trigger className="group flex w-full cursor-pointer items-center gap-2 bg-transparent p-0 text-left text-sm font-medium">
               <span
                 aria-hidden="true"
                 className="w-4 shrink-0 text-center font-mono text-muted-foreground transition-transform group-data-panel-open:rotate-45"

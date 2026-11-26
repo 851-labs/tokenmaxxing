@@ -213,7 +213,7 @@ function LeaderboardTable({
     <div
       aria-label="Leaderboard table"
       ref={boardRef}
-      className="group/board overflow-x-auto overscroll-x-contain border-y border-border outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
+      className="group/board overflow-x-auto overscroll-x-contain border-y border-border focus-visible:-outline-offset-2"
       data-scrolled={scrolled ? "" : undefined}
       onScroll={(event) => setScrolled(event.currentTarget.scrollLeft > 0)}
       role="region"
