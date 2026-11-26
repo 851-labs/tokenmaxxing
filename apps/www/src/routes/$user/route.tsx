@@ -165,16 +165,21 @@ async function loadProfile(queryClient: QueryClient, login: string, source?: Usa
 /**
  * The agent choices for the dashboard: all agents plus every agent with usage
  * in the charts' range. An agent whose only usage is older than that range
- * would open an empty dashboard, so it is not offered.
+ * would open an empty dashboard, so it is not offered; one selected anyway
+ * (an old link) is listed so the control shows it and can leave it.
  */
-function agentFilterOptions(sources: readonly string[]): readonly AgentFilterOption[] {
+function agentFilterOptions(
+  source: UsageSource | undefined,
+  sources: readonly string[],
+): readonly AgentFilterOption[] {
   const known = sources.filter((candidate): candidate is UsageSource =>
     (USAGE_SOURCES as readonly string[]).includes(candidate),
   );
+  const agents = source === undefined || known.includes(source) ? known : [...known, source];
 
   return [
     { label: "All agents", value: ALL_AGENT_SOURCE },
-    ...known.map((agent) => ({ label: agentLabel(agent), value: agent })),
+    ...agents.map((agent) => ({ label: agentLabel(agent), value: agent })),
   ];
 }
 
@@ -186,7 +191,7 @@ function ProfilePage() {
   const { data: daily } = useSuspenseQuery(profileDailyQueryOptions(user, source));
   const owner = profile.user;
   // `sources` is missing only from a daily response cached before the API sent it.
-  const agentOptions = agentFilterOptions(daily.sources ?? profile.stats.sources);
+  const agentOptions = agentFilterOptions(source, daily.sources ?? profile.stats.sources);
   const activeSource = source === undefined ? ALL_AGENT_SOURCE : source;
 
   const selectAgent = (value: ProfileSourceFilter) =>
@@ -205,26 +210,14 @@ function ProfilePage() {
         <ProfileShareButton url={profileUrl(profile)} />
       </header>
 
-      {daily.days.length === 0 ? (
+      {/* A filtered agent with no rows still gets the dashboard, empty: the
+          filter bar is the way back. Only a profile with no usage at all
+          gets the sync hint. */}
+      {daily.days.length === 0 && source === undefined ? (
         <div className="px-4">
-          {source === undefined ? (
-            <Card className="p-6 text-sm text-muted-foreground">
-              No usage yet — run <Code>tokenmaxxing sync</Code> to fill this page.
-            </Card>
-          ) : (
-            // The filter bar lives in the dashboard, which has nothing to show
-            // here, so the way back to all agents is offered inline.
-            <Card className="flex flex-wrap items-center justify-between gap-3 p-6 text-sm text-muted-foreground">
-              <span>No {agentLabel(source)} usage on this profile.</span>
-              <Button
-                onClick={() => void selectAgent(ALL_AGENT_SOURCE)}
-                size="sm"
-                variant="outline"
-              >
-                Show all agents
-              </Button>
-            </Card>
-          )}
+          <Card className="p-6 text-sm text-muted-foreground">
+            No usage yet — run <Code>tokenmaxxing sync</Code> to fill this page.
+          </Card>
         </div>
       ) : (
         <ProfileDashboard
