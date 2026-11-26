@@ -10,20 +10,19 @@ import { latestUsageDateKey, trailingWindowStart, yearStartDayKey } from "../dat
 
 const STATS_RANK_LIMIT = 10;
 /**
- * /stats is a global aggregate over every usage row, recomputed for six
- * ranges when it goes stale. A stale snapshot is still served while a rebuild
- * runs after the response (stale-while-revalidate), so no visitor waits on
- * the rebuild unless their data center holds no snapshot at all.
+ * /stats is a global aggregate over every usage row of its longest range,
+ * recomputed when it goes stale: six statements and about 2 seconds of D1
+ * time in production (see `stats/d1.ts`). A stale snapshot is still served
+ * while a rebuild runs after the response (stale-while-revalidate), so no
+ * visitor waits on the rebuild unless their data center holds no snapshot at
+ * all.
  *
- * TEMPORARY: three hours, up from ten minutes (600). One rebuild runs 27
- * statements in a single D1 batch, each scanning much or all of `usage_days`:
- * about 14M rows read and 6 seconds of D1 time. D1 then rejects every query as
- * overloaded, and all API routes return 500s and 503s for 5 to 15 seconds.
- * At ten minutes that happened about 36 times a day. Until the rebuild is
- * cheap, /stats may lag by up to three hours so rebuilds are rare. Set this
- * back to 600 in the change that makes the rebuild cheap.
+ * Ten minutes, and a longer window would buy little. The snapshot is cached
+ * per Cloudflare data center, so most rebuilds are a data center's first
+ * request rather than a stale snapshot: over one day of 92 requests from 21
+ * data centers, ten minutes meant 41 rebuilds and three hours still 31.
  */
-const STATS_FRESH_SECONDS = 10_800;
+const STATS_FRESH_SECONDS = 600;
 /** How long the edge keeps a snapshot it may serve stale. */
 const STATS_CACHE_TTL_SECONDS = 86_400;
 
