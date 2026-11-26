@@ -15,7 +15,7 @@ import { loadProfile } from "./$user/route";
  * build (no SSR cookie to forward).
  */
 
-type Respond = (path: string) => Response | Promise<Response>;
+type Respond = (path: string, search: string) => Response | Promise<Response>;
 
 const profileBody = {
   stats: {
@@ -44,7 +44,7 @@ let respond: Respond;
 beforeAll(() => {
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    return respond(decodeURIComponent(url.pathname));
+    return respond(decodeURIComponent(url.pathname), url.search);
   });
 });
 
@@ -134,6 +134,36 @@ describe("profile loader", () => {
       statusCode: 301,
       to: "/$user",
     });
+  });
+
+  it("keeps the agent filter across the canonical-login redirect", async () => {
+    respond = (path) => (path.endsWith("/daily") ? json(dailyBody) : json(profileBody));
+
+    const error = await rejection(
+      loadProfile(new QueryClient(), "MartinXJonsson", { agent: "opencode" }),
+    );
+
+    expect(isRedirect(error) && error.options).toMatchObject({
+      params: { user: "martinxjonsson" },
+      search: { agent: "opencode" },
+      statusCode: 301,
+    });
+  });
+
+  it("reads the daily rows once, grouped by agent and model", async () => {
+    const requested: string[] = [];
+    respond = (path, search) => {
+      if (path.endsWith("/daily")) {
+        requested.push(search);
+        return json(dailyBody);
+      }
+      return json(profileBody);
+    };
+
+    await loadProfile(new QueryClient(), "martinxjonsson", { agent: "opencode" });
+
+    // The agent filter never reaches the API: it is applied in the browser.
+    expect(requested).toEqual(["?groupBy=sourceModel"]);
   });
 
   it("redirects an old login (a renamed user) to the current profile URL", async () => {

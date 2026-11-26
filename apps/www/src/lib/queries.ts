@@ -108,7 +108,10 @@ function profileDailyQueryOptions(login: string) {
   return queryOptions({
     queryKey: queryKeys.profileDaily(login),
     queryFn: () =>
-      runApi((client) => client.profiles.daily({ params: { login }, query: { groupBy: "model" } })),
+      // Grouped by agent and model: the page filters by agent in the browser.
+      runApi((client) =>
+        client.profiles.daily({ params: { login }, query: { groupBy: "sourceModel" } }),
+      ),
     staleTime: 30_000,
   });
 }

@@ -2,12 +2,77 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { modelColor } from "../../../components/charts/model-colors";
 import {
+  agentsBySpend,
   deriveProfileCharts,
   deriveProfileTrendCharts,
   deriveWindowStats,
+  rowsForAgent,
   type DailyRange,
   type DailyRow,
 } from "./profile-charts";
+
+/** Rows as `groupBy=sourceModel` sends them: one per (date, model, agent). */
+function agentRow(date: string, source: string, key: string, spendUsd: number): DailyRow {
+  return { date, key, outputTokens: spendUsd, source, spendUsd, totalTokens: spendUsd * 10 };
+}
+
+describe("agent filter rows", () => {
+  const rows = [
+    agentRow("2026-06-19", "claude", "claude-opus-5-5", 8),
+    agentRow("2026-06-19", "opencode", "claude-opus-5-5", 2),
+    agentRow("2026-06-19", "opencode", "qwen3.8-27b", 1),
+    agentRow("2026-06-20", "codex", "gpt-6.1-sol", 8),
+    agentRow("2026-06-21", "codex", "gpt-6.1-sol", 3),
+  ];
+
+  it("lists the agents with usage, highest spend first, ties by tag", () => {
+    expect(agentsBySpend(rows)).toEqual(["codex", "claude", "opencode"]);
+    expect(
+      agentsBySpend([agentRow("2026-06-19", "pi", "m", 1), agentRow("2026-06-19", "amp", "m", 1)]),
+    ).toEqual(["amp", "pi"]);
+    // Rows without an agent (a response grouped by model only) offer nothing.
+    expect(
+      agentsBySpend([
+        { date: "2026-06-19", key: "m", outputTokens: 1, spendUsd: 1, totalTokens: 1 },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("sums every agent into one row per (date, model) when unfiltered", () => {
+    expect(rowsForAgent(rows, undefined)).toEqual([
+      {
+        date: "2026-06-19",
+        key: "claude-opus-5-5",
+        outputTokens: 10,
+        spendUsd: 10,
+        totalTokens: 100,
+      },
+      { date: "2026-06-19", key: "qwen3.8-27b", outputTokens: 1, spendUsd: 1, totalTokens: 10 },
+      { date: "2026-06-20", key: "gpt-6.1-sol", outputTokens: 8, spendUsd: 8, totalTokens: 80 },
+      { date: "2026-06-21", key: "gpt-6.1-sol", outputTokens: 3, spendUsd: 3, totalTokens: 30 },
+    ]);
+  });
+
+  it("keeps only the selected agent's rows, without the agent tag", () => {
+    expect(rowsForAgent(rows, "opencode")).toEqual([
+      { date: "2026-06-19", key: "claude-opus-5-5", outputTokens: 2, spendUsd: 2, totalTokens: 20 },
+      { date: "2026-06-19", key: "qwen3.8-27b", outputTokens: 1, spendUsd: 1, totalTokens: 10 },
+    ]);
+    // An agent with no rows in range (an old link) leaves the dashboard empty.
+    expect(rowsForAgent(rows, "goose")).toEqual([]);
+  });
+
+  it("ranks an agent's models against each other, not the whole profile", () => {
+    const range: DailyRange = { firstDate: "2026-06-19", lastDate: "2026-06-21" };
+
+    expect(deriveWindowStats(rowsForAgent(rows, undefined), range).topModel).toBe("gpt-6.1-sol");
+    expect(deriveWindowStats(rowsForAgent(rows, "opencode"), range)).toMatchObject({
+      activeDays: 1,
+      spendUsd: 3,
+      topModel: "claude-opus-5-5",
+    });
+  });
+});
 
 describe("deriveProfileCharts", () => {
   it("fills sparse usage rows across the server-provided chart range", () => {

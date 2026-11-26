@@ -56,6 +56,53 @@ interface ProfileWindowStats {
 }
 
 /**
+ * The agents (stored `source` tags) with usage in the rows, highest spend
+ * first, ties by tag: the choices the agent filter offers.
+ */
+function agentsBySpend(rows: readonly DailyRow[]): string[] {
+  const spendByAgent = new Map<string, number>();
+  for (const row of rows) {
+    if (row.source !== undefined) {
+      spendByAgent.set(row.source, (spendByAgent.get(row.source) ?? 0) + row.spendUsd);
+    }
+  }
+
+  return [...spendByAgent.entries()]
+    .toSorted(([a, aSpend], [b, bSpend]) => bSpend - aSpend || (a < b ? -1 : a > b ? 1 : 0))
+    .map(([agent]) => agent);
+}
+
+/**
+ * The rows the charts read, from rows grouped by agent and model
+ * (`groupBy=sourceModel`): one agent's rows, or every agent's summed, as one
+ * row per (date, model) with the agent dropped. Input order (by date) is kept.
+ */
+function rowsForAgent(rows: readonly DailyRow[], agent: string | undefined): DailyRow[] {
+  const merged = new Map<string, DailyRow>();
+  for (const { source, ...row } of rows) {
+    if (agent !== undefined && source !== agent) {
+      continue;
+    }
+
+    const key = JSON.stringify([row.date, row.key]);
+    const existing = merged.get(key);
+    merged.set(
+      key,
+      existing === undefined
+        ? row
+        : {
+            ...existing,
+            outputTokens: existing.outputTokens + row.outputTokens,
+            spendUsd: existing.spendUsd + row.spendUsd,
+            totalTokens: existing.totalTokens + row.totalTokens,
+          },
+    );
+  }
+
+  return [...merged.values()];
+}
+
+/**
  * The stat cards that follow the time range, summed from the daily rows the
  * same way the lifetime stats are: an active day is any day with a usage row,
  * and the top model ranks raw model names by spend.
@@ -151,6 +198,12 @@ function deriveProfileCharts(rows: readonly DailyRow[], range: DailyRange): Prof
   };
 }
 
-export { deriveProfileCharts, deriveProfileTrendCharts, deriveWindowStats };
+export {
+  agentsBySpend,
+  deriveProfileCharts,
+  deriveProfileTrendCharts,
+  deriveWindowStats,
+  rowsForAgent,
+};
 
 export type { DailyRange, DailyRow, ProfileCharts, ProfileTrendCharts, ProfileWindowStats };

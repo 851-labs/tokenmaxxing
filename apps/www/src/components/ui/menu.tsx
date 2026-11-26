@@ -1,5 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
+import { Check } from "@phosphor-icons/react/ssr";
 
 import { cn } from "../../lib/cn";
 
@@ -93,6 +94,38 @@ function MenuItem({ children, className, icon, ...rest }: MenuItemProps) {
   );
 }
 
+/**
+ * One choice in a `Menu.RadioGroup`: pick exactly one, e.g. a filter value.
+ * The check mark keeps its column on unselected items so labels line up.
+ */
+function MenuRadioItem({
+  children,
+  className,
+  // Picking a value is the whole interaction, so the menu closes (Base UI
+  // keeps it open by default).
+  closeOnClick = true,
+  ...rest
+}: WithClassName<ComponentProps<typeof BaseMenu.RadioItem>>) {
+  return (
+    <BaseMenu.RadioItem
+      closeOnClick={closeOnClick}
+      className={cn(
+        "flex cursor-default select-none items-center gap-2 px-2.5 py-1.5 outline-none",
+        "data-highlighted:bg-muted data-disabled:pointer-events-none data-disabled:opacity-50",
+        className,
+      )}
+      {...rest}
+    >
+      <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
+        <BaseMenu.RadioItemIndicator>
+          <Check className="size-3.5" weight="bold" />
+        </BaseMenu.RadioItemIndicator>
+      </span>
+      {children}
+    </BaseMenu.RadioItem>
+  );
+}
+
 function MenuSeparator({ className }: WithClassName<ComponentProps<typeof BaseMenu.Separator>>) {
   return <BaseMenu.Separator className={cn("-mx-1 my-1 h-px bg-border", className)} />;
 }
@@ -100,6 +133,8 @@ function MenuSeparator({ className }: WithClassName<ComponentProps<typeof BaseMe
 const Menu = Object.assign(MenuRoot, {
   Content: MenuContent,
   Item: MenuItem,
+  RadioGroup: BaseMenu.RadioGroup,
+  RadioItem: MenuRadioItem,
   Separator: MenuSeparator,
   Trigger: BaseMenu.Trigger,
 });
