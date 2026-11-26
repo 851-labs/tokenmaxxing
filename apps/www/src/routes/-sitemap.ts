@@ -1,4 +1,5 @@
 import { siteUrl } from "../lib/site";
+import { escapeXml } from "../lib/xml";
 
 /** Public, indexable pages. Signed-in, internal, and OG-card routes stay out. */
 const STATIC_SITEMAP_PATHS = ["/", "/stats", "/privacy", "/terms"] as const;
@@ -25,15 +26,6 @@ function buildSitemapXml(entries: readonly SitemapEntry[]): string {
     "</urlset>",
     "",
   ].join("\n");
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
 }
 
 export { buildSitemapXml, STATIC_SITEMAP_PATHS };

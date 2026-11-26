@@ -9,6 +9,7 @@ const RESERVED_LOGINS: ReadonlySet<string> = new Set([
   // www routes and static files
   "apple-touch-icon",
   "assets",
+  "card",
   "design",
   "favicon",
   "internal",
