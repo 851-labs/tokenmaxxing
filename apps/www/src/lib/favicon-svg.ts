@@ -1,3 +1,5 @@
+import { escapeXml } from "./xml";
+
 const FAVICON_LAYOUT = {
   avatar: { notchGap: 5, size: 40, x: 24, y: 24 },
   canvasSize: 64,
@@ -58,7 +60,7 @@ function buildFaviconSvg(avatarDataUrl: string | null): string {
   const avatarMarkup =
     avatarDataUrl === null
       ? ""
-      : `<image id="avatar" href="${escapeXmlAttribute(avatarDataUrl)}" x="${avatar.x}" y="${avatar.y}" width="${avatar.size}" height="${avatar.size}" preserveAspectRatio="xMidYMid slice" clip-path="url(#avatar-clip)"/>`;
+      : `<image id="avatar" href="${escapeXml(avatarDataUrl)}" x="${avatar.x}" y="${avatar.y}" width="${avatar.size}" height="${avatar.size}" preserveAspectRatio="xMidYMid slice" clip-path="url(#avatar-clip)"/>`;
   const gradientClipMarkup =
     avatarDataUrl === null
       ? `<rect x="${gradient.x}" y="${gradient.y}" width="${gradient.size}" height="${gradient.size}" rx="${gradient.radius}"/>`
@@ -218,14 +220,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   }
 
   return btoa(binary);
-}
-
-function escapeXmlAttribute(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
 }
 
 export {
