@@ -56,6 +56,9 @@ afterEach(() => {
 describe("CliLoginApproval", () => {
   it("shows the requesting device and never approves without a click", async () => {
     await render(<CliLoginApproval code={summary.code} />);
+    await waitUntil(
+      () => approveButton() !== undefined && container.textContent?.includes("alice") === true,
+    );
 
     const button = approveButton();
     expect(button?.textContent).toBe("Approve mallory-box");
@@ -70,7 +73,7 @@ describe("CliLoginApproval", () => {
     await act(async () => {
       button?.click();
     });
-    await settle();
+    await waitUntil(() => container.textContent?.includes("Approved mallory-box") === true);
 
     expect(approveCliLogin).toHaveBeenCalledTimes(1);
     expect(approveCliLogin).toHaveBeenCalledWith({ payload: { code: summary.code } });
@@ -90,6 +93,16 @@ async function settle() {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
+}
+
+/**
+ * Settles until `ready` holds (about 2 s at most). A single fixed 20 ms wait
+ * was too short for the mocked queries when the whole suite loads the machine.
+ */
+async function waitUntil(ready: () => boolean) {
+  for (let attempt = 0; attempt < 100 && !ready(); attempt += 1) {
+    await settle();
+  }
 }
 
 describe("CLI login head", () => {
