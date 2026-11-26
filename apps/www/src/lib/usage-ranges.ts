@@ -20,6 +20,16 @@ const USAGE_RANGE_OPTIONS = [
   { label: "YTD", value: "ytd" },
 ] as const satisfies readonly SegmentedOption<UsageRangeId>[];
 
+/** The same ranges spelled out, for menus that have room for words. */
+const USAGE_RANGE_MENU_OPTIONS = [
+  { label: "Last 2 weeks", value: "2w" },
+  { label: "Last month", value: "1m" },
+  { label: "Last 2 months", value: "2m" },
+  { label: "Last 3 months", value: "3m" },
+  { label: "Last 6 months", value: "6m" },
+  { label: "Year to date", value: "ytd" },
+] as const satisfies readonly SegmentedOption<UsageRangeId>[];
+
 interface DayWindow {
   /** Inclusive YYYY-MM-DD bounds. */
   firstDate: string;
@@ -43,6 +53,6 @@ function usageRangeWindow(loaded: DayWindow, range: UsageRangeId): DayWindow {
   };
 }
 
-export { DEFAULT_USAGE_RANGE, USAGE_RANGE_OPTIONS, usageRangeWindow };
+export { DEFAULT_USAGE_RANGE, USAGE_RANGE_MENU_OPTIONS, USAGE_RANGE_OPTIONS, usageRangeWindow };
 
 export type { DayWindow };
