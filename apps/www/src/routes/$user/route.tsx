@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { CaretDown, GithubLogo, LinkSimple } from "@phosphor-icons/react/ssr";
+import { CaretDown, Check, GithubLogo, LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery, type QueryClient } from "@tanstack/react-query";
 import {
   createFileRoute,
@@ -338,8 +338,9 @@ function ProfileGithubLink({ githubLogin }: { githubLogin: string | null }) {
     <a
       aria-label={label}
       // A square as tall as the Share button beside it: `p-2` around the
-      // 1rem icon adds up to Share's line of text plus its `py-1.5`, and the
-      // row stretches the two to one height.
+      // 1rem icon adds up to Share's line of text plus its `py-1.5` (Share is
+      // the same square on phones), and the row stretches the two to one
+      // height.
       className={cn(buttonClassName({ variant: "outline" }), "p-2")}
       href={githubProfileUrl(githubLogin)}
       rel="noopener noreferrer"
@@ -351,6 +352,11 @@ function ProfileGithubLink({ githubLogin }: { githubLogin: string | null }) {
   );
 }
 
+/**
+ * Copies the profile link. On phones it is an icon-only square like the GitHub
+ * button beside it, so the two leave the login the room Share alone used to;
+ * the label comes back from `sm` up.
+ */
 function ProfileShareButton({ url }: { url: string }) {
   const { copiedKey, copy } = useCopyToClipboard();
   const copied = copiedKey !== null;
@@ -358,13 +364,17 @@ function ProfileShareButton({ url }: { url: string }) {
   return (
     <Button
       aria-label={copied ? "Profile link copied" : "Share profile"}
-      className="shrink-0"
+      // `max-sm:p-2` is the GitHub button's square around a 1rem icon.
+      className="shrink-0 max-sm:p-2"
       onClick={() => void copy(url, "profile")}
       size="sm"
       variant="outline"
     >
-      <LinkSimple className="size-4" />
-      {copied ? "Copied" : "Share"}
+      {/* Without the label the icon has to confirm the copy; with it, the
+          label does and the icon stays a link. */}
+      {copied ? <Check className="size-4 sm:hidden" /> : null}
+      <LinkSimple className={cn("size-4", copied && "max-sm:hidden")} />
+      <span className="max-sm:sr-only">{copied ? "Copied" : "Share"}</span>
     </Button>
   );
 }
@@ -602,4 +612,4 @@ function ProfileTrends({
   );
 }
 
-export { loadProfile, ProfileGithubLink, Route };
+export { loadProfile, ProfileGithubLink, ProfileShareButton, Route };

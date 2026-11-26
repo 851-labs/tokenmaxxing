@@ -1,13 +1,14 @@
 // @vitest-environment happy-dom
 import { QueryClient } from "@tanstack/react-query";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
-import { createElement } from "react";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 import { LOGIN_REDIRECT_CACHE_CONTROL } from "../lib/login-redirect";
 import { queryKeys } from "../lib/queries";
-import { loadProfile, ProfileGithubLink } from "./$user/route";
+import { loadProfile, ProfileGithubLink, ProfileShareButton } from "./$user/route";
 
 /**
  * The profile loader over the real derived API client, with the network
@@ -217,5 +218,46 @@ describe("profile GitHub link", () => {
 
   it("renders nothing for a profile without a GitHub account", () => {
     expect(render(null).innerHTML).toBe("");
+  });
+});
+
+describe("profile share button", () => {
+  it("copies the link and confirms it in the name, the label and the icon", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const writeText = vi.fn(async (_text: string) => {});
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      const url = "https://tokenmaxxing.sh/bob-2";
+      await act(async () => root.render(createElement(ProfileShareButton, { url })));
+      const button = container.querySelector("button");
+
+      // The label stays in the DOM: narrow screens hide it visually, so the
+      // name and the text are there for every width.
+      expect(button?.getAttribute("aria-label")).toBe("Share profile");
+      expect(button?.textContent).toBe("Share");
+      expect(button?.querySelectorAll("svg")).toHaveLength(1);
+
+      await act(async () => button?.click());
+
+      expect(writeText).toHaveBeenCalledWith(url);
+      expect(button?.getAttribute("aria-label")).toBe("Profile link copied");
+      expect(button?.textContent).toBe("Copied");
+      // The check that stands in for the label on narrow screens, beside the
+      // link icon that wide screens keep.
+      expect(button?.querySelectorAll("svg")).toHaveLength(2);
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+      if (clipboard === undefined) {
+        Reflect.deleteProperty(navigator, "clipboard");
+      } else {
+        Object.defineProperty(navigator, "clipboard", clipboard);
+      }
+    }
   });
 });
