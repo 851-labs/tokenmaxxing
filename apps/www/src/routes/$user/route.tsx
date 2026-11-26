@@ -20,6 +20,7 @@ import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import { isNotFoundApiError } from "../../lib/api";
 import { formatDayRange, formatInteger, formatTokens, formatUsd } from "../../lib/format";
 import { breadcrumbSchema, profilePageSchema } from "../../lib/jsonld";
+import { LOGIN_REDIRECT_HEADERS } from "../../lib/login-redirect";
 import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_WIDTH,
@@ -106,10 +107,16 @@ async function loadProfile(queryClient: QueryClient, login: string) {
     throw daily.reason;
   }
 
-  // Lookups are case-insensitive; every profile keeps one canonical URL.
+  // Lookups are case-insensitive and resolve old logins (renamed users);
+  // every profile keeps one canonical URL.
   const canonicalLogin = profile.value.user.login;
   if (canonicalLogin !== login) {
-    throw redirect({ params: { user: canonicalLogin }, statusCode: 301, to: "/$user" });
+    throw redirect({
+      headers: LOGIN_REDIRECT_HEADERS,
+      params: { user: canonicalLogin },
+      statusCode: 301,
+      to: "/$user",
+    });
   }
 
   return { profile: profile.value };

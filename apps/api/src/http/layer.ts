@@ -30,6 +30,7 @@ import {
 } from "@tokenmaxxing/api-contract";
 
 import { AdminService } from "../admin/service";
+import { AfterResponse } from "../after-response";
 import { sessionTokenFrom } from "../auth/cookies";
 import { AuthService } from "../auth/service";
 import { CliLoginService } from "../clilogin/service";
@@ -231,6 +232,23 @@ const cliLoginHandlers = HttpApiBuilder.group(TokenmaxxingApi, "cliLogin", (hand
     ),
 );
 
+/**
+ * CLI activity is when CLI-only users (who rarely sign in on the web) follow
+ * a GitHub rename. The check is claimed at most once a day per user in D1,
+ * runs after the response, and never fails the request.
+ */
+function followGitHubRenameAfterResponse(userId: string) {
+  return Effect.gen(function* () {
+    const auth = yield* AuthService;
+    const check = auth
+      .refreshGitHubLogin(userId)
+      .pipe(Effect.catchCause((cause) => Effect.logWarning("GitHub login check failed", cause)));
+    // Looked up per call: the worker provides it per request (see AfterResponse).
+    const afterResponse = yield* Effect.serviceOption(AfterResponse);
+    yield* Option.isSome(afterResponse) ? afterResponse.value.run(check) : check;
+  });
+}
+
 const usageHandlers = HttpApiBuilder.group(TokenmaxxingApi, "usage", (handlers) =>
   handlers
     .handle("checkIn", ({ endpoint, payload }) =>
@@ -238,7 +256,9 @@ const usageHandlers = HttpApiBuilder.group(TokenmaxxingApi, "usage", (handlers) 
         yield* rejectUndeclaredProperties(endpoint);
         const identity = yield* CurrentCliIdentity;
         const usage = yield* UsageService;
-        return yield* usage.checkIn(identity, payload.device, payload.service);
+        const response = yield* usage.checkIn(identity, payload.device, payload.service);
+        yield* followGitHubRenameAfterResponse(identity.user.id);
+        return response;
       }),
     )
     .handle("ingest", ({ endpoint, payload }) =>
@@ -246,12 +266,14 @@ const usageHandlers = HttpApiBuilder.group(TokenmaxxingApi, "usage", (handlers) 
         yield* rejectUndeclaredProperties(endpoint);
         const identity = yield* CurrentCliIdentity;
         const usage = yield* UsageService;
-        return yield* usage.ingestRaw(
+        const response = yield* usage.ingestRaw(
           identity,
           payload.device,
           payload.reports,
           payload.sourceStats,
         );
+        yield* followGitHubRenameAfterResponse(identity.user.id);
+        return response;
       }),
     )
     .handle("sync", ({ endpoint, payload }) =>
@@ -259,7 +281,14 @@ const usageHandlers = HttpApiBuilder.group(TokenmaxxingApi, "usage", (handlers) 
         yield* rejectUndeclaredProperties(endpoint);
         const identity = yield* CurrentCliIdentity;
         const usage = yield* UsageService;
-        return yield* usage.syncBatch(identity, payload.device, payload.days, payload.sourceStats);
+        const response = yield* usage.syncBatch(
+          identity,
+          payload.device,
+          payload.days,
+          payload.sourceStats,
+        );
+        yield* followGitHubRenameAfterResponse(identity.user.id);
+        return response;
       }),
     )
     .handle("logout", () =>

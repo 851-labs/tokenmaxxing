@@ -1,5 +1,5 @@
-import { usageDays, usageSourceStats, userAccounts, users } from "@tokenmaxxing/db";
-import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { loginAliases, usageDays, usageSourceStats, userAccounts, users } from "@tokenmaxxing/db";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { Effect, Layer, Option } from "effect";
 
 import { DEFAULT_LEADERBOARD_METRIC } from "@tokenmaxxing/api-contract";
@@ -17,6 +17,12 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
   return ProfilesRepository.of({
     findUserByLogin: (login) =>
       Effect.gen(function* () {
+        // Logins are minted lowercase (slugifyLogin) and aliases are stored
+        // lowercased, so lowercasing the requested one makes lookups
+        // case-insensitive on the unique index and the alias key. A current
+        // login wins over an alias; the response carries the current login,
+        // which is how callers spot an old one.
+        const requested = login.toLowerCase();
         const rows = yield* database.use((db) =>
           db
             .select({
@@ -32,9 +38,19 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
               user: authUserColumns,
             })
             .from(users)
-            // Logins are minted lowercase (slugifyLogin), so lowercasing the
-            // requested one makes lookups case-insensitive on the unique index.
-            .where(eq(users.login, login.toLowerCase()))
+            .where(
+              or(
+                eq(users.login, requested),
+                inArray(
+                  users.id,
+                  db
+                    .select({ userId: loginAliases.userId })
+                    .from(loginAliases)
+                    .where(eq(loginAliases.login, requested)),
+                ),
+              ),
+            )
+            .orderBy(desc(sql`${users.login} = ${requested}`))
             .limit(1),
         );
 

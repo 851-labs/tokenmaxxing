@@ -3,6 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
+import { LOGIN_REDIRECT_CACHE_CONTROL } from "../lib/login-redirect";
 import { queryKeys } from "../lib/queries";
 import { loadProfile } from "./$user/route";
 
@@ -133,6 +134,22 @@ describe("profile loader", () => {
       statusCode: 301,
       to: "/$user",
     });
+  });
+
+  it("redirects an old login (a renamed user) to the current profile URL", async () => {
+    respond = (path) => (path.endsWith("/daily") ? json(dailyBody) : json(profileBody));
+
+    const error = await rejection(loadProfile(new QueryClient(), "martin-old"));
+
+    expect(isRedirect(error)).toBe(true);
+    expect(isRedirect(error) && error.options).toMatchObject({
+      params: { user: "martinxjonsson" },
+      statusCode: 301,
+      to: "/$user",
+    });
+    // Revalidated on every use: the user may take the old login back.
+    expect(isRedirect(error) && error.headers.get("cache-control")).toBe("no-cache");
+    expect(LOGIN_REDIRECT_CACHE_CONTROL).toBe("no-cache");
   });
 
   it("rethrows other failures for the error boundary", async () => {

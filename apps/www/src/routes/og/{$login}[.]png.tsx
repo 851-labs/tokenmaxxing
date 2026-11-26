@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
+import { isOldLogin, loginRedirectResponse } from "../../lib/login-redirect";
 import { profileOgVersion } from "../../lib/og";
 import { loadProfileOgData, type ProfileOgData } from "../../lib/og-data";
 import {
@@ -37,20 +38,39 @@ const defaultDeps: OgRouteDeps = {
  * cached card is read (see `renderOgImage`).
  */
 function makeOgImageHandler(deps: OgRouteDeps = defaultDeps) {
-  return function handleOgImageRequest({ context, params, request }: OgRouteContext) {
+  return async function handleOgImageRequest({
+    context,
+    params,
+    request,
+  }: OgRouteContext): Promise<Response> {
+    // Settled here so an old login can redirect before any image work; a
+    // failed load still reaches renderOgImage, which owns the fallback.
+    const loaded = await deps.loadProfileOgData(params.login).then(
+      (data) => ({ data, ok: true as const }),
+      (error: unknown) => ({ error, ok: false as const }),
+    );
+    if (loaded.ok && loaded.data !== null) {
+      const login = loaded.data.profile.user.login;
+      if (isOldLogin(params.login, login)) {
+        return loginRedirectResponse(request, `/og/${encodeURIComponent(login)}.png`);
+      }
+    }
+
     return renderOgImage(deps, {
       context,
       request,
       resolveTarget: async () => {
-        const data = await deps.loadProfileOgData(params.login);
-        if (data === null) {
+        if (!loaded.ok) {
+          throw loaded.error;
+        }
+        if (loaded.data === null) {
           return null;
         }
 
-        const login = data.profile.user.login;
+        const login = loaded.data.profile.user.login;
         return {
           cardPath: `/og-card/${encodeURIComponent(login)}`,
-          currentVersion: profileOgVersion(data.profile),
+          currentVersion: profileOgVersion(loaded.data.profile),
           scope: login,
         };
       },

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { ProfileDailyResponse, ProfileResponse } from "@tokenmaxxing/api-contract";
 
+import { LOGIN_REDIRECT_CACHE_CONTROL } from "../lib/login-redirect";
 import { profileOgVersion } from "../lib/og";
 import type { OgBrowser, OgR2Bucket, OgRuntimeEnv } from "../lib/og-runtime";
 import { ProfileOgCard } from "./og-card/$login";
@@ -35,6 +36,44 @@ describe("profile OG card", () => {
 });
 
 describe("profile OG image route", () => {
+  it("redirects an old login to the current image URL without rendering", async () => {
+    const captureScreenshot = screenshotSpy(PNG_FROM_BROWSER);
+    const getRuntimeEnv = vi.fn(async () => ({}));
+    const handler = makeOgImageHandler({
+      captureScreenshot,
+      getRuntimeEnv,
+      loadProfileOgData: async () => ogData(),
+    });
+
+    const response = await handler({
+      params: { login: "pondo" },
+      request: new Request(`https://tokenmaxxing.sh/og/pondo.png?v=${VERSION}`),
+    });
+
+    expect(response.status).toBe(301);
+    expect(response.headers.get("location")).toBe(
+      `https://tokenmaxxing.sh/og/pondorasti.png?v=${VERSION}`,
+    );
+    expect(response.headers.get("cache-control")).toBe(LOGIN_REDIRECT_CACHE_CONTROL);
+    expect(getRuntimeEnv).not.toHaveBeenCalled();
+    expect(captureScreenshot).not.toHaveBeenCalled();
+  });
+
+  it("serves a differently cased login in place", async () => {
+    const handler = makeOgImageHandler({
+      captureScreenshot: async () => PNG_FROM_BROWSER,
+      getRuntimeEnv: async () => ({ BROWSER: browserBinding() }),
+      loadProfileOgData: async () => ogData(),
+    });
+
+    const response = await handler({
+      params: { login: "Pondorasti" },
+      request: new Request("https://tokenmaxxing.sh/og/Pondorasti.png"),
+    });
+
+    expect(response.status).toBe(200);
+  });
+
   it("returns cached png bytes without calling Browser Run", async () => {
     const key = ogCacheKey("pondorasti", VERSION);
     const bucket = memoryBucket([[key, PNG_FROM_CACHE]]);

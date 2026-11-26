@@ -3,7 +3,16 @@ import { join } from "node:path";
 import { Context, Effect, Exit, Layer, Option, Schema, Scope } from "effect";
 import * as FileSystem from "effect/FileSystem";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import {
   CliUpgradeRequired,
@@ -155,6 +164,9 @@ const usageRepository = {
   upsertSourceStats: vi.fn(() => Effect.void),
 };
 
+/** The daily GitHub login check CLI usage requests trigger. */
+const refreshGitHubLogin = vi.fn((_userId: string): Effect.Effect<void> => Effect.void);
+
 /** The one client IP the stub limiter refuses; every other IP is under its cap. */
 const LIMITED_IP = "203.0.113.9";
 
@@ -187,7 +199,10 @@ beforeAll(async () => {
       ),
     revokeToken: () => Effect.void,
   });
-  const auth = { resolveSession: () => Effect.succeedNone } as unknown as AuthService["Service"];
+  const auth = {
+    refreshGitHubLogin: (userId: string) => refreshGitHubLogin(userId),
+    resolveSession: () => Effect.succeedNone,
+  } as unknown as AuthService["Service"];
   const cliLogin = CliLoginService.of({
     approve: () => Effect.succeed({ deviceName: "fixture-host" }),
     describe: () => Effect.die("not called by the CLI"),
@@ -345,6 +360,40 @@ describe("recorded CLI requests", () => {
       expect(response.status).toBe(400);
     },
   );
+});
+
+describe("GitHub login follow on CLI activity", () => {
+  const usageFixtures = [
+    "current/usage.checkIn.json",
+    "current/usage.ingest.json",
+    "legacy/0.2.3-usage.sync.json",
+  ].map((file) => fixtures.find((entry) => entry.file === file)!.fixture);
+
+  afterEach(() => {
+    refreshGitHubLogin.mockReset();
+    refreshGitHubLogin.mockImplementation(() => Effect.void);
+  });
+
+  it.each(usageFixtures.map((fixture) => [fixture.endpoint, fixture] as const))(
+    "%s checks the user's GitHub login",
+    async (_endpoint, fixture) => {
+      const response = await send(fixture);
+
+      expect(response.status).toBe(200);
+      expect(refreshGitHubLogin).toHaveBeenCalledExactlyOnceWith(user.id);
+    },
+  );
+
+  it("never fails the request when the check does", async () => {
+    refreshGitHubLogin.mockImplementation(() => Effect.die(new Error("GitHub down")));
+
+    const responses = await Promise.all(usageFixtures.map((fixture) => send(fixture)));
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200]);
+    expect(logs.entries.map((entry) => entry.message)).toEqual(
+      usageFixtures.map(() => "GitHub login check failed"),
+    );
+  });
 });
 
 // Regression: strict payload options once leaked into error *encoding*, and

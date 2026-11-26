@@ -2,6 +2,7 @@ import {
   cliLoginRequests,
   cliTokens,
   devices,
+  loginAliases,
   sessions,
   usageDays,
   usageRawBatches,
@@ -11,14 +12,17 @@ import {
   type User,
   type UserAccount,
 } from "@tokenmaxxing/db";
-import { and, eq, gt, like, or } from "drizzle-orm";
+import { and, eq, exists, gt, isNull, like, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { Effect, Layer, Option } from "effect";
 
 import { DatabaseError, Drizzle, firstRow } from "../database";
+import { GitHubAccountsLive } from "../oauth/github";
 import { toAuthUser } from "../public-user";
 import {
   AuthRepository,
   AuthService,
+  LoginTaken,
   makeAuthService,
   type OAuthProfile,
   UserRecordMissing,
@@ -117,15 +121,36 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
           }),
         );
       }),
-    listLoginsLike: (base) =>
+    listLoginsLike: (base, ownerId) =>
       Effect.gen(function* () {
         // LIKE is case-insensitive and `_` is a wildcard, so this can
-        // over-match; callers compare lowercased exact strings.
+        // over-match; callers compare lowercased exact strings. One
+        // statement, so a login moving from users to login_aliases in a
+        // concurrent rename is seen in exactly one of the two.
+        const notOwnedBy = (
+          column: typeof users.id | typeof loginAliases.userId,
+        ): SQL | undefined => (ownerId === undefined ? undefined : ne(column, ownerId));
         const rows = yield* database.use((db) =>
           db
             .select({ login: users.login })
             .from(users)
-            .where(or(like(users.login, base), like(users.login, `${base}-%`))),
+            .where(
+              and(
+                or(like(users.login, base), like(users.login, `${base}-%`)),
+                notOwnedBy(users.id),
+              ),
+            )
+            .unionAll(
+              db
+                .select({ login: loginAliases.login })
+                .from(loginAliases)
+                .where(
+                  and(
+                    or(like(loginAliases.login, base), like(loginAliases.login, `${base}-%`)),
+                    notOwnedBy(loginAliases.userId),
+                  ),
+                ),
+            ),
         );
 
         return rows.map((row) => row.login);
@@ -145,6 +170,7 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
                 email: profile.email,
                 emailVerified: profile.emailVerified,
                 login: profile.login,
+                loginCheckedAt: accountInsert(userId, profile, now).loginCheckedAt,
                 name: profile.name,
                 updatedAt: now,
                 userId,
@@ -165,6 +191,123 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
         );
 
         return rows.map(toAccountProfile);
+      }),
+    renameUser: ({ from, githubAccount, to, userId }) =>
+      Effect.gen(function* () {
+        const now = new Date();
+        // Every statement is conditioned on the login still being `from`, so
+        // a rename that lost a race changes nothing. The users update runs
+        // last: the unique index and the alias triggers abort the whole
+        // batch when `to` was taken meanwhile.
+        const stillFrom = (db: Parameters<Parameters<typeof database.use>[0]>[0]) =>
+          exists(
+            db
+              .select({ id: users.id })
+              .from(users)
+              .where(and(eq(users.id, userId), eq(users.login, from))),
+          );
+        const results = yield* database
+          .use((db): Promise<unknown[]> => {
+            // Re-recording a login the user already had refreshes its age,
+            // so the cap below keeps the most recently held ones.
+            const recordAlias = db
+              .insert(loginAliases)
+              .values({ createdAt: now, login: from.toLowerCase(), userId })
+              .onConflictDoUpdate({
+                set: { createdAt: now },
+                setWhere: eq(loginAliases.userId, userId),
+                target: loginAliases.login,
+              });
+            const releaseAlias = db
+              .delete(loginAliases)
+              .where(
+                and(
+                  eq(loginAliases.login, to.toLowerCase()),
+                  eq(loginAliases.userId, userId),
+                  stillFrom(db),
+                ),
+              );
+            const rename = db
+              .update(users)
+              .set({ login: to, updatedAt: now })
+              .where(and(eq(users.id, userId), eq(users.login, from)))
+              .returning();
+            const capAliases = pruneOldestAliases(db, userId);
+            if (githubAccount === undefined) {
+              return db.batch([recordAlias, releaseAlias, capAliases, rename]);
+            }
+
+            const storeAccountLogin = db
+              .update(userAccounts)
+              .set({ login: githubAccount.login, updatedAt: now })
+              .where(
+                and(
+                  eq(userAccounts.provider, "github"),
+                  eq(userAccounts.providerAccountId, githubAccount.providerAccountId),
+                  eq(userAccounts.userId, userId),
+                  stillFrom(db),
+                ),
+              );
+            return db.batch([recordAlias, releaseAlias, capAliases, storeAccountLogin, rename]);
+          })
+          .pipe(
+            Effect.catchTag("DatabaseError", (error) =>
+              Effect.fail(isLoginConflict(error.cause) ? new LoginTaken({ login: to }) : error),
+            ),
+          );
+
+        // The recorded alias is right even when the swap missed: `from` was
+        // this user's login when the caller read it.
+        return firstRow(results.at(-1) as User[]).pipe(Option.map(toAuthUser));
+      }),
+    claimGitHubLoginChecks: (userId, staleBefore, now) =>
+      database.use((db) =>
+        db
+          .update(userAccounts)
+          .set({ loginCheckedAt: now })
+          .where(
+            and(
+              eq(userAccounts.userId, userId),
+              eq(userAccounts.provider, "github"),
+              or(
+                isNull(userAccounts.loginCheckedAt),
+                lte(userAccounts.loginCheckedAt, staleBefore),
+              ),
+            ),
+          )
+          .returning({
+            login: userAccounts.login,
+            providerAccountId: userAccounts.providerAccountId,
+          }),
+      ),
+    resetGitHubLoginCheck: (providerAccountId, { current, previous }) =>
+      Effect.gen(function* () {
+        yield* database.use((db) =>
+          db
+            .update(userAccounts)
+            .set({ login: previous, loginCheckedAt: null, updatedAt: new Date() })
+            .where(
+              and(
+                eq(userAccounts.provider, "github"),
+                eq(userAccounts.providerAccountId, providerAccountId),
+                eq(userAccounts.login, current),
+              ),
+            ),
+        );
+      }),
+    setGitHubAccountLogin: (providerAccountId, login) =>
+      Effect.gen(function* () {
+        yield* database.use((db) =>
+          db
+            .update(userAccounts)
+            .set({ login, updatedAt: new Date() })
+            .where(
+              and(
+                eq(userAccounts.provider, "github"),
+                eq(userAccounts.providerAccountId, providerAccountId),
+              ),
+            ),
+        );
       }),
     mergeUsers: ({ sourceUserId, targetUserId }) =>
       Effect.gen(function* () {
@@ -216,6 +359,28 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
               .update(usageRawBatches)
               .set({ userId: targetUserId })
               .where(eq(usageRawBatches.userId, sourceUserId)),
+            // The merged-away login and its history stay with the person:
+            // its URLs redirect to the target and nobody else can take it.
+            // The login is read inside the batch, not from `source` above,
+            // so a rename that landed since that read is the one reserved.
+            db
+              .update(loginAliases)
+              .set({ userId: targetUserId })
+              .where(eq(loginAliases.userId, sourceUserId)),
+            db
+              .insert(loginAliases)
+              .select(
+                db
+                  .select({
+                    login: sql<string>`lower(${users.login})`.as("login"),
+                    userId: sql<string>`${targetUserId}`.as("user_id"),
+                    createdAt: sql<Date>`${now.getTime()}`.as("created_at"),
+                  })
+                  .from(users)
+                  .where(eq(users.id, sourceUserId)),
+              )
+              .onConflictDoNothing(),
+            pruneOldestAliases(db, targetUserId),
             db
               .update(users)
               .set({
@@ -270,10 +435,13 @@ const makeD1AuthRepository = Effect.fn("makeD1AuthRepository")(function* () {
   }
 });
 
+/** Old logins kept (redirecting and reserved) per user; older ones are released. */
+const MAX_LOGIN_ALIASES = 5;
+
 const AuthRepositoryLive = Layer.effect(AuthRepository, makeD1AuthRepository());
 
 const AuthServiceLive = Layer.effect(AuthService, makeAuthService()).pipe(
-  Layer.provide(AuthRepositoryLive),
+  Layer.provide([AuthRepositoryLive, GitHubAccountsLive]),
 );
 
 function accountInsert(userId: string, profile: OAuthProfile, now: Date) {
@@ -283,12 +451,54 @@ function accountInsert(userId: string, profile: OAuthProfile, now: Date) {
     email: profile.email,
     emailVerified: profile.emailVerified,
     login: profile.login,
+    // A sign-in just read the GitHub login, so the daily check can wait.
+    loginCheckedAt: profile.provider === "github" ? now : null,
     name: profile.name,
     provider: profile.provider,
     providerAccountId: profile.providerAccountId,
     updatedAt: now,
     userId,
   };
+}
+
+/**
+ * Whether a failed rename batch hit a login someone else holds: the unique
+ * index on users.login, or the alias triggers (`login_reserved`). Walks the
+ * cause chain, since drizzle and D1 each wrap the SQLite error.
+ */
+function isLoginConflict(cause: unknown): boolean {
+  let current: unknown = cause;
+  for (let depth = 0; current instanceof Error && depth < 8; depth += 1) {
+    if (
+      current.message.includes("login_reserved") ||
+      current.message.includes("UNIQUE constraint failed: users.login")
+    ) {
+      return true;
+    }
+    current = current.cause;
+  }
+
+  return false;
+}
+
+/**
+ * Deletes all but `userId`'s {@link MAX_LOGIN_ALIASES} most recently held
+ * old logins, releasing the rest: renaming a GitHub account over and over
+ * must not reserve an unbounded set of names. Newest first by when the login
+ * was left, then by insertion order (rowid) for ties within a millisecond.
+ */
+function pruneOldestAliases(db: DrizzleD1Database, userId: string) {
+  return db.delete(loginAliases).where(
+    and(
+      eq(loginAliases.userId, userId),
+      sql`rowid not in (
+          select rowid from ${loginAliases}
+          where ${loginAliases.userId} = ${userId}
+          order by ${loginAliases.createdAt} desc, rowid desc
+          limit ${MAX_LOGIN_ALIASES}
+        )`,
+    ),
+  );
 }
 
 function mergedShadowBan(
@@ -316,4 +526,4 @@ function toAccountProfile(account: UserAccount): OAuthProfile {
   };
 }
 
-export { AuthRepositoryLive, AuthServiceLive, mergedShadowBan };
+export { AuthRepositoryLive, AuthServiceLive, MAX_LOGIN_ALIASES, mergedShadowBan };
