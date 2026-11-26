@@ -14,10 +14,11 @@ import { FAQ_ITEMS } from "./-components/faq-items";
 import { Leaderboard } from "./-components/leaderboard";
 import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
 import { SUPPORTED_AGENTS } from "../../lib/agents";
-import { faqPageSchema, softwareApplicationSchema } from "../../lib/jsonld";
+import { faqPageSchema, jsonLdScript, softwareApplicationSchema } from "../../lib/jsonld";
 import { leaderboardQueryOptions } from "../../lib/queries";
 import { searchParam } from "../../lib/search";
 import { pageHead } from "../../lib/seo";
+import { SITE_NAME } from "../../lib/site";
 
 const leaderboardSearchSchema = Schema.toStandardSchemaV1(
   Schema.Struct({
@@ -44,6 +45,16 @@ const METRIC_OPTIONS = [
   { label: "Tokens", value: "tokens" },
 ] as const satisfies readonly SegmentedOption<typeof LeaderboardMetric.Type>[];
 
+/**
+ * The home page's search listing. The site name alone says nothing about
+ * what the page is, and the tagline is too short to be used as a snippet, so
+ * both name the leaderboard and what it ranks. Metadata only: the page's own
+ * heading and copy are unchanged.
+ */
+const HOME_TITLE = `${SITE_NAME} — AI coding agent token usage leaderboard`;
+const HOME_DESCRIPTION =
+  "The public leaderboard for AI coding agent token usage. Sync Claude Code, Codex and other agents with one CLI, then compare tokens and spend with others.";
+
 const AGENTS_WITH_ICONS = SUPPORTED_AGENTS.flatMap((agent) => {
   const Icon = AGENT_ICONS[agent.source];
   return Icon === undefined ? [] : [{ Icon, label: agent.label }];
@@ -61,17 +72,8 @@ const Route = createFileRoute("/(home)/")({
     );
   },
   head: () => ({
-    ...pageHead({ path: "/" }),
-    scripts: [
-      {
-        type: "application/ld+json",
-        children: JSON.stringify(softwareApplicationSchema()),
-      },
-      {
-        type: "application/ld+json",
-        children: JSON.stringify(faqPageSchema(FAQ_ITEMS)),
-      },
-    ],
+    ...pageHead({ description: HOME_DESCRIPTION, path: "/", title: HOME_TITLE }),
+    scripts: [jsonLdScript(softwareApplicationSchema()), jsonLdScript(faqPageSchema(FAQ_ITEMS))],
   }),
   component: LeaderboardPage,
 });
@@ -197,4 +199,4 @@ function FaqSection() {
   );
 }
 
-export { Route };
+export { HOME_DESCRIPTION, HOME_TITLE, Route };

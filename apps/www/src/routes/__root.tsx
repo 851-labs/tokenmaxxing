@@ -17,7 +17,7 @@ import {
   faviconUrlFromMatches,
 } from "../lib/favicon";
 import { githubStarsQueryOptions } from "../lib/github-stars";
-import { organizationSchema, webSiteSchema } from "../lib/jsonld";
+import { jsonLdScript, organizationSchema, webSiteSchema } from "../lib/jsonld";
 import { OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, SITE_OG_IMAGE_URL } from "../lib/og";
 import { meQueryOptions } from "../lib/queries";
 import { SITE_DESCRIPTION, SITE_NAME } from "../lib/site";
@@ -59,16 +59,7 @@ function rootHead({ notFound = false }: { notFound?: boolean } = {}) {
       { rel: "apple-touch-icon", href: DEFAULT_APPLE_TOUCH_ICON_URL },
       { rel: "stylesheet", href: styles },
     ],
-    scripts: [
-      {
-        type: "application/ld+json",
-        children: JSON.stringify(organizationSchema()),
-      },
-      {
-        type: "application/ld+json",
-        children: JSON.stringify(webSiteSchema()),
-      },
-    ],
+    scripts: [jsonLdScript(organizationSchema()), jsonLdScript(webSiteSchema())],
   };
 }
 

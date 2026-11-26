@@ -507,11 +507,21 @@ const corsLayer = HttpRouter.middleware(
 
 const OPENAPI_PATH = "/openapi.json";
 
+/**
+ * Every response is data for the site and the CLI, never a page. Public reads
+ * are plain GETs a crawler can reach (the pages on tokenmaxxing.sh name them),
+ * and without this their JSON can be listed in search results beside the
+ * pages built from it. A header, not robots.txt: a crawler rendering a page
+ * still needs to fetch them.
+ */
+const NOINDEX_HEADERS = { "x-robots-tag": "noindex" } as const;
+
 /** Client ids are echoed and logged, so only short, header-safe ones are kept. */
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /**
- * Mints/propagates x-request-id (logs carry it via annotations) and renders
+ * Mints/propagates x-request-id (logs carry it via annotations), keeps every
+ * response out of search results ({@link NOINDEX_HEADERS}), and renders
  * whatever the routes left unanswered in the contract's error envelope: an
  * unknown path is 404 RouteNotFound, a known path with the wrong method 405
  * MethodNotAllowed, and a fault in a raw route 500 InternalServerError.
@@ -534,7 +544,10 @@ const requestIdLayer = HttpRouter.middleware(
         Effect.catchCause((cause) => unansweredResponse(request, cause)),
         Effect.annotateLogs("requestId", requestId),
       );
-      return HttpServerResponse.setHeader(response, "x-request-id", requestId);
+      return HttpServerResponse.setHeaders(response, {
+        "x-request-id": requestId,
+        ...NOINDEX_HEADERS,
+      });
     }) as Effect.Effect<HttpServerResponse.HttpServerResponse, Types.unhandled>,
   { global: true },
 );

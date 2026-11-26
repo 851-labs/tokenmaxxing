@@ -27,7 +27,7 @@ function profileOgDescription(profile: Profile): string {
 
   return `${profile.user.login} has spent ${formatUsd(stats.spendUsd)} across ${formatInteger(
     stats.activeDays,
-  )} active days and ${formatTokens(stats.totalTokens)} tokens.`;
+  )} active ${stats.activeDays === 1 ? "day" : "days"} and ${formatTokens(stats.totalTokens)} tokens.`;
 }
 
 function profileOgVersion(profile: Profile): string {
