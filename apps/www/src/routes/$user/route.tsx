@@ -24,7 +24,6 @@ import { Card } from "../../components/ui/card";
 import { Code } from "../../components/ui/code";
 import { FilterBar } from "../../components/filter-bar";
 import { Menu } from "../../components/ui/menu";
-import { SegmentedControl } from "../../components/ui/segmented-control";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import { agentLabel } from "../../lib/agents";
 import { isNotFoundApiError } from "../../lib/api";
@@ -52,7 +51,11 @@ import {
 import { profileDailyQueryOptions, profileQueryOptions, queryKeys } from "../../lib/queries";
 import { optionalSearchParam, searchParam } from "../../lib/search";
 import { pageHead } from "../../lib/seo";
-import { DEFAULT_USAGE_RANGE, USAGE_RANGE_OPTIONS, usageRangeWindow } from "../../lib/usage-ranges";
+import {
+  DEFAULT_USAGE_RANGE,
+  USAGE_RANGE_MENU_OPTIONS,
+  usageRangeWindow,
+} from "../../lib/usage-ranges";
 
 type ProfileStats = (typeof ProfileResponse.Type)["stats"];
 
@@ -245,10 +248,50 @@ function sharedProfileUrl(url: string, agent: UsageSource | undefined, range: Us
 }
 
 /**
- * The agent the dashboard is scoped to, as a dropdown: a profile can have a
- * dozen agents, which is too many for an inline segmented control. Only
- * agents with usage in the charts' range are offered; one selected anyway (an
- * old link) is listed so the control shows it and can leave it.
+ * One of the dashboard's filters as a dropdown: the current choice on the
+ * trigger, every choice in the menu with a check on the current one.
+ */
+function FilterMenu<Value extends string>({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  /** Accessible name for the filter, e.g. "Agent". */
+  label: string;
+  onChange: (value: Value) => void;
+  options: readonly { label: string; value: Value }[];
+  value: Value;
+}) {
+  const selected = options.find((option) => option.value === value)?.label ?? value;
+
+  return (
+    <Menu>
+      <Menu.Trigger
+        aria-label={`${label}: ${selected}`}
+        className={cn(buttonClassName({ size: "xs", variant: "outline" }), "h-[30px]")}
+      >
+        {selected}
+        <CaretDown aria-hidden className="size-3.5 text-muted-foreground" />
+      </Menu.Trigger>
+      <Menu.Content className="max-h-(--available-height) overflow-y-auto">
+        <Menu.RadioGroup onValueChange={(next: Value) => onChange(next)} value={value}>
+          {options.map((option) => (
+            <Menu.RadioItem key={option.value} value={option.value}>
+              {option.label}
+            </Menu.RadioItem>
+          ))}
+        </Menu.RadioGroup>
+      </Menu.Content>
+    </Menu>
+  );
+}
+
+/**
+ * The agent the dashboard is scoped to. A profile can have a dozen agents,
+ * which is too many for an inline segmented control. Only agents with usage
+ * in the charts' range are offered; one selected anyway (an old link) is
+ * listed so the control shows it and can leave it.
  */
 function AgentFilterMenu({
   agent,
@@ -260,34 +303,18 @@ function AgentFilterMenu({
   onChange: (agent: UsageSource | undefined) => void;
 }) {
   const offered = agent === undefined || agents.includes(agent) ? agents : [...agents, agent];
-  const label = agent === undefined ? "All agents" : agentLabel(agent);
+  const options: { label: string; value: AgentFilterValue }[] = [
+    { label: "All agents", value: ALL_AGENTS },
+    ...offered.map((option) => ({ label: agentLabel(option), value: option })),
+  ];
 
   return (
-    <Menu>
-      <Menu.Trigger
-        aria-label={`Agent: ${label}`}
-        // As tall as the segmented control beside it in the filter bar.
-        className={cn(buttonClassName({ size: "xs", variant: "outline" }), "h-[30px]")}
-      >
-        {label}
-        <CaretDown aria-hidden className="size-3.5 text-muted-foreground" />
-      </Menu.Trigger>
-      <Menu.Content className="max-h-(--available-height) overflow-y-auto">
-        <Menu.RadioGroup
-          onValueChange={(next: AgentFilterValue) =>
-            onChange(next === ALL_AGENTS ? undefined : next)
-          }
-          value={agent ?? ALL_AGENTS}
-        >
-          <Menu.RadioItem value={ALL_AGENTS}>All agents</Menu.RadioItem>
-          {offered.map((option) => (
-            <Menu.RadioItem key={option} value={option}>
-              {agentLabel(option)}
-            </Menu.RadioItem>
-          ))}
-        </Menu.RadioGroup>
-      </Menu.Content>
-    </Menu>
+    <FilterMenu
+      label="Agent"
+      onChange={(next) => onChange(next === ALL_AGENTS ? undefined : next)}
+      options={options}
+      value={agent ?? ALL_AGENTS}
+    />
   );
 }
 
@@ -495,10 +522,10 @@ function ProfileFilterBar({
       {showAgentFilter ? (
         <AgentFilterMenu agent={agent} agents={agents} onChange={onAgentChange} />
       ) : null}
-      <SegmentedControl
+      <FilterMenu
         label="Time range"
         onChange={onTimeframeChange}
-        options={USAGE_RANGE_OPTIONS}
+        options={USAGE_RANGE_MENU_OPTIONS}
         value={timeframe}
       />
     </FilterBar>
