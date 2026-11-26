@@ -194,6 +194,24 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
 
         return rows;
       }),
+    dailySources: (userId, range) =>
+      Effect.gen(function* () {
+        const rows = yield* database.use((db) =>
+          db
+            .selectDistinct({ source: usageDays.source })
+            .from(usageDays)
+            .where(
+              and(
+                eq(usageDays.userId, userId),
+                gte(usageDays.date, range.since),
+                lte(usageDays.date, range.until),
+              ),
+            )
+            .orderBy(asc(usageDays.source)),
+        );
+
+        return rows.map((row) => row.source);
+      }),
   });
 });
 

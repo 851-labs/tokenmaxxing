@@ -140,6 +140,7 @@ async function makeProfileService(
   return Effect.runPromise(
     makeProfilesService().pipe(
       Effect.provideService(ProfilesRepository, {
+        dailySources: () => Effect.succeed(["claude", "opencode"]),
         daily: (_userId, query) => {
           onDaily?.(query);
           return Effect.succeed([
@@ -185,6 +186,7 @@ describe("ProfilesService shadow-ban visibility", () => {
       makeProfilesService().pipe(
         Effect.provideService(ProfilesRepository, {
           daily: () => Effect.succeed([]),
+          dailySources: () => Effect.succeed([]),
           findUserByLogin: () =>
             Effect.succeed(
               Option.some({
@@ -301,6 +303,8 @@ describe("ProfilesService.getDaily", () => {
       // The stub's only row is 2026-06-21 (UTC today), so the range ends there.
       expect(response.range).toEqual({ firstDate: "2026-01-01", lastDate: "2026-06-21" });
       expect(queries).toEqual([{ groupBy: "model", since: "2026-01-01", until: "2026-06-22" }]);
+      // The agents with usage in that range ride along for the agent filter.
+      expect(response.sources).toEqual(["claude", "opencode"]);
     } finally {
       vi.useRealTimers();
     }

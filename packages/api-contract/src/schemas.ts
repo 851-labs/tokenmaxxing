@@ -793,6 +793,12 @@ type ProfileDailyRange = typeof ProfileDailyRange.Type;
 const ProfileDailyResponse = Schema.Struct({
   days: Schema.Array(ProfileDailyRow),
   range: ProfileDailyRange,
+  /**
+   * The agents with at least one usage day in the range, whatever `source`
+   * the rows were scoped to: the choices an agent filter can offer. Always
+   * sent; optional so a response cached before it existed still decodes.
+   */
+  sources: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 type ProfileDailyResponse = typeof ProfileDailyResponse.Type;

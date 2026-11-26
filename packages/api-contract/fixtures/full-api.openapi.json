@@ -3953,6 +3953,12 @@
                         "lastDate"
                       ],
                       "additionalProperties": false
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   },
                   "required": [

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { LinkSimple } from "@phosphor-icons/react/ssr";
+import { CaretDown, LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery, type QueryClient } from "@tanstack/react-query";
 import {
   createFileRoute,
@@ -19,14 +19,16 @@ import { StackedChartPanel } from "../../components/charts/stacked-bars";
 import { WeekdayBars } from "../../components/charts/weekday-bars";
 import { StatCard } from "../../components/stat-card";
 import { Avatar } from "../../components/ui/avatar";
-import { Button } from "../../components/ui/button";
+import { Button, buttonClassName } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { Code } from "../../components/ui/code";
 import { FilterBar } from "../../components/filter-bar";
-import { SegmentedControl, type SegmentedOption } from "../../components/ui/segmented-control";
+import { Menu } from "../../components/ui/menu";
+import { SegmentedControl } from "../../components/ui/segmented-control";
 import { useCopyToClipboard } from "../../hooks/use-copy-to-clipboard";
 import { agentLabel } from "../../lib/agents";
 import { isNotFoundApiError } from "../../lib/api";
+import { cn } from "../../lib/cn";
 import { formatDayRange, formatInteger, formatTokens, formatUsd } from "../../lib/format";
 import { breadcrumbSchema, profilePageSchema } from "../../lib/jsonld";
 import { LOGIN_REDIRECT_HEADERS } from "../../lib/login-redirect";
@@ -67,6 +69,11 @@ const DEFAULT_PROFILE_SEARCH = {
 
 const ALL_AGENT_SOURCE = "all";
 type ProfileSourceFilter = UsageSource | typeof ALL_AGENT_SOURCE;
+
+interface AgentFilterOption {
+  label: string;
+  value: ProfileSourceFilter;
+}
 
 const Route = createFileRoute("/$user")({
   validateSearch: profileSearchSchema,
@@ -156,27 +163,19 @@ async function loadProfile(queryClient: QueryClient, login: string, source?: Usa
 }
 
 /**
- * The agent segments for the daily charts: all agents plus every agent the
- * profile has synced a day for. An active selection is kept even when the
- * profile's agent list no longer contains it, so a stale filter stays visible
- * and dismissable.
+ * The agent choices for the dashboard: all agents plus every agent with usage
+ * in the charts' range. An agent whose only usage is older than that range
+ * would open an empty dashboard, so it is not offered.
  */
-function agentFilterOptions(
-  source: UsageSource | undefined,
-  sources: readonly string[],
-): readonly SegmentedOption<ProfileSourceFilter>[] {
+function agentFilterOptions(sources: readonly string[]): readonly AgentFilterOption[] {
   const known = sources.filter((candidate): candidate is UsageSource =>
     (USAGE_SOURCES as readonly string[]).includes(candidate),
   );
-  const options: SegmentedOption<ProfileSourceFilter>[] = [
+
+  return [
     { label: "All agents", value: ALL_AGENT_SOURCE },
     ...known.map((agent) => ({ label: agentLabel(agent), value: agent })),
   ];
-  if (source !== undefined && !known.includes(source)) {
-    options.unshift({ label: agentLabel(source), value: source });
-  }
-
-  return options;
 }
 
 function ProfilePage() {
@@ -186,7 +185,8 @@ function ProfilePage() {
   const { data: profile } = useSuspenseQuery(profileQueryOptions(user));
   const { data: daily } = useSuspenseQuery(profileDailyQueryOptions(user, source));
   const owner = profile.user;
-  const agentOptions = agentFilterOptions(source, profile.stats.sources);
+  // `sources` is missing only from a daily response cached before the API sent it.
+  const agentOptions = agentFilterOptions(daily.sources ?? profile.stats.sources);
   const activeSource = source === undefined ? ALL_AGENT_SOURCE : source;
 
   const selectAgent = (value: ProfileSourceFilter) =>
@@ -197,34 +197,87 @@ function ProfilePage() {
 
   return (
     <>
-      <header className="flex flex-wrap items-center justify-between gap-4 px-4 py-8">
+      <header className="flex items-center justify-between gap-4 px-4 py-8">
         <div className="flex min-w-0 items-center gap-4">
           <Avatar alt={`${owner.login} avatar`} priority size={56} src={owner.avatarUrl} />
           <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{owner.login}</h1>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
-          {agentOptions.length > 1 && (
-            <SegmentedControl
-              label="Agent"
-              onChange={selectAgent}
-              options={agentOptions}
-              value={activeSource}
-            />
-          )}
-          <ProfileShareButton url={profileUrl(profile)} />
-        </div>
+        <ProfileShareButton url={profileUrl(profile)} />
       </header>
 
       {daily.days.length === 0 ? (
         <div className="px-4">
-          <Card className="p-6 text-sm text-muted-foreground">
-            No usage yet — run <Code>tokenmaxxing sync</Code> to fill this page.
-          </Card>
+          {source === undefined ? (
+            <Card className="p-6 text-sm text-muted-foreground">
+              No usage yet — run <Code>tokenmaxxing sync</Code> to fill this page.
+            </Card>
+          ) : (
+            // The filter bar lives in the dashboard, which has nothing to show
+            // here, so the way back to all agents is offered inline.
+            <Card className="flex flex-wrap items-center justify-between gap-3 p-6 text-sm text-muted-foreground">
+              <span>No {agentLabel(source)} usage on this profile.</span>
+              <Button
+                onClick={() => void selectAgent(ALL_AGENT_SOURCE)}
+                size="sm"
+                variant="outline"
+              >
+                Show all agents
+              </Button>
+            </Card>
+          )}
         </div>
       ) : (
-        <ProfileDashboard range={daily.range} rows={daily.days} stats={profile.stats} />
+        <ProfileDashboard
+          agentFilter={
+            agentOptions.length > 1
+              ? { onChange: selectAgent, options: agentOptions, value: activeSource }
+              : undefined
+          }
+          range={daily.range}
+          rows={daily.days}
+          stats={profile.stats}
+        />
       )}
     </>
+  );
+}
+
+interface AgentFilter {
+  onChange: (value: ProfileSourceFilter) => void;
+  options: readonly AgentFilterOption[];
+  value: ProfileSourceFilter;
+}
+
+/**
+ * The agent the dashboard is scoped to, as a dropdown: a profile can have a
+ * dozen agents, which is too many for an inline segmented control.
+ */
+function AgentFilterMenu({ onChange, options, value }: AgentFilter) {
+  const selected = options.find((option) => option.value === value);
+
+  return (
+    <Menu>
+      <Menu.Trigger
+        aria-label={`Agent: ${selected?.label ?? "All agents"}`}
+        // As tall as the segmented control beside it in the filter bar.
+        className={cn(buttonClassName({ size: "xs", variant: "outline" }), "h-[30px]")}
+      >
+        {selected?.label ?? "All agents"}
+        <CaretDown aria-hidden className="size-3.5 text-muted-foreground" />
+      </Menu.Trigger>
+      <Menu.Content className="max-h-(--available-height) overflow-y-auto">
+        <Menu.RadioGroup
+          onValueChange={(next) => onChange(next as ProfileSourceFilter)}
+          value={value}
+        >
+          {options.map((option) => (
+            <Menu.RadioItem key={option.value} value={option.value}>
+              {option.label}
+            </Menu.RadioItem>
+          ))}
+        </Menu.RadioGroup>
+      </Menu.Content>
+    </Menu>
   );
 }
 
@@ -247,10 +300,12 @@ function ProfileShareButton({ url }: { url: string }) {
 }
 
 function ProfileDashboard({
+  agentFilter,
   range,
   rows,
   stats,
 }: {
+  agentFilter: AgentFilter | undefined;
   range: DailyRange;
   rows: readonly DailyRow[];
   stats: ProfileStats;
@@ -263,7 +318,12 @@ function ProfileDashboard({
       {/* The filter bar's sticky scope: it stays pinned only while the
           sections it filters are on screen, then scrolls away with them. */}
       <div className="border-b border-border">
-        <ProfileFilterBar onTimeframeChange={setTimeframe} range={range} timeframe={timeframe} />
+        <ProfileFilterBar
+          agentFilter={agentFilter}
+          onTimeframeChange={setTimeframe}
+          range={range}
+          timeframe={timeframe}
+        />
         <div className="grid grid-cols-1 gap-px bg-border">
           <ProfileStatCards range={range} rows={rows} stats={stats} timeframe={timeframe} />
           <ProfileTrends range={range} rows={rows} timeframe={timeframe} />
@@ -363,12 +423,17 @@ function ProfileStatCards({
   );
 }
 
-/** The dashboard's time range, over the stat cards and trend charts it filters. */
+/**
+ * The dashboard's filters: the agent (every per-day figure and chart below)
+ * and the time range (the stat cards and trend charts).
+ */
 function ProfileFilterBar({
+  agentFilter,
   onTimeframeChange,
   range,
   timeframe,
 }: {
+  agentFilter: AgentFilter | undefined;
   onTimeframeChange: (timeframe: UsageRangeId) => void;
   range: DailyRange;
   timeframe: UsageRangeId;
@@ -376,7 +441,11 @@ function ProfileFilterBar({
   const window = usageRangeWindow(range, timeframe);
 
   return (
-    <FilterBar span={formatDayRange(window.firstDate, window.lastDate)}>
+    <FilterBar
+      hideSpanWhenNarrow={agentFilter !== undefined}
+      span={formatDayRange(window.firstDate, window.lastDate)}
+    >
+      {agentFilter === undefined ? null : <AgentFilterMenu {...agentFilter} />}
       <SegmentedControl
         label="Time range"
         onChange={onTimeframeChange}

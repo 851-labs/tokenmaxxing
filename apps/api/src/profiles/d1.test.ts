@@ -255,6 +255,17 @@ describe("D1 profiles repository", () => {
       ]);
     });
 
+    it("lists the agents with usage in the range, whatever the source filter", async () => {
+      usage("laptop", "2026-07-02", "opencode", "qwen-3.8-27b", 1);
+      // Outside the range: not offered as a choice.
+      usage("laptop", "2025-12-18", "goose", "gpt-5", 1);
+      const repository = await makeRepository();
+
+      const sources = await Effect.runPromise(repository.dailySources("user", { since, until }));
+
+      expect(sources).toEqual(["claude", "codex", "opencode"]);
+    });
+
     it("scopes the rows to one agent when a source is given", async () => {
       usage("laptop", "2026-07-01", "opencode", "qwen-3.8-27b", 1);
       usage("laptop", "2026-07-03", "opencode", "claude-sonnet-5-5", 2);

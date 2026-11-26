@@ -87,6 +87,11 @@ interface ProfilesRepositoryShape {
     userId: string,
     query: DailyQuery & { since: string; until: string },
   ): Effect.Effect<ProfileDailyRow[], DatabaseError>;
+  /** The agents with a usage day in the range, ascending; ignores `source`. */
+  dailySources(
+    userId: string,
+    range: { since: string; until: string },
+  ): Effect.Effect<string[], DatabaseError>;
 }
 
 class ProfilesService extends Context.Service<ProfilesService, ProfilesServiceShape>()(
@@ -142,9 +147,15 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
       const { user } = yield* requireUser(login, viewerUserId);
       const now = new Date();
       const bounds = yield* profileDailyBounds(query, now);
-      const days = yield* repository.daily(user.id, { ...query, ...bounds }).pipe(Effect.orDie);
+      const [days, sources] = yield* Effect.all(
+        [
+          repository.daily(user.id, { ...query, ...bounds }),
+          repository.dailySources(user.id, bounds),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.orDie);
 
-      return { days, range: profileDailyRange(query, bounds, days, now) };
+      return { days, range: profileDailyRange(query, bounds, days, now), sources };
     }),
   });
 });
