@@ -14,6 +14,7 @@ describe("pageHead", () => {
       { content: "About us", property: "og:description" },
       { content: "website", property: "og:type" },
       { content: "https://tokenmaxxing.sh/privacy", property: "og:url" },
+      { content: "max-image-preview:large", name: "robots" },
     ]);
   });
 
@@ -22,6 +23,8 @@ describe("pageHead", () => {
 
     expect(head.links).toEqual([]);
     expect(head.meta).toContainEqual({ content: "noindex, follow", name: "robots" });
+    // One robots tag, so the two directives can never disagree.
+    expect(head.meta.filter((entry) => "name" in entry && entry.name === "robots")).toHaveLength(1);
   });
 
   it("appends page-specific meta after the defaults", () => {

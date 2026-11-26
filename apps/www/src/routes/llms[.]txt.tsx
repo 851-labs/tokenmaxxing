@@ -1,13 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { SUPPORTED_AGENTS } from "../lib/agents";
-import { textResponse } from "../lib/http";
+import { NOINDEX_HEADERS, textResponse } from "../lib/http";
 import {
   CCUSAGE_URL,
   DISCORD_URL,
   GITHUB_URL,
   NPM_INSTALL_COMMAND,
   SITE_NAME,
+  SITE_ORIGIN,
   siteUrl,
   X_URL,
 } from "../lib/site";
@@ -34,6 +35,12 @@ Usage is parsed locally via [ccusage](${CCUSAGE_URL}). Only daily aggregates (da
 
 ${SUPPORTED_AGENTS.map((agent) => `- ${agent.label}`).join("\n")}
 
+## Pages
+
+- [Leaderboard](${siteUrl("/")}): every public user ranked by spend or tokens over 7 days, 30 days, or all time.
+- [Stats](${siteUrl("/stats")}): token volume, API-equivalent spend, and active users by model and coding agent, across every public profile.
+- Profiles: each user has a public page at \`${SITE_ORIGIN}/{login}\` with their spend, tokens, streaks, and per-model charts. Every profile is listed in the [sitemap](${siteUrl("/sitemap.xml")}).
+
 ## Links
 
 - [Site](${siteUrl("/")})
@@ -48,16 +55,25 @@ ${SUPPORTED_AGENTS.map((agent) => `- ${agent.label}`).join("\n")}
 
 const LLMS_TXT = buildLlmsTxt();
 
+/**
+ * Written for answer engines and agents, which fetch it by name. It restates
+ * the home page, so it stays out of search results, where it would compete
+ * with the page it summarizes.
+ */
+function handleLlmsTxtRequest(): Response {
+  return textResponse(LLMS_TXT, {
+    cacheControl: "public, max-age=3600, stale-while-revalidate=86400",
+    contentType: "text/markdown; charset=utf-8",
+    headers: NOINDEX_HEADERS,
+  });
+}
+
 const Route = createFileRoute("/llms.txt")({
   server: {
     handlers: {
-      GET: () =>
-        textResponse(LLMS_TXT, {
-          cacheControl: "public, max-age=3600, stale-while-revalidate=86400",
-          contentType: "text/markdown; charset=utf-8",
-        }),
+      GET: handleLlmsTxtRequest,
     },
   },
 });
 
-export { buildLlmsTxt, Route };
+export { buildLlmsTxt, handleLlmsTxtRequest, Route };

@@ -77,6 +77,9 @@ const CHART_MODE_OPTIONS = [
   { label: "Share", value: "share" },
 ] as const satisfies readonly SegmentedOption<StackedBarsMode>[];
 
+/** Says what the stats are of; "Stats" alone matches no search. */
+const STATS_TITLE = "AI model and coding agent usage stats — tokenmaxxing.sh";
+
 const Route = createFileRoute("/stats")({
   validateSearch: statsSearchSchema,
   search: {
@@ -90,7 +93,7 @@ const Route = createFileRoute("/stats")({
       description:
         "Which AI models and coding agents are winning: token volume, API-equivalent spend and active users across every public tokenmaxxing profile.",
       path: "/stats",
-      title: "Stats — tokenmaxxing.sh",
+      title: STATS_TITLE,
     }),
   component: StatsPage,
 });

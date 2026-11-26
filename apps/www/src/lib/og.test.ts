@@ -40,6 +40,11 @@ describe("profile OG helpers", () => {
     expect(profileOgDescription(profile({ spendUsd: 42.5 }))).toContain("$42.50");
   });
 
+  it("counts a single active day in the singular", () => {
+    expect(profileOgDescription(profile({ activeDays: 1 }))).toContain("across 1 active day and");
+    expect(profileOgDescription(profile({ activeDays: 2 }))).toContain("across 2 active days and");
+  });
+
   it("builds sane metadata for an empty profile", () => {
     const empty = profile({
       activeDays: 0,

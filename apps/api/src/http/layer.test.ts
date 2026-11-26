@@ -458,6 +458,21 @@ describe("API HTTP responses", () => {
     expect(response.headers.get("x-request-id")).toBe("req-1");
   });
 
+  it("keeps API responses out of search results, errors included", async () => {
+    app = await makeTestApp();
+
+    for (const [path, status] of [
+      ["/health", 200],
+      ["/nope", 404],
+      ["/me", 401],
+    ] as const) {
+      const response = await app.fetch(new Request(`https://api.tokenmaxxing.sh${path}`));
+
+      expect({ path, status: response.status }).toEqual({ path, status });
+      expect(response.headers.get("x-robots-tag")).toBe("noindex");
+    }
+  });
+
   it("replaces an oversized or odd x-request-id with a minted one", async () => {
     app = await makeTestApp();
 

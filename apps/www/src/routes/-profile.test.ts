@@ -8,7 +8,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 import { LOGIN_REDIRECT_CACHE_CONTROL } from "../lib/login-redirect";
 import { queryKeys } from "../lib/queries";
-import { loadProfile, ProfileGithubLink, ProfileShareButton } from "./$user/route";
+import { INDEXABLE_ROBOTS, NOINDEX_ROBOTS } from "../lib/seo";
+import { loadProfile, ProfileGithubLink, profileHead, ProfileShareButton } from "./$user/route";
 
 /**
  * The profile loader over the real derived API client, with the network
@@ -72,6 +73,64 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 
   throw new Error("expected the loader to throw");
 }
+
+describe("profile head", () => {
+  const synced = {
+    ...profileBody,
+    stats: {
+      ...profileBody.stats,
+      activeDays: 12,
+      firstDate: "2026-09-01",
+      lastDate: "2026-09-22",
+      spendUsd: 340,
+      totalTokens: 2_500_000,
+    },
+  };
+
+  function tags(head: ReturnType<typeof profileHead>) {
+    const meta = head.meta as Record<string, string>[];
+
+    return {
+      canonical: head.links.find((link) => link.rel === "canonical")?.href,
+      ogUrl: meta.find((entry) => entry.property === "og:url")?.content,
+      robots: meta.filter((entry) => entry.name === "robots").map((entry) => entry.content),
+      title: meta.find((entry) => "title" in entry)?.title,
+    };
+  }
+
+  it("makes the bare profile URL canonical, whatever filters the view carries", () => {
+    // The head is built from the profile alone: `?agent=` and `?range=` never reach it.
+    expect(tags(profileHead(synced))).toEqual({
+      canonical: "https://tokenmaxxing.sh/martinxjonsson",
+      ogUrl: "https://tokenmaxxing.sh/martinxjonsson",
+      robots: [INDEXABLE_ROBOTS],
+      title: "martinxjonsson on tokenmaxxing.sh",
+    });
+  });
+
+  it("keeps a profile with no usage out of search results", () => {
+    const head = tags(profileHead(profileBody));
+
+    expect(head.robots).toEqual([NOINDEX_ROBOTS]);
+    // A noindex page names no canonical: the two would disagree.
+    expect(head.canonical).toBeUndefined();
+    expect(head.ogUrl).toBe("https://tokenmaxxing.sh/martinxjonsson");
+  });
+
+  it("describes the profile in structured data that parses", () => {
+    const [page, breadcrumbs] = profileHead(synced).scripts.map(
+      (script) => JSON.parse(script.children) as Record<string, unknown>,
+    );
+
+    expect(page).toMatchObject({
+      "@type": "ProfilePage",
+      about: { "@type": "Dataset" },
+      mainEntity: { "@type": "Person", name: "martinxjonsson" },
+      url: "https://tokenmaxxing.sh/martinxjonsson",
+    });
+    expect(breadcrumbs).toMatchObject({ "@type": "BreadcrumbList" });
+  });
+});
 
 describe("profile loader", () => {
   it("loads the summary and daily rows for a canonical login", async () => {

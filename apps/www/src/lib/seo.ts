@@ -6,6 +6,17 @@ import { siteUrl } from "./site";
  * link rather than inheriting the homepage's.
  */
 
+/**
+ * What an indexable page tells crawlers: it may be shown with a large image
+ * preview. Every page has a 1200x630 card as its `og:image`, and without this
+ * Google keeps the thumbnail small in results and leaves the page out of
+ * Discover's large cards. Indexing and following are the defaults and need
+ * no directive.
+ */
+const INDEXABLE_ROBOTS = "max-image-preview:large";
+/** Out of search results, while links on the page are still followed. */
+const NOINDEX_ROBOTS = "noindex, follow";
+
 interface PageHeadOptions {
   description?: string;
   /** Extra meta (e.g. og:image overrides) appended after the defaults. */
@@ -48,12 +59,12 @@ function pageHead({
           ]),
       { content: type, property: "og:type" },
       { content: url, property: "og:url" },
-      ...(noindex ? [{ content: "noindex, follow", name: "robots" }] : []),
+      { content: noindex ? NOINDEX_ROBOTS : INDEXABLE_ROBOTS, name: "robots" },
       ...meta,
     ],
   };
 }
 
-export { pageHead };
+export { INDEXABLE_ROBOTS, NOINDEX_ROBOTS, pageHead };
 
 export type { PageHead, PageHeadOptions, PageMeta };

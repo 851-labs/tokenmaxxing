@@ -30,7 +30,7 @@ import { agentLabel } from "../../lib/agents";
 import { isNotFoundApiError } from "../../lib/api";
 import { cn } from "../../lib/cn";
 import { formatDayRange, formatInteger, formatTokens, formatUsd } from "../../lib/format";
-import { breadcrumbSchema, profilePageSchema } from "../../lib/jsonld";
+import { breadcrumbSchema, jsonLdScript, profilePageSchema } from "../../lib/jsonld";
 import { LOGIN_REDIRECT_HEADERS } from "../../lib/login-redirect";
 import {
   OG_IMAGE_HEIGHT,
@@ -59,7 +59,8 @@ import {
   usageRangeWindow,
 } from "../../lib/usage-ranges";
 
-type ProfileStats = (typeof ProfileResponse.Type)["stats"];
+type Profile = typeof ProfileResponse.Type;
+type ProfileStats = Profile["stats"];
 
 /**
  * The dashboard's filters: the agent it is scoped to (missing means all
@@ -94,43 +95,46 @@ const Route = createFileRoute("/$user")({
   // a loader dependency.
   loader: ({ context, location, params }) =>
     loadProfile(context.queryClient, params.user, location.search),
-  head: ({ loaderData }) => {
-    if (loaderData === undefined) {
-      return {};
-    }
-
-    const profile = loaderData.profile;
-    const image = profileOgImageUrl(profile);
-    const url = profileUrl(profile);
-
-    return {
-      ...pageHead({
-        description: profileOgDescription(profile),
-        meta: [
-          { content: image, property: "og:image" },
-          { content: String(OG_IMAGE_WIDTH), property: "og:image:width" },
-          { content: String(OG_IMAGE_HEIGHT), property: "og:image:height" },
-          { content: "summary_large_image", name: "twitter:card" },
-          { content: image, name: "twitter:image" },
-        ],
-        path: `/${encodeURIComponent(profile.user.login)}`,
-        title: profileOgTitle(profile),
-        type: "profile",
-      }),
-      scripts: [
-        {
-          type: "application/ld+json",
-          children: JSON.stringify(profilePageSchema(profile)),
-        },
-        {
-          type: "application/ld+json",
-          children: JSON.stringify(breadcrumbSchema(profile.user.login, url)),
-        },
-      ],
-    };
-  },
+  // No loader data means the loader threw (not found, a redirect, an error):
+  // the root's head covers those.
+  head: ({ loaderData }) => (loaderData === undefined ? {} : profileHead(loaderData.profile)),
   component: ProfilePage,
 });
+
+/**
+ * A profile's head tags and structured data. Its canonical link is the bare
+ * profile URL, so every `?agent=` and `?range=` view counts as that one page.
+ *
+ * A profile with no usage has nothing on it but the sync hint. It is kept out
+ * of search results until its first sync (the sitemap leaves it out too, as
+ * it lists only ranked users), so a few hundred identical pages are not what
+ * a crawler first learns about the site.
+ */
+function profileHead(profile: Profile) {
+  const image = profileOgImageUrl(profile);
+  const url = profileUrl(profile);
+
+  return {
+    ...pageHead({
+      description: profileOgDescription(profile),
+      meta: [
+        { content: image, property: "og:image" },
+        { content: String(OG_IMAGE_WIDTH), property: "og:image:width" },
+        { content: String(OG_IMAGE_HEIGHT), property: "og:image:height" },
+        { content: "summary_large_image", name: "twitter:card" },
+        { content: image, name: "twitter:image" },
+      ],
+      noindex: profile.stats.activeDays === 0,
+      path: `/${encodeURIComponent(profile.user.login)}`,
+      title: profileOgTitle(profile),
+      type: "profile",
+    }),
+    scripts: [
+      jsonLdScript(profilePageSchema(profile)),
+      jsonLdScript(breadcrumbSchema(profile.user.login, url)),
+    ],
+  };
+}
 
 /**
  * Loads the profile summary and its daily rows in parallel, letting both
@@ -613,4 +617,4 @@ function ProfileTrends({
   );
 }
 
-export { loadProfile, ProfileGithubLink, ProfileShareButton, Route };
+export { loadProfile, ProfileGithubLink, profileHead, ProfileShareButton, Route };
