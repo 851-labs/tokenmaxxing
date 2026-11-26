@@ -770,7 +770,12 @@ type ProfileResponse = typeof ProfileResponse.Type;
 
 // Public endpoint: device names are hostnames, visible only to their owner
 // (via /me/devices), so they are deliberately not a public grouping.
-const ProfileDailyGroupBy = Schema.Literals(["model", "source"]);
+/**
+ * `sourceModel` groups by both: one row per (date, source, model), with the
+ * model in `key` and the agent in `source`. The profile page reads it once
+ * and filters by agent in the browser.
+ */
+const ProfileDailyGroupBy = Schema.Literals(["model", "source", "sourceModel"]);
 
 type ProfileDailyGroupBy = typeof ProfileDailyGroupBy.Type;
 
@@ -778,8 +783,12 @@ type ProfileDailyGroupBy = typeof ProfileDailyGroupBy.Type;
  * One row per (date, key); `key` is the model or source the row groups by.
  * Only the fields the profile charts read are carried on the wire — input/cache
  * token breakdowns are intentionally omitted to keep the profile payload small.
+ * `source` is only sent for `groupBy=sourceModel`, where `key` is the model.
  */
-const ProfileDailyRow = StatsDailyModelPoint.mapFields(Struct.omit(["rowCount"]));
+const ProfileDailyRow = StatsDailyModelPoint.mapFields((fields) => ({
+  ...Struct.omit(fields, ["rowCount"]),
+  source: Schema.optionalKey(Schema.String),
+}));
 
 type ProfileDailyRow = typeof ProfileDailyRow.Type;
 

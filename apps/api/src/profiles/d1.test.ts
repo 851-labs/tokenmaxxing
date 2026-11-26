@@ -240,6 +240,29 @@ describe("D1 profiles repository", () => {
       });
     });
 
+    it("groups by agent and model, with the model as the key", async () => {
+      usage("laptop", "2026-07-02", "opencode", "gpt-5", 2);
+      const repository = await makeRepository();
+
+      const rows = await Effect.runPromise(
+        repository.daily("user", { groupBy: "sourceModel", since, until }),
+      );
+
+      expect(rows.map((row) => [row.date, row.key, row.source, row.spendUsd])).toEqual([
+        ["2026-07-01", "gpt-5", "codex", 1],
+        ["2026-07-01", "o3", "codex", 2],
+        ["2026-07-02", "gpt-5", "codex", 8],
+        ["2026-07-02", "gpt-5", "opencode", 2],
+        ["2026-07-02", "opus", "claude", 4],
+        ["2026-07-03", "gpt-5", "codex", 16],
+      ]);
+      // The other groupings carry no agent tag.
+      const byModel = await Effect.runPromise(
+        repository.daily("user", { groupBy: "model", since, until }),
+      );
+      expect(byModel.every((row) => !("source" in row))).toBe(true);
+    });
+
     it("groups by source", async () => {
       const repository = await makeRepository();
 

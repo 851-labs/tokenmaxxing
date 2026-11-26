@@ -167,6 +167,32 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
       }),
     daily: (userId, query) =>
       Effect.gen(function* () {
+        if (query.groupBy === "sourceModel") {
+          // One row per (date, agent, model): the profile page filters by
+          // agent in the browser and sums across agents for the whole view.
+          return yield* database.use((db) =>
+            db
+              .select({
+                date: usageDays.date,
+                key: usageDays.model,
+                outputTokens: usageAggregates.outputTokens(),
+                source: usageDays.source,
+                spendUsd: usageAggregates.spendUsd(),
+                totalTokens: usageAggregates.totalTokens(),
+              })
+              .from(usageDays)
+              .where(
+                and(
+                  eq(usageDays.userId, userId),
+                  gte(usageDays.date, query.since),
+                  lte(usageDays.date, query.until),
+                ),
+              )
+              .groupBy(usageDays.date, usageDays.model, usageDays.source)
+              .orderBy(asc(usageDays.date), asc(usageDays.model), asc(usageDays.source)),
+          );
+        }
+
         const key = query.groupBy === "source" ? usageDays.source : usageDays.model;
 
         const rows = yield* database.use((db) =>

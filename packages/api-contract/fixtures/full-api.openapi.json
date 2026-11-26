@@ -3783,7 +3783,8 @@
                   "type": "string",
                   "enum": [
                     "model",
-                    "source"
+                    "source",
+                    "sourceModel"
                   ]
                 },
                 {
@@ -3890,6 +3891,9 @@
                                 ]
                               }
                             ]
+                          },
+                          "source": {
+                            "type": "string"
                           }
                         },
                         "required": [
