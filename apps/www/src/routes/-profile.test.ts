@@ -1,11 +1,13 @@
 // @vitest-environment happy-dom
 import { QueryClient } from "@tanstack/react-query";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 import { LOGIN_REDIRECT_CACHE_CONTROL } from "../lib/login-redirect";
 import { queryKeys } from "../lib/queries";
-import { loadProfile } from "./$user/route";
+import { loadProfile, ProfileGithubLink } from "./$user/route";
 
 /**
  * The profile loader over the real derived API client, with the network
@@ -189,5 +191,31 @@ describe("profile loader", () => {
 
     expect(isNotFound(error)).toBe(false);
     expect(isRedirect(error)).toBe(false);
+  });
+});
+
+describe("profile GitHub link", () => {
+  function render(githubLogin: string | null): HTMLElement {
+    const container = document.createElement("div");
+    container.innerHTML = renderToStaticMarkup(createElement(ProfileGithubLink, { githubLogin }));
+
+    return container;
+  }
+
+  it("opens the stored GitHub account in a new tab, named for screen readers", () => {
+    // The profile login can be "bob-2" while the GitHub account is "Bob".
+    const link = render("Bob").querySelector("a");
+
+    expect(link?.getAttribute("href")).toBe("https://github.com/Bob");
+    expect(link?.getAttribute("aria-label")).toBe("Bob on GitHub");
+    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+    // Icon only: the accessible name is the label, the logo is decorative.
+    expect(link?.textContent).toBe("");
+    expect(link?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("renders nothing for a profile without a GitHub account", () => {
+    expect(render(null).innerHTML).toBe("");
   });
 });
