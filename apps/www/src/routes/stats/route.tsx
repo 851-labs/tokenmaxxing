@@ -180,11 +180,11 @@ function StatsCards({ metric, view }: { metric: StatsMetric; view: StatsView }) 
       />
       <StatCard
         label="Top model"
-        value={<AnimatedText className="inline-block" text={cards.topModel ?? "—"} />}
+        value={<AnimatedText className="line-clamp-1 break-all" text={cards.topModel ?? "—"} />}
       />
       <StatCard
         label="Top agent"
-        value={<AnimatedText className="inline-block" text={cards.topAgent ?? "—"} />}
+        value={<AnimatedText className="line-clamp-1 break-all" text={cards.topAgent ?? "—"} />}
       />
       <StatCard
         label="Cache reads"

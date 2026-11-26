@@ -69,7 +69,12 @@ function AnimatedText({ className, text }: { className?: string; text: string })
   }
 
   return (
-    <span className={cn(changed && "motion-safe:animate-value-swap", className)} key={text}>
+    // The title carries the full text for callers that clamp it to one line.
+    <span
+      className={cn(changed && "motion-safe:animate-value-swap", className)}
+      key={text}
+      title={text}
+    >
       {text}
     </span>
   );
