@@ -97,7 +97,7 @@ function UserMenu() {
     <div className="flex items-center gap-2">
       <GithubStarLink />
       <Menu>
-        <Menu.Trigger className="flex outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <Menu.Trigger className="flex">
           <Avatar alt={user.login} size="md" src={user.avatarUrl} />
         </Menu.Trigger>
         <Menu.Content>

@@ -42,7 +42,7 @@ function BootstrapCommand() {
         {BOOTSTRAP_COMMANDS.map((option) => (
           <Tabs.Tab
             className={cn(
-              "relative z-10 px-4 py-2.5 font-mono text-sm transition-colors",
+              "relative z-10 px-4 py-2.5 font-mono text-sm transition-colors focus-visible:-outline-offset-2",
               "text-muted-foreground hover:text-foreground",
               "data-active:text-foreground",
             )}
@@ -58,7 +58,8 @@ function BootstrapCommand() {
         <Tabs.Panel key={option.value} tabIndex={-1} value={option.value}>
           <button
             aria-label={`Copy ${option.label} bootstrap command`}
-            className="group flex w-full items-start justify-between gap-4 bg-transparent p-4 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-accent"
+            // Inside the clipping frame, so the focus ring is pulled in.
+            className="group flex w-full items-start justify-between gap-4 bg-transparent p-4 text-left transition-colors hover:bg-muted focus-visible:-outline-offset-2"
             onClick={() => void copy(option.command, option.value)}
             type="button"
           >
