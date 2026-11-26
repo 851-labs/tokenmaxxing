@@ -426,7 +426,9 @@ function ProfileStatCards({
       />
       <StatCard
         label="Top spend model"
-        value={<AnimatedText className="inline-block" text={windowStats.topModel ?? "—"} />}
+        value={
+          <AnimatedText className="line-clamp-1 break-all" text={windowStats.topModel ?? "—"} />
+        }
       />
       <StatCard
         label="Active days"
