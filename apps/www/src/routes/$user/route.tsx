@@ -333,13 +333,7 @@ function ProfileDashboard({
           timeframe={timeframe}
         />
         <div className="grid grid-cols-1 gap-px bg-border">
-          <ProfileStatCards
-            filtered={agent !== undefined}
-            range={range}
-            rows={rows}
-            stats={stats}
-            timeframe={timeframe}
-          />
+          <ProfileStatCards range={range} rows={rows} stats={stats} timeframe={timeframe} />
           <ProfileTrends range={range} rows={rows} timeframe={timeframe} />
         </div>
       </div>
@@ -405,17 +399,14 @@ function ProfileDashboard({
 /**
  * Two rows of stats: the first follows the time range and the agent filter;
  * the second is lifetime and whole-profile (streaks, sessions, and the 30-day
- * leaderboard rank), which per-day rows can't scope. While an agent is
- * selected, the second row says so.
+ * leaderboard rank), which per-day rows can't scope.
  */
 function ProfileStatCards({
-  filtered,
   range,
   rows,
   stats,
   timeframe,
 }: {
-  filtered: boolean;
   range: DailyRange;
   rows: readonly DailyRow[];
   stats: ProfileStats;
@@ -425,8 +416,6 @@ function ProfileStatCards({
     () => deriveWindowStats(rows, usageRangeWindow(range, timeframe)),
     [range, rows, timeframe],
   );
-
-  const allAgents = filtered ? "All agents" : undefined;
 
   return (
     <div className="grid grid-cols-2 gap-px bg-border lg:grid-cols-4">
@@ -443,19 +432,10 @@ function ProfileStatCards({
         label="Active days"
         value={<AnimatedNumber kind="integer" value={windowStats.activeDays} />}
       />
+      <StatCard label="Current streak" value={formatInteger(stats.currentStreakDays)} />
+      <StatCard label="Longest streak" value={formatInteger(stats.longestStreakDays)} />
+      <StatCard label="Sessions" value={formatInteger(stats.sessionCount)} />
       <StatCard
-        detail={allAgents}
-        label="Current streak"
-        value={formatInteger(stats.currentStreakDays)}
-      />
-      <StatCard
-        detail={allAgents}
-        label="Longest streak"
-        value={formatInteger(stats.longestStreakDays)}
-      />
-      <StatCard detail={allAgents} label="Sessions" value={formatInteger(stats.sessionCount)} />
-      <StatCard
-        detail={allAgents}
         label="Rank · 30d"
         value={stats.leaderboardRank === null ? "—" : `#${formatInteger(stats.leaderboardRank)}`}
       />
