@@ -1,15 +1,15 @@
-import { usageDays } from "@tokenmaxxing/db";
-import { asc, desc, sql } from "drizzle-orm";
+import { usageDays, users } from "@tokenmaxxing/db";
+import { asc, sql, type SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { Effect, Layer, Schema } from "effect";
 
 import { STATS_CHART_MODEL_LIMIT, StatsResponse, UsageRangeId } from "@tokenmaxxing/api-contract";
-import type { StatsRange } from "@tokenmaxxing/api-contract";
+import type { StatsRange, StatsRankedMetric } from "@tokenmaxxing/api-contract";
 
 import { makeEdgeJsonCache } from "../cloudflare/edge-cache";
 import { Drizzle } from "../database";
-import { singleAggregateRow, usageAggregates, usageMetric } from "../usage/aggregates";
-import { visibleUsage } from "../usage/visible";
+import { singleAggregateRow, usageAggregates } from "../usage/aggregates";
+import { visibleUsageByUser } from "../usage/visible";
 import { collapseChartSeries, roundCents } from "./chart-models";
 import {
   makeStatsService,
@@ -21,6 +21,52 @@ import {
 /** Every source is ranked: there are a couple dozen, and the page lists them all. */
 const SOURCE_RANK_LIMIT = 64;
 
+/** Inclusive YYYY-MM-DD bounds of the rows a statement reads. */
+interface UsageWindow {
+  since: string;
+  until: string;
+}
+
+type Aggregates<Field extends string> = Record<Field, () => SQL<number>>;
+
+/** What a range's totals sum or count. Its day fields come from the daily series. */
+const TOTAL_AGGREGATES = {
+  cacheCreationTokens: usageAggregates.cacheCreationTokens,
+  cacheReadTokens: usageAggregates.cacheReadTokens,
+  deviceCount: usageAggregates.deviceCount,
+  inputTokens: usageAggregates.inputTokens,
+  outputTokens: usageAggregates.outputTokens,
+  rowCount: usageAggregates.rowCount,
+  spendUsd: usageAggregates.spendUsd,
+  totalTokens: usageAggregates.totalTokens,
+  userCount: usageAggregates.userCount,
+} satisfies Aggregates<string>;
+
+/** What a range reports per ranked model or source. */
+const RANKED_AGGREGATES = {
+  rowCount: usageAggregates.rowCount,
+  spendUsd: usageAggregates.spendUsd,
+  totalTokens: usageAggregates.totalTokens,
+  userCount: usageAggregates.userCount,
+} satisfies Aggregates<string>;
+
+/**
+ * The snapshot is six statements, however many ranges there are. Every range
+ * ends on `until`, so the ranges nest: the longest one's rows hold all the
+ * others, and each range's figure is the same aggregate with a
+ * `FILTER (WHERE date >= <its start>)`. One statement carries every range's
+ * totals, and one each every range's model and source figures, where each
+ * range used to run four statements of its own (27 in all). The aggregates and
+ * the rows they cover are the same, so no number moves; only the top-N cut
+ * moves into the worker.
+ *
+ * Cost is the point. The batch is one D1 transaction, and D1 fails every
+ * route's queries for seconds once a database uses too much CPU within ten
+ * seconds. The 27 statements took about 6.4 seconds of D1 time and 14.8M rows
+ * read, and did that on almost every rebuild. These six took about 2 seconds
+ * and 1.7M rows (production, November 2026, 156k visible rows in the window),
+ * and each added statement or aggregate costs in proportion.
+ */
 const makeD1StatsRepository = Effect.fn("makeD1StatsRepository")(function* () {
   const database = yield* Drizzle;
 
@@ -29,31 +75,49 @@ const makeD1StatsRepository = Effect.fn("makeD1StatsRepository")(function* () {
       Effect.gen(function* () {
         const rangeIds = UsageRangeId.literals;
         const starts = rangeIds.map((range) => ranges[range]);
-        // The daily series cover every range; each range charts from its own start.
-        const seriesSince = starts.reduce((earliest, since) =>
-          since < earliest ? since : earliest,
+        // The earliest start: its rows hold every range, and the daily series
+        // chart each range from its own start.
+        const window: UsageWindow = {
+          since: starts.reduce((earliest, since) => (since < earliest ? since : earliest)),
+          until,
+        };
+        // One D1 round trip, one consistent read. Batched rows come back as
+        // objects keyed by column name, so every statement here must select
+        // unique names.
+        const [daily, dailyModels, dailySources, totalRows, models, sources] = yield* database.use(
+          (db) =>
+            db.batch([
+              dailyTotals(db, window),
+              dailySeries(db, usageDays.model, window),
+              dailySeries(db, usageDays.source, window),
+              rangeTotals(db, window, starts),
+              rangeKeys(db, usageDays.model, window, starts),
+              rangeKeys(db, usageDays.source, window, starts),
+            ]),
         );
-        // One D1 round trip. Batched rows come back as objects keyed by
-        // column name, so every statement here must select unique names.
-        const [daily, dailyModels, dailySources, ...rangeRows] = yield* database.use((db) =>
-          db.batch([
-            dailyTotals(db, seriesSince, until),
-            dailySeries(db, usageDays.model, seriesSince, until),
-            dailySeries(db, usageDays.source, seriesSince, until),
-            ...rangeIds.flatMap((range) => rangeStatements(db, ranges[range], until, limit)),
-          ]),
-        );
+        const totals = yield* singleAggregateRow(totalRows);
 
-        const summaries = yield* Effect.forEach(rangeIds, (range, index) =>
-          statsRange(
-            ranges[range],
-            // `rangeStatements` order, RANGE_STATEMENT_COUNT per range.
-            rangeRows.slice(
-              index * RANGE_STATEMENT_COUNT,
-              (index + 1) * RANGE_STATEMENT_COUNT,
-            ) as unknown as RangeRows,
-          ).pipe(Effect.map((summary) => [range, summary] as const)),
-        );
+        const summaries = rangeIds.map((range, index): [UsageRangeId, StatsRange] => {
+          const since = ranges[range];
+          // Date-ascending, one row per day with visible usage.
+          const days = daily.filter((day) => day.date >= since);
+
+          return [
+            range,
+            {
+              modelsBySpend: rankedKeys(models, index, "spendUsd", limit),
+              modelsByTokens: rankedKeys(models, index, "totalTokens", limit),
+              since,
+              sources: rankedKeys(sources, index, "totalTokens", SOURCE_RANK_LIMIT),
+              totals: {
+                ...rangeValues(totals, TOTAL_AGGREGATES, index),
+                activeDays: days.length,
+                firstDate: days[0]?.date ?? null,
+                lastDate: days.at(-1)?.date ?? null,
+              },
+            },
+          ];
+        });
 
         return {
           daily: daily.map((day) => ({ ...day, spendUsd: roundCents(day.spendUsd) })),
@@ -66,60 +130,124 @@ const makeD1StatsRepository = Effect.fn("makeD1StatsRepository")(function* () {
   });
 });
 
-/** The statements behind one range, in `statsRange` order. */
-function rangeStatements(db: DrizzleD1Database, since: string, until: string, limit: number) {
-  return [
-    totals(db, since, until),
-    rankedBy(db, usageDays.model, since, until, "spend", limit),
-    rankedBy(db, usageDays.model, since, until, "tokens", limit),
-    rankedBy(db, usageDays.source, since, until, "tokens", SOURCE_RANK_LIMIT),
-  ] as const;
+/** The result column holding `field` for the range at `index`. */
+function rangeColumn(field: string, index: number): string {
+  return `${field}_${index}`;
 }
 
-const RANGE_STATEMENT_COUNT = 4;
+const RANGE_STARTS = sql.identifier("range_starts");
 
-type AwaitedTuple<T extends readonly unknown[]> = { -readonly [K in keyof T]: Awaited<T[K]> };
+/** The `range_starts` column holding the start of the range at `index`. */
+function rangeStart(index: number): SQL {
+  return sql`${RANGE_STARTS}.${sql.identifier(`start_${index}`)}`;
+}
 
-type RangeRows = AwaitedTuple<ReturnType<typeof rangeStatements>>;
+/**
+ * The range starts as a one-row table for a statement's FROM clause. Each
+ * start is bound here once and read by name in every filter, so a statement's
+ * bound parameters grow with the ranges alone and not with ranges times
+ * aggregates (D1 allows 100).
+ */
+function rangeStartsTable(starts: readonly string[]): SQL {
+  const columns = starts.map(
+    (since, index) => sql`${since} as ${sql.identifier(`start_${index}`)}`,
+  );
 
-function statsRange(since: string, [totalRows, modelsBySpend, modelsByTokens, sources]: RangeRows) {
-  return singleAggregateRow(totalRows).pipe(
-    Effect.map((rangeTotals): StatsRange => ({
-      modelsBySpend,
-      modelsByTokens,
-      since,
-      sources,
-      totals: rangeTotals,
-    })),
+  return sql`(select ${sql.join(columns, sql`, `)}) as ${RANGE_STARTS}`;
+}
+
+/**
+ * Every aggregate once per range, each over that range's rows only. The
+ * statement must select from `rangeStartsTable`.
+ */
+function rangeColumns(aggregates: Aggregates<string>, rangeCount: number) {
+  const columns: Record<string, SQL.Aliased<number>> = {};
+  for (let index = 0; index < rangeCount; index += 1) {
+    for (const [field, aggregate] of Object.entries(aggregates)) {
+      columns[rangeColumn(field, index)] =
+        sql<number>`${aggregate()} filter (where ${usageDays.date} >= ${rangeStart(index)})`.as(
+          rangeColumn(field, index),
+        );
+    }
+  }
+
+  return columns;
+}
+
+/** One range's values out of a `rangeColumns` row. */
+function rangeValues<Field extends string>(
+  row: Readonly<Record<string, unknown>>,
+  aggregates: Aggregates<Field>,
+  index: number,
+): Record<Field, number> {
+  const values = {} as Record<Field, number>;
+  for (const field of Object.keys(aggregates) as Field[]) {
+    values[field] = Number(row[rangeColumn(field, index)]);
+  }
+
+  return values;
+}
+
+/**
+ * The `limit` keys with the most `metric` in one range, out of rows covering
+ * every range. A key with no rows in the range is not part of it.
+ *
+ * The worker defines the order of exact ties: the later key first, in
+ * JavaScript string order. SQL never fixed one. When `order by <metric> desc
+ * limit` made this cut, tied keys came back however SQLite's sorter left
+ * them, so which of them made the cut was an accident of the plan.
+ */
+function rankedKeys(
+  rows: ReadonlyArray<Readonly<Record<string, unknown>>>,
+  index: number,
+  metric: "spendUsd" | "totalTokens",
+  limit: number,
+): StatsRankedMetric[] {
+  return rows
+    .map((row) => ({ key: String(row.key), ...rangeValues(row, RANKED_AGGREGATES, index) }))
+    .filter((row) => row.rowCount > 0)
+    .sort(
+      (left, right) =>
+        right[metric] - left[metric] || (left.key > right.key ? -1 : left.key < right.key ? 1 : 0),
+    )
+    .slice(0, limit);
+}
+
+/** Each range's sums, row count and distinct users and devices, as one row. */
+function rangeTotals(db: DrizzleD1Database, window: UsageWindow, starts: readonly string[]) {
+  return visibleUsageByUser(
+    db
+      .select(rangeColumns(TOTAL_AGGREGATES, starts.length))
+      .from(rangeStartsTable(starts))
+      .crossJoin(users)
+      .$dynamic(),
+    window,
   );
 }
 
-function totals(db: DrizzleD1Database, since: string, until: string) {
-  return visibleUsage(
+/** Each range's `RANKED_AGGREGATES` per model or source seen in the window. */
+function rangeKeys(
+  db: DrizzleD1Database,
+  keyColumn: (typeof usageDays)["model" | "source"],
+  window: UsageWindow,
+  starts: readonly string[],
+) {
+  return visibleUsageByUser(
     db
       .select({
-        activeDays: usageAggregates.activeDays(),
-        cacheCreationTokens: usageAggregates.cacheCreationTokens(),
-        cacheReadTokens: usageAggregates.cacheReadTokens(),
-        deviceCount: usageAggregates.deviceCount(),
-        firstDate: usageAggregates.firstDate(),
-        inputTokens: usageAggregates.inputTokens(),
-        lastDate: usageAggregates.lastDate(),
-        outputTokens: usageAggregates.outputTokens(),
-        rowCount: usageAggregates.rowCount(),
-        spendUsd: usageAggregates.spendUsd(),
-        totalTokens: usageAggregates.totalTokens(),
-        userCount: usageAggregates.userCount(),
+        key: sql<string>`${keyColumn}`.as("rank_key"),
+        ...rangeColumns(RANKED_AGGREGATES, starts.length),
       })
-      .from(usageDays)
+      .from(rangeStartsTable(starts))
+      .crossJoin(users)
       .$dynamic(),
-    { since, until },
-  );
+    window,
+  ).groupBy(sql`rank_key`);
 }
 
 /** Spend, tokens and distinct users per day. */
-function dailyTotals(db: DrizzleD1Database, since: string, until: string) {
-  return visibleUsage(
+function dailyTotals(db: DrizzleD1Database, window: UsageWindow) {
+  return visibleUsageByUser(
     db
       .select({
         date: usageDays.date,
@@ -127,9 +255,9 @@ function dailyTotals(db: DrizzleD1Database, since: string, until: string) {
         totalTokens: usageAggregates.totalTokens(),
         userCount: usageAggregates.userCount(),
       })
-      .from(usageDays)
+      .from(users)
       .$dynamic(),
-    { since, until },
+    window,
   )
     .groupBy(usageDays.date)
     .orderBy(asc(usageDays.date));
@@ -139,10 +267,9 @@ function dailyTotals(db: DrizzleD1Database, since: string, until: string) {
 function dailySeries(
   db: DrizzleD1Database,
   keyColumn: (typeof usageDays)["model" | "source"],
-  since: string,
-  until: string,
+  window: UsageWindow,
 ) {
-  return visibleUsage(
+  return visibleUsageByUser(
     db
       .select({
         date: usageDays.date,
@@ -150,38 +277,12 @@ function dailySeries(
         spendUsd: usageAggregates.spendUsd(),
         totalTokens: usageAggregates.totalTokens(),
       })
-      .from(usageDays)
+      .from(users)
       .$dynamic(),
-    { since, until },
+    window,
   )
     .groupBy(usageDays.date, sql`series_key`)
     .orderBy(asc(usageDays.date), asc(sql`series_key`));
-}
-
-function rankedBy(
-  db: DrizzleD1Database,
-  keyColumn: (typeof usageDays)["model" | "source"],
-  since: string,
-  until: string,
-  orderBy: "spend" | "tokens",
-  limit: number,
-) {
-  return visibleUsage(
-    db
-      .select({
-        key: sql<string>`${keyColumn}`.as("rank_key"),
-        rowCount: usageAggregates.rowCount(),
-        spendUsd: usageAggregates.spendUsd(),
-        totalTokens: usageAggregates.totalTokens(),
-        userCount: usageAggregates.userCount(),
-      })
-      .from(usageDays)
-      .$dynamic(),
-    { since, until },
-  )
-    .groupBy(sql`rank_key`)
-    .orderBy(desc(usageMetric(orderBy)))
-    .limit(limit);
 }
 
 const StatsRepositoryLive = Layer.effect(StatsRepository, makeD1StatsRepository());

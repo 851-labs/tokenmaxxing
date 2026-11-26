@@ -207,7 +207,7 @@ describe("StatsService.getStats stale-while-revalidate", () => {
     });
 
     const first = await read();
-    at("2026-07-09T23:01:00.000Z");
+    at("2026-07-09T20:11:00.000Z");
     const stale = await read();
 
     expect(stale.generatedAt).toBe(first.generatedAt);
@@ -216,7 +216,7 @@ describe("StatsService.getStats stale-while-revalidate", () => {
 
     await Effect.runPromise(deferred[0]!);
     expect(state.snapshots).toBe(2);
-    expect((await read()).generatedAt).toBe("2026-07-09T23:01:00.000Z");
+    expect((await read()).generatedAt).toBe("2026-07-09T20:11:00.000Z");
   });
 
   it("schedules one rebuild however many stale reads arrive meanwhile", async () => {
@@ -226,13 +226,13 @@ describe("StatsService.getStats stale-while-revalidate", () => {
     });
 
     await read();
-    at("2026-07-09T23:30:00.000Z");
+    at("2026-07-09T20:30:00.000Z");
     await Promise.all([read(), read(), read()]);
     expect(deferred).toHaveLength(1);
 
     // Once it settles, the next stale read may schedule another.
     await Effect.runPromise(deferred[0]!);
-    at("2026-07-10T03:00:00.000Z");
+    at("2026-07-09T20:50:00.000Z");
     await read();
     expect(deferred).toHaveLength(2);
   });
@@ -244,7 +244,7 @@ describe("StatsService.getStats stale-while-revalidate", () => {
     });
 
     await read();
-    at("2026-07-09T22:59:59.000Z");
+    at("2026-07-09T20:09:59.000Z");
     await read();
 
     expect([state.snapshots, deferred.length]).toEqual([1, 0]);
@@ -254,9 +254,9 @@ describe("StatsService.getStats stale-while-revalidate", () => {
     const { at, read, state } = await swrService();
 
     await read();
-    at("2026-07-09T23:01:00.000Z");
+    at("2026-07-09T20:11:00.000Z");
 
-    expect((await read()).generatedAt).toBe("2026-07-09T23:01:00.000Z");
+    expect((await read()).generatedAt).toBe("2026-07-09T20:11:00.000Z");
     expect(state.snapshots).toBe(2);
   });
 
@@ -271,7 +271,7 @@ describe("StatsService.getStats stale-while-revalidate", () => {
 
     const first = await read();
     failing = true;
-    at("2026-07-09T23:01:00.000Z");
+    at("2026-07-09T20:11:00.000Z");
     await read();
     await Effect.runPromise(deferred[0]!.pipe(Effect.provide(logs.layer)));
 
