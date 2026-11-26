@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { CaretDown, LinkSimple } from "@phosphor-icons/react/ssr";
 import { useSuspenseQuery, type QueryClient } from "@tanstack/react-query";
 import {
@@ -8,8 +8,8 @@ import {
   stripSearchParams,
   useNavigate,
 } from "@tanstack/react-router";
-import { UsageSource } from "@tokenmaxxing/api-contract";
-import type { ProfileResponse, UsageRangeId } from "@tokenmaxxing/api-contract";
+import { UsageRangeId, UsageSource } from "@tokenmaxxing/api-contract";
+import type { ProfileResponse } from "@tokenmaxxing/api-contract";
 import * as Schema from "effect/Schema";
 
 import { AnimatedNumber, AnimatedText } from "../../components/animated-value";
@@ -50,21 +50,23 @@ import {
   type DailyRow,
 } from "./-lib/profile-charts";
 import { profileDailyQueryOptions, profileQueryOptions, queryKeys } from "../../lib/queries";
-import { optionalSearchParam } from "../../lib/search";
+import { optionalSearchParam, searchParam } from "../../lib/search";
 import { pageHead } from "../../lib/seo";
 import { DEFAULT_USAGE_RANGE, USAGE_RANGE_OPTIONS, usageRangeWindow } from "../../lib/usage-ranges";
 
 type ProfileStats = (typeof ProfileResponse.Type)["stats"];
 
 /**
- * The agent the dashboard is scoped to; missing means all agents. It lives in
- * the URL so a filtered view can be linked, but the loader does not depend on
- * it: the daily rows carry every agent and are filtered in the browser, so
- * switching agents never refetches.
+ * The dashboard's filters: the agent it is scoped to (missing means all
+ * agents) and the time range of the stat cards and trend charts. They live in
+ * the URL so a view can be linked, but the loader does not depend on them: the
+ * daily rows carry every agent and the whole range and are filtered in the
+ * browser, so changing a filter never refetches.
  */
 const profileSearchSchema = Schema.toStandardSchemaV1(
   Schema.Struct({
     agent: optionalSearchParam(UsageSource),
+    range: searchParam(UsageRangeId, DEFAULT_USAGE_RANGE),
   }),
 );
 
@@ -72,6 +74,7 @@ type ProfileSearch = typeof profileSearchSchema.Type;
 
 const DEFAULT_PROFILE_SEARCH = {
   agent: undefined,
+  range: DEFAULT_USAGE_RANGE,
 } as const satisfies ProfileSearch;
 
 const ALL_AGENTS = "all";
@@ -131,7 +134,11 @@ const Route = createFileRoute("/$user")({
  * (small) summary rides in loader data, for head tags and the favicon; the
  * daily rows reach the client once, via the dehydrated query cache.
  */
-async function loadProfile(queryClient: QueryClient, login: string, search: ProfileSearch = {}) {
+async function loadProfile(
+  queryClient: QueryClient,
+  login: string,
+  search: Partial<ProfileSearch> = {},
+) {
   const [profile, daily] = await Promise.allSettled([
     queryClient.ensureQueryData(profileQueryOptions(login)),
     queryClient.ensureQueryData(profileDailyQueryOptions(login)),
@@ -156,7 +163,7 @@ async function loadProfile(queryClient: QueryClient, login: string, search: Prof
     throw redirect({
       headers: LOGIN_REDIRECT_HEADERS,
       params: { user: canonicalLogin },
-      // Keep the agent filter across the redirect.
+      // Keep the filters across the redirect.
       search,
       statusCode: 301,
       to: "/$user",
@@ -168,7 +175,7 @@ async function loadProfile(queryClient: QueryClient, login: string, search: Prof
 
 function ProfilePage() {
   const { user } = Route.useParams();
-  const { agent } = Route.useSearch();
+  const { agent, range: timeframe } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const { data: profile } = useSuspenseQuery(profileQueryOptions(user));
   const { data: daily } = useSuspenseQuery(profileDailyQueryOptions(user));
@@ -180,6 +187,14 @@ function ProfilePage() {
     [daily.days],
   );
   const rows = useMemo(() => rowsForAgent(daily.days, agent), [agent, daily.days]);
+  // A filter, not a page: no history entry, and the reader stays where they
+  // scrolled to.
+  const setSearch = (next: Partial<ProfileSearch>) =>
+    void navigate({
+      replace: true,
+      resetScroll: false,
+      search: { agent, range: timeframe, ...next },
+    });
 
   return (
     <>
@@ -188,14 +203,8 @@ function ProfilePage() {
           <Avatar alt={`${owner.login} avatar`} priority size={56} src={owner.avatarUrl} />
           <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{owner.login}</h1>
         </div>
-        {/* Shares the view on screen: an active agent filter rides along. */}
-        <ProfileShareButton
-          url={
-            agent === undefined
-              ? profileUrl(profile)
-              : `${profileUrl(profile)}?agent=${encodeURIComponent(agent)}`
-          }
-        />
+        {/* Shares the view on screen: active filters ride along. */}
+        <ProfileShareButton url={sharedProfileUrl(profileUrl(profile), agent, timeframe)} />
       </header>
 
       {daily.days.length === 0 ? (
@@ -210,22 +219,29 @@ function ProfilePage() {
         <ProfileDashboard
           agent={agent}
           agents={agents}
-          onAgentChange={(next) =>
-            void navigate({
-              // A filter, not a page: no history entry, and the reader stays
-              // where they scrolled to.
-              replace: true,
-              resetScroll: false,
-              search: { agent: next },
-            })
-          }
+          onAgentChange={(next) => setSearch({ agent: next })}
+          onTimeframeChange={(next) => setSearch({ range: next })}
           range={daily.range}
           rows={rows}
           stats={profile.stats}
+          timeframe={timeframe}
         />
       )}
     </>
   );
+}
+
+/** The profile URL with the filters that differ from the defaults. */
+function sharedProfileUrl(url: string, agent: UsageSource | undefined, range: UsageRangeId) {
+  const query = new URLSearchParams();
+  if (agent !== undefined) {
+    query.set("agent", agent);
+  }
+  if (range !== DEFAULT_USAGE_RANGE) {
+    query.set("range", range);
+  }
+
+  return query.size === 0 ? url : `${url}?${query.toString()}`;
 }
 
 /**
@@ -297,19 +313,22 @@ function ProfileDashboard({
   agent,
   agents,
   onAgentChange,
+  onTimeframeChange,
   range,
   rows,
   stats,
+  timeframe,
 }: {
   agent: UsageSource | undefined;
   agents: readonly UsageSource[];
   onAgentChange: (agent: UsageSource | undefined) => void;
+  onTimeframeChange: (timeframe: UsageRangeId) => void;
   range: DailyRange;
   rows: readonly DailyRow[];
   stats: ProfileStats;
+  timeframe: UsageRangeId;
 }) {
   const charts = useMemo(() => deriveProfileCharts(rows, range), [range, rows]);
-  const [timeframe, setTimeframe] = useState<UsageRangeId>(DEFAULT_USAGE_RANGE);
   // These sections follow the agent filter but sit below the filter bar's
   // sticky scope, so each heading names the agent once the bar scrolls away.
   const scope =
@@ -328,7 +347,7 @@ function ProfileDashboard({
           agent={agent}
           agents={agents}
           onAgentChange={onAgentChange}
-          onTimeframeChange={setTimeframe}
+          onTimeframeChange={onTimeframeChange}
           range={range}
           timeframe={timeframe}
         />
