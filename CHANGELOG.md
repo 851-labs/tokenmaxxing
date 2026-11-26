@@ -7,6 +7,10 @@ All notable changes to tokenmaxxing are documented here. Versions are anchored t
 
 ### Server
 
+- `/stats` is rebuilt at most every 3 hours per Cloudflare data center, up from every 10 minutes,
+  so its numbers can lag by up to 3 hours. This is temporary. One rebuild reads about 14M rows in a
+  single D1 transaction, which overloaded D1 and made every API route return 500s and 503s for 5 to
+  15 seconds, about 36 times a day. The window goes back to 10 minutes once the rebuild is cheap.
 - Ingest rejects fabricated usage rows it used to accept. Each usage row (one model on one day) is
   now capped at 25B uncached input tokens, 10B output tokens, 10B cache-write tokens, 500B
   cache-read and total tokens, and $250k. These caps were lowered from 1T tokens per field and $1M.
