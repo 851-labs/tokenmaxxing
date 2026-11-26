@@ -37,21 +37,21 @@ describe("root command", () => {
     expect(result.output).toContain("upgrade      Upgrade the globally installed CLI");
   });
 
-  it("exposes --json on all service subcommands and upgrade", () => {
-    for (const args of [
-      ["upgrade", "--help"],
-      ["service", "install", "--help"],
-      ["service", "uninstall", "--help"],
-      ["service", "status", "--help"],
-      ["service", "doctor", "--help"],
-      ["service", "repair", "--help"],
-      ["service", "run", "--help"],
-    ]) {
-      const result = runCli(args);
+  // One spawn per test: seven CLI starts in a single test ran past the 5 s
+  // default when the whole suite loads the machine.
+  it.each([
+    "upgrade",
+    "service install",
+    "service uninstall",
+    "service status",
+    "service doctor",
+    "service repair",
+    "service run",
+  ])("exposes --json on %s", (command) => {
+    const result = runCli([...command.split(" "), "--help"]);
 
-      expect(result.status).toBe(0);
-      expect(result.output).toContain("--json");
-    }
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("--json");
   });
 
   it("exposes bootstrap as a human-only onboarding command", () => {
