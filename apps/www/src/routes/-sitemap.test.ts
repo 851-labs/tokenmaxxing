@@ -9,42 +9,41 @@ import { makeSitemapHandler, MAX_SITEMAP_URLS, type SitemapRouteDeps } from "./s
 import { Route as StatsRoute } from "./stats/route";
 import { Route as TermsRoute } from "./terms";
 
-type Leaderboard = NonNullable<Awaited<ReturnType<SitemapRouteDeps["loadLeaderboard"]>>>;
+type ProfileIndex = NonNullable<Awaited<ReturnType<SitemapRouteDeps["loadProfiles"]>>>;
 
 const NOW = () => new Date("2026-06-22T12:00:00.000Z");
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 1_000;
 
-function ranked(login: string, rank: number): Leaderboard["entries"][number] {
-  return {
-    activeDays: 1,
-    lastDate: "2026-06-01",
-    rank,
-    spendUsd: 1,
-    totalTokens: 1,
-    user: { avatarUrl: null, login, name: null },
-  };
+function profile(login: string, lastDate = "2026-06-01"): ProfileIndex["entries"][number] {
+  return { lastDate, login };
 }
 
-/** A ranking of `total` users (`user-1` is rank 1) served a page at a time, the way the API pages it. */
-function pagedLeaderboard(total: number) {
-  const offsets: number[] = [];
-  const loadLeaderboard = async (offset: number): Promise<Leaderboard> => {
-    offsets.push(offset);
-    const entries = Array.from(
-      { length: Math.max(0, Math.min(PAGE_SIZE, total - offset)) },
-      (_, index) => ranked(`user-${offset + index + 1}`, offset + index + 1),
-    );
+/** One page holding every given profile. */
+function onePage(entries: ProfileIndex["entries"]): SitemapRouteDeps["loadProfiles"] {
+  return async () => ({ entries, nextAfter: null });
+}
 
-    return {
-      entries,
-      metric: "spend",
-      nextOffset: offset + PAGE_SIZE < total ? offset + PAGE_SIZE : null,
-      total,
-      window: "all",
-    };
+/**
+ * `total` profiles (`user-00001` first) served a page at a time by login,
+ * the way the API pages its profile index.
+ */
+function pagedProfiles(total: number) {
+  const logins = Array.from({ length: total }, (_, index) => loginOf(index + 1));
+  const calls: (string | null)[] = [];
+  const loadProfiles = async (after: string | null): Promise<ProfileIndex> => {
+    calls.push(after);
+    const start = after === null ? 0 : logins.findIndex((login) => login > after);
+    const rest = start === -1 ? [] : logins.slice(start);
+    const entries = rest.slice(0, PAGE_SIZE).map((login) => profile(login));
+
+    return { entries, nextAfter: rest.length > PAGE_SIZE ? (entries.at(-1)?.login ?? null) : null };
   };
 
-  return { loadLeaderboard, offsets };
+  return { calls, loadProfiles };
+}
+
+function loginOf(index: number): string {
+  return `user-${String(index).padStart(5, "0")}`;
 }
 
 /** A Workers-style cache holding at most the one sitemap. */
@@ -80,53 +79,29 @@ describe("sitemap", () => {
     expect(buildRobotsTxt()).toContain("Sitemap: https://tokenmaxxing.sh/sitemap.xml");
 
     const response = await makeSitemapHandler({
-      loadLeaderboard: async () => ({
-        entries: [
-          {
-            activeDays: 3,
-            lastDate: "2026-06-21",
-            rank: 1,
-            spendUsd: 10,
-            totalTokens: 100,
-            user: { avatarUrl: null, id: "user_1", login: "pondorasti", name: null },
-          },
-        ],
-        metric: "spend",
-        window: "all",
-      }),
-      now: () => new Date("2026-06-22T12:00:00.000Z"),
+      loadProfiles: onePage([profile("pondorasti", "2026-06-21")]),
+      now: NOW,
     })();
     const xml = await response.text();
 
     expect(response.headers.get("content-type")).toContain("application/xml");
     expect(xml).toContain("<loc>https://tokenmaxxing.sh/stats</loc>");
-    expect(xml).toContain("<loc>https://tokenmaxxing.sh/pondorasti</loc>");
+    expect(xml).toContain(
+      "<loc>https://tokenmaxxing.sh/pondorasti</loc><lastmod>2026-06-21</lastmod>",
+    );
     expect(xml).not.toContain("/design");
     expect(xml).not.toContain("/settings");
   });
 
   it("never dates a profile after UTC today", async () => {
-    const entry = (login: string, lastDate: string | null) => ({
-      activeDays: 1,
-      lastDate,
-      rank: 1,
-      spendUsd: 1,
-      totalTokens: 1,
-      user: { avatarUrl: null, login, name: null },
-    });
     const response = await makeSitemapHandler({
-      loadLeaderboard: async () => ({
-        entries: [
-          // A user east of UTC is already on the 23rd.
-          entry("ahead", "2026-06-23"),
-          entry("today", "2026-06-22"),
-          entry("earlier", "2026-06-01"),
-          entry("idle", null),
-        ],
-        metric: "spend",
-        window: "all",
-      }),
-      now: () => new Date("2026-06-22T12:00:00.000Z"),
+      loadProfiles: onePage([
+        // A user east of UTC is already on the 23rd.
+        profile("ahead", "2026-06-23"),
+        profile("earlier", "2026-06-01"),
+        profile("today", "2026-06-22"),
+      ]),
+      now: NOW,
     })();
     const xml = await response.text();
 
@@ -135,147 +110,167 @@ describe("sitemap", () => {
     expect(xml).toContain(
       "<loc>https://tokenmaxxing.sh/earlier</loc><lastmod>2026-06-01</lastmod>",
     );
-    expect(xml).toContain("<url><loc>https://tokenmaxxing.sh/idle</loc></url>");
     expect(xml).not.toContain("2026-06-23");
   });
 
-  it("still lists the static pages when the leaderboard is unavailable", async () => {
+  it("still lists the static pages when the profile index is unavailable", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     onTestFinished(() => warn.mockRestore());
     const response = await makeSitemapHandler({
-      loadLeaderboard: async () => {
+      loadProfiles: async () => {
         throw new Error("API down");
       },
-      now: () => new Date("2026-06-22T12:00:00.000Z"),
+      now: NOW,
     })();
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("public, max-age=300");
-    expect(await response.text()).toContain("<loc>https://tokenmaxxing.sh/privacy</loc>");
-    expect(warn).toHaveBeenCalledExactlyOnceWith("Sitemap leaderboard load failed", {
+    expect(locs(await response.text())).toEqual(
+      STATIC_SITEMAP_PATHS.map((path) => new URL(path, "https://tokenmaxxing.sh").toString()),
+    );
+    expect(warn).toHaveBeenCalledExactlyOnceWith("Sitemap profile page failed", {
+      after: null,
       error: expect.any(Error),
+    });
+  });
+
+  it("does not take a missing profile index for an empty one", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warn.mockRestore());
+    const { cache, stored } = memoryCache();
+
+    // fetchPublicJson resolves null on a 404, e.g. an API without the endpoint yet.
+    const response = await makeSitemapHandler({
+      cache: () => cache,
+      loadProfiles: async () => null,
+      now: NOW,
+    })();
+
+    expect(locs(await response.text())).toHaveLength(STATIC_SITEMAP_PATHS.length);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300");
+    expect(stored.size).toBe(0);
+    expect(warn).toHaveBeenCalledExactlyOnceWith("Sitemap profile page unusable", {
+      after: null,
     });
   });
 });
 
 describe("sitemap profiles", () => {
-  it("lists every ranked profile, not only the leaderboard's first page", async () => {
-    const { loadLeaderboard, offsets } = pagedLeaderboard(523);
+  it("lists every public profile, reading the index a page at a time", async () => {
+    const { calls, loadProfiles } = pagedProfiles(2_523);
 
-    const response = await makeSitemapHandler({ loadLeaderboard, now: NOW })();
+    const response = await makeSitemapHandler({ loadProfiles, now: NOW })();
     const urls = locs(await response.text());
 
-    expect(urls).toHaveLength(STATIC_SITEMAP_PATHS.length + 523);
-    expect(urls).toContain("https://tokenmaxxing.sh/user-1");
-    expect(urls).toContain("https://tokenmaxxing.sh/user-101");
-    expect(urls).toContain("https://tokenmaxxing.sh/user-523");
+    expect(urls).toHaveLength(STATIC_SITEMAP_PATHS.length + 2_523);
+    expect(urls).toContain(`https://tokenmaxxing.sh/${loginOf(1)}`);
+    expect(urls).toContain(`https://tokenmaxxing.sh/${loginOf(1_001)}`);
+    expect(urls).toContain(`https://tokenmaxxing.sh/${loginOf(2_523)}`);
     expect(new Set(urls).size).toBe(urls.length);
-    // One page at a time, each from the offset the last one named.
-    expect(offsets).toEqual([0, 100, 200, 300, 400, 500]);
+    // One page at a time, each after the login the last one named.
+    expect(calls).toEqual([null, loginOf(1_000), loginOf(2_000)]);
     expect(response.headers.get("cache-control")).toBe(
       "public, max-age=3600, stale-while-revalidate=86400",
     );
   });
 
   it("reads a single page once", async () => {
-    const { loadLeaderboard, offsets } = pagedLeaderboard(40);
+    const { calls, loadProfiles } = pagedProfiles(40);
 
-    const response = await makeSitemapHandler({ loadLeaderboard, now: NOW })();
+    const response = await makeSitemapHandler({ loadProfiles, now: NOW })();
 
     expect(locs(await response.text())).toHaveLength(STATIC_SITEMAP_PATHS.length + 40);
-    expect(offsets).toEqual([0]);
+    expect(calls).toEqual([null]);
   });
 
-  it("stops, with what it has, at a page whose next offset does not move on", async () => {
+  it("stops, with what it has, at a page whose cursor does not move on", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     onTestFinished(() => warn.mockRestore());
-    const { loadLeaderboard, offsets } = pagedLeaderboard(523);
-    const stuck: SitemapRouteDeps["loadLeaderboard"] = async (offset) => {
-      const page = await loadLeaderboard(offset);
-      return offset === 200 ? { ...page, nextOffset: 200 } : page;
+    const { calls, loadProfiles } = pagedProfiles(2_523);
+    const stuck: SitemapRouteDeps["loadProfiles"] = async (after) => {
+      const page = await loadProfiles(after);
+      return after === loginOf(1_000) ? { ...page, nextAfter: loginOf(1_000) } : page;
     };
 
-    const response = await makeSitemapHandler({ loadLeaderboard: stuck, now: NOW })();
+    const response = await makeSitemapHandler({ loadProfiles: stuck, now: NOW })();
 
-    expect(offsets).toEqual([0, 100, 200]);
-    expect(locs(await response.text())).toHaveLength(STATIC_SITEMAP_PATHS.length + 200);
+    expect(calls).toEqual([null, loginOf(1_000)]);
+    expect(locs(await response.text())).toHaveLength(STATIC_SITEMAP_PATHS.length + 1_000);
     expect(response.headers.get("cache-control")).toBe("public, max-age=300");
-    expect(warn).toHaveBeenCalledExactlyOnceWith("Sitemap leaderboard page unusable", {
-      offset: 200,
+    expect(warn).toHaveBeenCalledExactlyOnceWith("Sitemap profile page unusable", {
+      after: loginOf(1_000),
     });
   });
 
-  it("lists a profile once when the ranking shifts between pages", async () => {
-    const { loadLeaderboard } = pagedLeaderboard(150);
-    const shifted: SitemapRouteDeps["loadLeaderboard"] = async (offset) => {
-      const page = await loadLeaderboard(offset);
-      // user-100 dropped a rank while the pages were being read.
-      return offset === 0 ? page : { ...page, entries: [ranked("user-100", 101), ...page.entries] };
+  it("lists a profile once when a rename moves it between pages", async () => {
+    const { loadProfiles } = pagedProfiles(1_500);
+    const renamed: SitemapRouteDeps["loadProfiles"] = async (after) => {
+      const page = await loadProfiles(after);
+      // user-00005 renamed to a later login and showed up again, then renamed back.
+      return after === null ? page : { ...page, entries: [profile(loginOf(5)), ...page.entries] };
     };
 
     const urls = locs(
-      await (await makeSitemapHandler({ loadLeaderboard: shifted, now: NOW })()).text(),
+      await (await makeSitemapHandler({ loadProfiles: renamed, now: NOW })()).text(),
     );
 
-    expect(urls.filter((url) => url === "https://tokenmaxxing.sh/user-100")).toHaveLength(1);
-    expect(urls).toHaveLength(STATIC_SITEMAP_PATHS.length + 150);
+    expect(urls.filter((url) => url === `https://tokenmaxxing.sh/${loginOf(5)}`)).toHaveLength(1);
+    expect(urls).toHaveLength(STATIC_SITEMAP_PATHS.length + 1_500);
   });
 
   it("keeps the pages it has, and retries soon, when a later page fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     onTestFinished(() => warn.mockRestore());
-    const { loadLeaderboard } = pagedLeaderboard(523);
-    const flaky: SitemapRouteDeps["loadLeaderboard"] = async (offset) => {
-      if (offset === 300) {
+    const { loadProfiles } = pagedProfiles(2_523);
+    const flaky: SitemapRouteDeps["loadProfiles"] = async (after) => {
+      if (after === loginOf(2_000)) {
         throw new Error("API down");
       }
-      return loadLeaderboard(offset);
+      return loadProfiles(after);
     };
 
-    const response = await makeSitemapHandler({ loadLeaderboard: flaky, now: NOW })();
+    const response = await makeSitemapHandler({ loadProfiles: flaky, now: NOW })();
     const urls = locs(await response.text());
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("public, max-age=300");
-    expect(urls).toContain("https://tokenmaxxing.sh/user-1");
-    expect(urls).toContain("https://tokenmaxxing.sh/user-300");
-    expect(urls).not.toContain("https://tokenmaxxing.sh/user-301");
-    expect(warn).toHaveBeenCalledExactlyOnceWith("Sitemap leaderboard page failed", {
+    expect(urls).toContain(`https://tokenmaxxing.sh/${loginOf(1)}`);
+    expect(urls).toContain(`https://tokenmaxxing.sh/${loginOf(2_000)}`);
+    expect(urls).not.toContain(`https://tokenmaxxing.sh/${loginOf(2_001)}`);
+    expect(warn).toHaveBeenCalledExactlyOnceWith("Sitemap profile page failed", {
+      after: loginOf(2_000),
       error: expect.any(Error),
-      offset: 300,
     });
   });
 
   it("stops at the sitemap protocol's 50,000 URL limit", async () => {
-    // One oversized page stands in for a ranking past the limit.
-    const entries = Array.from({ length: MAX_SITEMAP_URLS + 10 }, (_, index) =>
-      ranked(`user-${index + 1}`, index + 1),
-    );
+    const { calls, loadProfiles } = pagedProfiles(MAX_SITEMAP_URLS + 1_500);
 
-    const response = await makeSitemapHandler({
-      loadLeaderboard: async () => ({ entries, metric: "spend", nextOffset: null, window: "all" }),
-      now: NOW,
-    })();
+    const response = await makeSitemapHandler({ loadProfiles, now: NOW })();
     const urls = locs(await response.text());
 
     expect(urls).toHaveLength(MAX_SITEMAP_URLS);
-    // The best-ranked profiles are the ones kept.
-    expect(urls).toContain("https://tokenmaxxing.sh/user-1");
-    expect(urls).not.toContain(`https://tokenmaxxing.sh/user-${MAX_SITEMAP_URLS}`);
+    // It stops reading once it has enough, and keeps the first logins.
+    expect(calls).toHaveLength(50);
+    expect(urls).toContain(`https://tokenmaxxing.sh/${loginOf(1)}`);
+    expect(urls).not.toContain(`https://tokenmaxxing.sh/${loginOf(MAX_SITEMAP_URLS)}`);
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=3600, stale-while-revalidate=86400",
+    );
   });
 });
 
 describe("sitemap cache", () => {
   it("builds the sitemap once and serves the stored copy after that", async () => {
     const { cache, stored } = memoryCache();
-    const { loadLeaderboard, offsets } = pagedLeaderboard(150);
-    const handler = makeSitemapHandler({ cache: () => cache, loadLeaderboard, now: NOW });
+    const { calls, loadProfiles } = pagedProfiles(1_500);
+    const handler = makeSitemapHandler({ cache: () => cache, loadProfiles, now: NOW });
 
     const built = await (await handler()).text();
     const served = await handler();
 
     expect([...stored.keys()]).toEqual(["https://tokenmaxxing.sh/sitemap.xml"]);
-    expect(offsets).toEqual([0, 100]);
+    expect(calls).toEqual([null, loginOf(1_000)]);
     expect(await served.text()).toBe(built);
     expect(served.headers.get("content-type")).toContain("application/xml");
   });
@@ -285,29 +280,29 @@ describe("sitemap cache", () => {
     onTestFinished(() => warn.mockRestore());
     const { cache, stored } = memoryCache();
     let down = true;
-    const { loadLeaderboard } = pagedLeaderboard(150);
+    const { loadProfiles } = pagedProfiles(1_500);
     const handler = makeSitemapHandler({
       cache: () => cache,
-      loadLeaderboard: async (offset) => {
-        if (down && offset > 0) {
+      loadProfiles: async (after) => {
+        if (down && after !== null) {
           throw new Error("API down");
         }
-        return loadLeaderboard(offset);
+        return loadProfiles(after);
       },
       now: NOW,
     });
 
-    expect(locs(await (await handler()).text())).toHaveLength(STATIC_SITEMAP_PATHS.length + 100);
+    expect(locs(await (await handler()).text())).toHaveLength(STATIC_SITEMAP_PATHS.length + 1_000);
     expect(stored.size).toBe(0);
 
     down = false;
-    expect(locs(await (await handler()).text())).toHaveLength(STATIC_SITEMAP_PATHS.length + 150);
+    expect(locs(await (await handler()).text())).toHaveLength(STATIC_SITEMAP_PATHS.length + 1_500);
     expect(stored.size).toBe(1);
     expect(warn).toHaveBeenCalledOnce();
   });
 
   it("still answers when the cache is down", async () => {
-    const { loadLeaderboard } = pagedLeaderboard(40);
+    const { loadProfiles } = pagedProfiles(40);
     const broken = {
       match: async () => {
         throw new Error("cache down");
@@ -317,7 +312,7 @@ describe("sitemap cache", () => {
       },
     };
 
-    const response = await makeSitemapHandler({ cache: () => broken, loadLeaderboard, now: NOW })();
+    const response = await makeSitemapHandler({ cache: () => broken, loadProfiles, now: NOW })();
 
     expect(response.status).toBe(200);
     expect(locs(await response.text())).toHaveLength(STATIC_SITEMAP_PATHS.length + 40);

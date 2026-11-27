@@ -66,6 +66,7 @@ describe("public usage visibility", () => {
     const entries = await Effect.runPromise(
       leaderboard.list({ limit: 10, metric: "tokens", since: null, until }),
     );
+    const listed = await Effect.runPromise(profiles.index({ after: null, limit: 10, until }));
     const visibleRank = await Effect.runPromise(
       profiles.leaderboardRank({ since: "2026-06-10", until, userId: "visible" }),
     );
@@ -81,6 +82,7 @@ describe("public usage visibility", () => {
     );
 
     expect(entries.map((entry) => [entry.rank, entry.user.login])).toEqual([[1, "visible"]]);
+    expect(listed.map((entry) => entry.login)).toEqual(["visible"]);
     expect(visibleRank).toBe(1);
     expect(bannedRank).toBeNull();
     expect(hidden.ranges.ytd.totals).toMatchObject({
@@ -104,6 +106,10 @@ describe("public usage visibility", () => {
 
     sqlite.prepare("update users set shadow_banned_at = null where id = 'banned'").run();
 
+    const restoredListed = await Effect.runPromise(
+      profiles.index({ after: null, limit: 10, until }),
+    );
+    expect(restoredListed.map((entry) => entry.login)).toEqual(["banned", "visible"]);
     const restoredBannedRank = await Effect.runPromise(
       profiles.leaderboardRank({ since: "2026-06-10", until, userId: "banned" }),
     );

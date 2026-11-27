@@ -207,6 +207,81 @@ describe("D1 profiles repository", () => {
     });
   });
 
+  describe("index", () => {
+    const indexUntil = "2026-07-08";
+
+    async function index(after: string | null = null, limit = 100) {
+      const repository = await makeRepository();
+      return Effect.runPromise(repository.index({ after, limit, until: indexUntil }));
+    }
+
+    it("lists visible users with usage by login, each with their latest day", async () => {
+      seedUser(database.sqlite, { id: "abe" });
+      usage("laptop", "2026-07-01", "codex", "gpt-5", 1);
+      usage("laptop", "2026-07-05", "claude", "opus", 1);
+      usage("desktop", "2026-07-03", "codex", "gpt-5", 1);
+      usage("abe-laptop", "2026-06-01", "codex", "gpt-5", 0, 0, "abe");
+
+      expect(await index()).toEqual([
+        { lastDate: "2026-06-01", login: "abe" },
+        { lastDate: "2026-07-05", login: "user" },
+      ]);
+    });
+
+    it("leaves out hidden, empty and only-future-dated users", async () => {
+      seedUser(database.sqlite, { id: "banned", shadowBannedAt: 1, shadowBannedByUserId: "admin" });
+      seedUser(database.sqlite, { id: "future" });
+      usage("laptop", "2026-07-01", "codex", "gpt-5", 1);
+      // A shadow-banned user with plenty of usage.
+      usage("banned-laptop", "2026-07-02", "codex", "gpt-5", 100, 10_000, "banned");
+      // Past the ingest ceiling, so not real usage yet.
+      usage("future-laptop", "2026-07-09", "codex", "gpt-5", 1, 10, "future");
+      // `other` has no usage at all.
+
+      expect(await index()).toEqual([{ lastDate: "2026-07-01", login: "user" }]);
+    });
+
+    it("ignores days past the ceiling when dating a user", async () => {
+      usage("laptop", "2026-07-08", "codex", "gpt-5", 1);
+      usage("laptop", "2026-07-09", "codex", "gpt-5", 1);
+
+      expect(await index()).toEqual([{ lastDate: "2026-07-08", login: "user" }]);
+    });
+
+    it("pages by login, resuming after the given one", async () => {
+      for (const id of ["a", "b", "c", "d", "e"]) {
+        seedUser(database.sqlite, { id });
+        usage(`${id}-laptop`, "2026-07-01", "codex", "gpt-5", 1, 10, id);
+      }
+      // Hidden and empty users in between do not take a place on a page.
+      database.sqlite.prepare("update users set shadow_banned_at = 1 where id = 'b'").run();
+
+      const logins = async (after: string | null) =>
+        (await index(after, 2)).map((entry) => entry.login);
+
+      expect(await logins(null)).toEqual(["a", "c"]);
+      expect(await logins("c")).toEqual(["d", "e"]);
+      expect(await logins("e")).toEqual([]);
+      // Any login works as a cursor, listed or not.
+      expect(await logins("bb")).toEqual(["c", "d"]);
+    });
+
+    it("walks users by index and seeks each one's latest day, never scanning usage", async () => {
+      usage("laptop", "2026-07-01", "codex", "gpt-5", 1);
+      await index("a");
+
+      const query = database.executed.at(-1);
+      // A fixed handful of bound values, whatever the page size.
+      expect(query?.parameters).toHaveLength(6);
+      const plan = query === undefined ? [] : database.queryPlan(query);
+      expect(plan).toContain("SEARCH users USING INDEX users_login_unique (login>?)");
+      expect(plan).toContain(
+        "SEARCH usage_days USING COVERING INDEX usage_days_user_date_cost_tokens_idx (user_id=? AND date<?)",
+      );
+      expect(plan.filter((detail) => detail.startsWith("SCAN"))).toEqual([]);
+    });
+  });
+
   describe("daily", () => {
     beforeEach(() => {
       usage("laptop", "2026-07-01", "codex", "gpt-5", 1);

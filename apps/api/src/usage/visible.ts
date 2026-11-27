@@ -1,5 +1,6 @@
 import { usageDays, users } from "@tokenmaxxing/db";
-import { and, eq, gte, isNull, lte, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte, sql, type SQL } from "drizzle-orm";
+import type { DrizzleD1Database } from "drizzle-orm/d1";
 import type { SQLiteSelect } from "drizzle-orm/sqlite-core";
 
 /**
@@ -55,6 +56,27 @@ function visibleUsageByUser<TQuery extends SQLiteSelect>(
     .where(and(eq(usageDays.userId, users.id), visibleUsageFilter(options)));
 }
 
-export { visibleUsage, visibleUsageByUser, visibleUsageFilter };
+/**
+ * The latest visible usage day of the enclosing query's `users` row, or null
+ * when it has none (no usage, only rows past `until`, or a shadow-banned
+ * user): a correlated subquery for a `select … from users`. It is one seek
+ * per user on `usage_days_user_date_cost_tokens_idx` (newest day at or
+ * before `until`, index only), so reading it for every user costs a few rows
+ * each, however much usage they have.
+ *
+ * @example db.select({ login: users.login, lastDate: lastVisibleUsageDate(db, { until }) }).from(users)
+ */
+function lastVisibleUsageDate(db: DrizzleD1Database, options: VisibleUsageOptions) {
+  const latest = db
+    .select({ date: usageDays.date })
+    .from(usageDays)
+    .where(and(eq(usageDays.userId, users.id), visibleUsageFilter(options)))
+    .orderBy(desc(usageDays.date))
+    .limit(1);
+
+  return sql<string | null>`(${latest})`;
+}
+
+export { lastVisibleUsageDate, visibleUsage, visibleUsageByUser, visibleUsageFilter };
 
 export type { VisibleUsageOptions };

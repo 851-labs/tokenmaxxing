@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LeaderboardResponse, utcDayKey } from "@tokenmaxxing/api-contract";
+import { ProfileIndexResponse, utcDayKey } from "@tokenmaxxing/api-contract";
 
 import { textResponse } from "../lib/http";
 import { fetchPublicJson } from "../lib/public-api";
 import { siteUrl } from "../lib/site";
 import { buildSitemapXml, STATIC_SITEMAP_PATHS, type SitemapEntry } from "./-sitemap";
 
-type Leaderboard = typeof LeaderboardResponse.Type;
+type ProfileIndex = typeof ProfileIndexResponse.Type;
 
 interface SitemapCache {
   match(request: Request): Promise<Response | undefined>;
@@ -16,8 +16,8 @@ interface SitemapCache {
 interface SitemapRouteDeps {
   /** Where a finished sitemap is kept between requests; null for none. */
   cache(): SitemapCache | null;
-  /** One page of the all-time ranking, starting after `offset` ranks. */
-  loadLeaderboard(offset: number): Promise<Leaderboard | null>;
+  /** One page of the public profile index, after the login `after` (null for the first). */
+  loadProfiles(after: string | null): Promise<ProfileIndex | null>;
   now(): Date;
 }
 
@@ -33,56 +33,58 @@ const SITEMAP_CACHE_KEY = siteUrl("/sitemap.xml");
 
 const defaultDeps: SitemapRouteDeps = {
   cache: defaultSitemapCache,
-  loadLeaderboard: (offset) =>
-    fetchPublicJson(`/leaderboard?metric=spend&window=all&offset=${offset}`, LeaderboardResponse),
+  loadProfiles: (after) =>
+    fetchPublicJson(
+      after === null ? "/profiles" : `/profiles?after=${encodeURIComponent(after)}`,
+      ProfileIndexResponse,
+    ),
   now: () => new Date(),
 };
 
-interface RankedProfiles {
+interface PublicProfiles {
   /** False when a page failed to load, so some profiles are missing. */
   complete: boolean;
-  entries: Leaderboard["entries"];
+  entries: ProfileIndex["entries"][number][];
 }
 
 /**
- * Every ranked profile, not only the leaderboard's first page. The all-time
- * ranking holds each visible user with usage, so hidden (shadow-banned) and
- * empty profiles never reach the sitemap. The home page links only the top of
- * it until "Load more" is pressed, which a crawler never does: the sitemap is
- * how the rest are found.
+ * Every public profile, from the API's profile index: each visible user with
+ * usage (the users the all-time leaderboard ranks), so hidden (shadow-banned)
+ * and empty profiles never reach the sitemap. The home page links only the
+ * top of the ranking until "Load more" is pressed, which a crawler never
+ * does: the sitemap is how the rest are found.
  *
- * Pages are read one after another, each from the offset the last one named.
- * Every page is a ranking query over all usage, and the database runs one
- * query at a time: read together they would hold up every other request for
- * as long as they take. A later page that fails ends the read, and the
- * profiles loaded so far are still listed.
+ * The index is by login and unranked, so a page costs a few rows read per
+ * user rather than a pass over all usage. Pages are still read one after
+ * another, each from the login the last one named. A page that fails or does
+ * not move on ends the read, and the profiles loaded so far are still listed.
  */
-async function loadRankedProfiles(
-  loadLeaderboard: SitemapRouteDeps["loadLeaderboard"],
+async function loadPublicProfiles(
+  loadProfiles: SitemapRouteDeps["loadProfiles"],
   limit: number,
-): Promise<RankedProfiles> {
-  const first = await loadLeaderboard(0);
-  const entries = [...(first?.entries ?? [])];
+): Promise<PublicProfiles> {
+  const entries: ProfileIndex["entries"][number][] = [];
+  let after: string | null = null;
 
-  let offset = first?.nextOffset ?? null;
-  while (offset !== null && entries.length < limit) {
-    let page: Leaderboard | null;
+  do {
+    let page: ProfileIndex | null;
     try {
-      page = await loadLeaderboard(offset);
+      page = await loadProfiles(after);
     } catch (error) {
-      console.warn("Sitemap leaderboard page failed", { error, offset });
+      console.warn("Sitemap profile page failed", { after, error });
       return { complete: false, entries };
     }
-    // An offset that does not move on would never end.
-    const next: number | null = page?.nextOffset ?? null;
-    if (page === null || (next !== null && next <= offset)) {
-      console.warn("Sitemap leaderboard page unusable", { offset });
+    // A cursor that does not move on would never end; a missing index (an
+    // API without the endpoint yet) must not pass for an empty one.
+    const next: string | null = page?.nextAfter ?? null;
+    if (page === null || (next !== null && after !== null && next <= after)) {
+      console.warn("Sitemap profile page unusable", { after });
       return { complete: false, entries };
     }
 
     entries.push(...page.entries);
-    offset = next;
-  }
+    after = next;
+  } while (after !== null && entries.length < limit);
 
   return { complete: true, entries };
 }
@@ -90,8 +92,8 @@ async function loadRankedProfiles(
 /**
  * The sitemap is built at most once an hour per edge location: a crawler
  * that fetches it (several do, daily or more) gets the stored copy instead of
- * setting off a read of the whole ranking. Only a complete sitemap is stored,
- * so one missing profiles is rebuilt on the next request.
+ * setting off a read of the whole profile index. Only a complete sitemap is
+ * stored, so one missing profiles is rebuilt on the next request.
  */
 function makeSitemapHandler(overrides: Partial<SitemapRouteDeps> = {}) {
   const deps = { ...defaultDeps, ...overrides };
@@ -106,42 +108,31 @@ function makeSitemapHandler(overrides: Partial<SitemapRouteDeps> = {}) {
 
     const pages: SitemapEntry[] = STATIC_SITEMAP_PATHS.map((path) => ({ path }));
     const profileLimit = MAX_SITEMAP_URLS - pages.length;
-    let profiles: SitemapEntry[] = [];
-    let complete = true;
+    const profiles: SitemapEntry[] = [];
     // `lastDate` is the user's local day, which can run a day ahead of UTC;
     // a sitemap <lastmod> must not be in the future.
     const today = utcDayKey(deps.now());
-    try {
-      const ranked = await loadRankedProfiles(
-        (offset) => deps.loadLeaderboard(offset),
-        profileLimit,
-      );
-      complete = ranked.complete;
-      // The ranking can shift between two page reads, which repeats a user
-      // across pages; a URL belongs in the sitemap once.
-      const seen = new Set<string>();
-      for (const entry of ranked.entries) {
-        if (seen.has(entry.user.login) || seen.size >= profileLimit) {
-          continue;
-        }
-        seen.add(entry.user.login);
-        profiles.push({
-          lastModified: entry.lastDate !== null && entry.lastDate > today ? today : entry.lastDate,
-          path: `/${encodeURIComponent(entry.user.login)}`,
-        });
+    const loaded = await loadPublicProfiles((after) => deps.loadProfiles(after), profileLimit);
+    // Logins are unique and the pages are disjoint, but a rename between two
+    // page reads can list a user twice; a URL belongs in the sitemap once.
+    const seen = new Set<string>();
+    for (const entry of loaded.entries) {
+      if (seen.has(entry.login) || seen.size >= profileLimit) {
+        continue;
       }
-    } catch (error) {
-      console.warn("Sitemap leaderboard load failed", { error });
-      profiles = [];
-      complete = false;
+      seen.add(entry.login);
+      profiles.push({
+        lastModified: entry.lastDate > today ? today : entry.lastDate,
+        path: `/${encodeURIComponent(entry.login)}`,
+      });
     }
 
     const response = textResponse(buildSitemapXml([...pages, ...profiles]), {
-      cacheControl: complete ? SITEMAP_CACHE_CONTROL : PARTIAL_SITEMAP_CACHE_CONTROL,
+      cacheControl: loaded.complete ? SITEMAP_CACHE_CONTROL : PARTIAL_SITEMAP_CACHE_CONTROL,
       contentType: "application/xml; charset=utf-8",
     });
 
-    return complete ? storeCachedSitemap(cache, cacheKey, response) : response;
+    return loaded.complete ? storeCachedSitemap(cache, cacheKey, response) : response;
   };
 }
 
