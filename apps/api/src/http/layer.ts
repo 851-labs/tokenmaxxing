@@ -336,6 +336,15 @@ const viewerUserId = Effect.gen(function* () {
 
 const profilesHandlers = HttpApiBuilder.group(TokenmaxxingApi, "profiles", (handlers) =>
   handlers
+    .handle("index", ({ query }) =>
+      Effect.gen(function* () {
+        const profiles = yield* ProfilesService;
+        const page = yield* profiles.getIndex(query.after ?? null);
+        // Never resolves the viewer, so every response is the same public list.
+        yield* cacheControl(PUBLIC_READ_CACHE_CONTROL);
+        return page;
+      }),
+    )
     .handle("identity", ({ params }) =>
       Effect.gen(function* () {
         const profiles = yield* ProfilesService;

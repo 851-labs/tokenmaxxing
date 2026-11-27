@@ -14,7 +14,7 @@ import { CliLoginService } from "../clilogin/service";
 import { AppConfig, type AppConfigShape } from "../config";
 import { LeaderboardService } from "../leaderboard/service";
 import { OAuthProviders } from "../oauth/registry";
-import { latestUsageDateKey } from "../date-keys";
+import { latestUsageDateKey, shiftDayKey } from "../date-keys";
 import { ProfilesService } from "../profiles/service";
 import { RATE_LIMIT_RULES, RateLimiter, unlimitedRateLimiter } from "../ratelimit/service";
 import { ServicesLive } from "../services";
@@ -77,7 +77,16 @@ describe("api cache headers", () => {
 
     const leaderboard = await serve(fetch, apiRequest("/leaderboard"));
     const identity = await serve(fetch, apiRequest("/profiles/visible/identity"));
+    // Never per-viewer, so shareable even when the request carries a session.
+    const index = await serve(
+      fetch,
+      apiRequest("/profiles", { cookie: `${SESSION_COOKIE}=session-token` }),
+    );
 
+    expect(index.status).toBe(200);
+    expect(index.headers.get("cache-control")).toBe(
+      "public, s-maxage=60, stale-while-revalidate=300",
+    );
     expect(leaderboard.status).toBe(200);
     expect(leaderboard.headers.get("cache-control")).toBe(
       "public, s-maxage=60, stale-while-revalidate=300",
@@ -776,6 +785,92 @@ describe("api wiring over real services", () => {
     expect(entries.map((entry) => entry.user.login)).toEqual(logins);
   });
 
+  it("pages the profile index by login, without hidden or empty profiles", async () => {
+    const today = utcDayKey(new Date());
+    // 1,200 listed profiles (two pages), seeded out of login order.
+    const logins = Array.from(
+      { length: 1_200 },
+      (_, index) => `u${String(index).padStart(4, "0")}`,
+    );
+    for (const login of logins.toReversed()) {
+      seedUser(database.sqlite, { id: login });
+      seedUsage(database.sqlite, { date: today, deviceId: `${login}-device`, userId: login });
+    }
+    // `alex` (user_1) has no usage; these two are hidden or not yet real.
+    seedUser(database.sqlite, { id: "banned", shadowBannedAt: 1, shadowBannedByUserId: "admin" });
+    seedUsage(database.sqlite, { date: today, deviceId: "banned-device", userId: "banned" });
+    seedUser(database.sqlite, { id: "future" });
+    seedUsage(database.sqlite, {
+      date: shiftDayKey(latestUsageDateKey(new Date()), 1),
+      deviceId: "future-device",
+      userId: "future",
+    });
+
+    const pages: { entries: { lastDate: string; login: string }[]; nextAfter: string | null }[] =
+      [];
+    let after: string | null = null;
+    do {
+      const query: string = after === null ? "" : `?after=${encodeURIComponent(after)}`;
+      const response = await serve(fetch, apiRequest(`/profiles${query}`));
+      expect(response.status).toBe(200);
+      const page = (await response.json()) as (typeof pages)[number];
+      pages.push(page);
+      after = page.nextAfter;
+    } while (after !== null);
+
+    expect(pages.map((page) => [page.entries.length, page.nextAfter])).toEqual([
+      [1_000, "u0999"],
+      [200, null],
+    ]);
+    const entries = pages.flatMap((page) => page.entries);
+    expect(entries.map((entry) => entry.login)).toEqual(logins);
+    expect(new Set(entries.map((entry) => entry.lastDate))).toEqual(new Set([today]));
+  });
+
+  it("lists exactly the profiles the all-time leaderboard ranks", async () => {
+    const today = utcDayKey(new Date());
+    const seeded = [
+      { date: "2025-01-01", id: "old" },
+      { date: today, id: "now" },
+      { date: shiftDayKey(today, -3), id: "zero-spend" },
+      { date: shiftDayKey(today, -1), id: "two-days" },
+      { date: "2026-07-01", id: "two-days" },
+    ];
+    for (const id of new Set(seeded.map((row) => row.id))) {
+      seedUser(database.sqlite, { id });
+    }
+    for (const [index, row] of seeded.entries()) {
+      seedUsage(database.sqlite, {
+        costUsd: row.id === "zero-spend" ? 0 : index + 1,
+        date: row.date,
+        deviceId: `${row.id}-device`,
+        model: `model-${index}`,
+        totalTokens: row.id === "zero-spend" ? 0 : 10,
+        userId: row.id,
+      });
+    }
+    seedUser(database.sqlite, { id: "banned", shadowBannedAt: 1, shadowBannedByUserId: "admin" });
+    seedUsage(database.sqlite, { date: today, deviceId: "banned-device", userId: "banned" });
+
+    const index = (await (await serve(fetch, apiRequest("/profiles"))).json()) as {
+      entries: { lastDate: string; login: string }[];
+    };
+    const leaderboard = (await (
+      await serve(fetch, apiRequest("/leaderboard?metric=spend&window=all"))
+    ).json()) as { entries: { lastDate: string; user: { login: string } }[] };
+
+    const ranked = leaderboard.entries
+      .map((entry) => ({ lastDate: entry.lastDate, login: entry.user.login }))
+      .toSorted((left, right) => left.login.localeCompare(right.login));
+    expect(index.entries).toEqual(ranked);
+    expect(index.entries.map((entry) => entry.login)).toEqual([
+      "now",
+      "old",
+      "two-days",
+      "zero-spend",
+    ]);
+  });
+
   it("ends the leaderboard with a null nextOffset when the last page is full", async () => {
     for (let index = 0; index < 100; index += 1) {
       const login = `u${String(index).padStart(3, "0")}`;
@@ -853,6 +948,7 @@ function makeHarness() {
       login === "visible"
         ? Effect.succeed({ avatarUrl: null, login })
         : Effect.fail(new UserNotFound({ login })),
+    getIndex: () => Effect.succeed({ entries: [], nextAfter: null }),
     getProfile: () => Effect.die("unused"),
   });
 

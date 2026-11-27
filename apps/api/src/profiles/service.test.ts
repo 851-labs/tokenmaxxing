@@ -7,6 +7,7 @@ import { shiftDayKey } from "../date-keys";
 import {
   makeProfilesService,
   MAX_DAILY_RANGE_DAYS,
+  PROFILE_INDEX_PAGE_SIZE,
   profileDailyBounds,
   profileDailyRange,
   ProfilesRepository,
@@ -163,6 +164,7 @@ async function makeProfileService(
                 })
               : Option.none(),
           ),
+        index: () => Effect.die("unused"),
         leaderboardRank: (input) => {
           onLeaderboardRank?.(input);
           return Effect.succeed(7);
@@ -194,6 +196,7 @@ describe("ProfilesService shadow-ban visibility", () => {
                 },
               }),
             ),
+          index: () => Effect.die("unused"),
           leaderboardRank,
           stats,
         }),
@@ -350,5 +353,65 @@ describe("ProfilesService.getDaily", () => {
       ),
     ).rejects.toBeInstanceOf(BadRequest);
     expect(onDaily).not.toHaveBeenCalled();
+  });
+});
+
+describe("ProfilesService.getIndex", () => {
+  function makeIndexService(total: number) {
+    const logins = Array.from(
+      { length: total },
+      (_, index) => `u${String(index).padStart(5, "0")}`,
+    );
+    const inputs: { after: string | null; limit: number; until: string }[] = [];
+    const service = Effect.runPromise(
+      makeProfilesService().pipe(
+        Effect.provideService(ProfilesRepository, {
+          daily: () => Effect.die("unused"),
+          findUserByLogin: () => Effect.die("unused"),
+          index: (input) => {
+            inputs.push(input);
+            const rest = logins.filter((login) => input.after === null || login > input.after);
+            return Effect.succeed(
+              rest.slice(0, input.limit).map((login) => ({ lastDate: "2026-06-01", login })),
+            );
+          },
+          leaderboardRank: () => Effect.die("unused"),
+          stats: () => Effect.die("unused"),
+        }),
+      ),
+    );
+
+    return { inputs, service };
+  }
+
+  it("names the last login of a full page as the next cursor", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T22:30:00Z"));
+    try {
+      const { inputs, service } = makeIndexService(PROFILE_INDEX_PAGE_SIZE + 5);
+      const first = await Effect.runPromise((await service).getIndex(null));
+      const last = await Effect.runPromise((await service).getIndex(first.nextAfter));
+
+      expect(first.entries).toHaveLength(PROFILE_INDEX_PAGE_SIZE);
+      expect(first.nextAfter).toBe(first.entries.at(-1)?.login);
+      expect(last.entries).toHaveLength(5);
+      expect(last.nextAfter).toBeNull();
+      // One extra row tells a full last page apart; read up to the ingest ceiling.
+      expect(inputs).toEqual([
+        { after: null, limit: PROFILE_INDEX_PAGE_SIZE + 1, until: "2026-06-13" },
+        { after: first.nextAfter, limit: PROFILE_INDEX_PAGE_SIZE + 1, until: "2026-06-13" },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ends on a page that is exactly full", async () => {
+    const { service } = makeIndexService(PROFILE_INDEX_PAGE_SIZE);
+
+    const page = await Effect.runPromise((await service).getIndex(null));
+
+    expect(page.entries).toHaveLength(PROFILE_INDEX_PAGE_SIZE);
+    expect(page.nextAfter).toBeNull();
   });
 });

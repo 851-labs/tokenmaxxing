@@ -768,6 +768,28 @@ const ProfileResponse = Schema.Struct({
 
 type ProfileResponse = typeof ProfileResponse.Type;
 
+/** One public profile in the profile index: its login and last active day. */
+const ProfileIndexEntry = Schema.Struct({
+  /** The latest day with usage, as the user's local day (YYYY-MM-DD), so it can be a day ahead of UTC. */
+  lastDate: Schema.String,
+  login: Schema.String,
+});
+
+type ProfileIndexEntry = typeof ProfileIndexEntry.Type;
+
+/**
+ * One page of every public profile (visible users with usage), by login
+ * ascending: what the sitemap lists. Unranked, so it stays cheap to read in
+ * full.
+ */
+const ProfileIndexResponse = Schema.Struct({
+  entries: Schema.Array(ProfileIndexEntry),
+  /** The `after` of the next page: the last login on this one. Null on the last page. */
+  nextAfter: Schema.NullOr(Schema.String),
+});
+
+type ProfileIndexResponse = typeof ProfileIndexResponse.Type;
+
 // Public endpoint: device names are hostnames, visible only to their owner
 // (via /me/devices), so they are deliberately not a public grouping.
 /**
@@ -1007,6 +1029,8 @@ export {
   ProfileDailyResponse,
   ProfileDailyRow,
   ProfileIdentityResponse,
+  ProfileIndexEntry,
+  ProfileIndexResponse,
   ProfileResponse,
   ProfileStats,
   ProfileUser,

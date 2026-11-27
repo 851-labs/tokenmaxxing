@@ -12,6 +12,8 @@ import type {
   ProfileDailyResponse,
   ProfileDailyRow,
   ProfileIdentityResponse,
+  ProfileIndexEntry,
+  ProfileIndexResponse,
   ProfileResponse,
   ProfileStats,
   UserId,
@@ -30,6 +32,13 @@ import { leaderboardWindowStart } from "../usage/ranking";
 
 /** Longest span one daily request may cover (about three years of days). */
 const MAX_DAILY_RANGE_DAYS = 3 * 366;
+
+/**
+ * Profiles per index page. The query binds three values whatever the page
+ * size, so this is not held to D1's 100-parameter cap; it is sized so the
+ * sitemap reads 50,000 profiles in 50 requests.
+ */
+const PROFILE_INDEX_PAGE_SIZE = 1_000;
 
 interface DailyQuery {
   groupBy: ProfileDailyGroupBy;
@@ -51,6 +60,11 @@ interface ProfilesServiceShape {
     query: DailyQuery,
     viewerUserId: UserId | null,
   ): Effect.Effect<ProfileDailyResponse, BadRequest | UserNotFound>;
+  /**
+   * One page of every public profile, by login, starting after `after`.
+   * Always the anonymous view: a shadow-banned owner is never listed.
+   */
+  getIndex(after: string | null): Effect.Effect<ProfileIndexResponse>;
 }
 
 interface ProfileUser {
@@ -79,6 +93,16 @@ interface ProfilesRepositoryShape {
     userId: string,
     window: { today: string; until: string },
   ): Effect.Effect<ProfileStatsWithoutRank, DatabaseError>;
+  /**
+   * Up to `limit` visible users with usage up to `until`, by login
+   * ascending, after `after` (null = from the first); each with their latest
+   * day of usage. The same users the all-time leaderboard ranks, unranked.
+   */
+  index(input: {
+    after: string | null;
+    limit: number;
+    until: string;
+  }): Effect.Effect<ProfileIndexEntry[], DatabaseError>;
   /** Both bounds are always set: see {@link profileDailyBounds}. */
   daily(
     userId: string,
@@ -145,6 +169,18 @@ const makeProfilesService = Effect.fn("makeProfilesService")(function* () {
 
       return { days, range: profileDailyRange(query, bounds, days, now) };
     }),
+    getIndex: Effect.fn("ProfilesService.getIndex")(function* (after) {
+      // One extra row says whether another page follows.
+      const rows = yield* repository
+        .index({ after, limit: PROFILE_INDEX_PAGE_SIZE + 1, until: latestUsageDateKey(new Date()) })
+        .pipe(Effect.orDie);
+      const entries = rows.slice(0, PROFILE_INDEX_PAGE_SIZE);
+
+      return {
+        entries,
+        nextAfter: rows.length > PROFILE_INDEX_PAGE_SIZE ? (entries.at(-1)?.login ?? null) : null,
+      };
+    }),
   });
 });
 
@@ -210,6 +246,7 @@ function profileDailyRange(
 export {
   makeProfilesService,
   MAX_DAILY_RANGE_DAYS,
+  PROFILE_INDEX_PAGE_SIZE,
   profileDailyBounds,
   profileDailyRange,
   ProfilesRepository,

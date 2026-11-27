@@ -43,6 +43,7 @@ import {
   ProfileDailyGroupBy,
   ProfileDailyResponse,
   ProfileIdentityResponse,
+  ProfileIndexResponse,
   ProfileResponse,
   ShadowBanUserResponse,
   StatsResponse,
@@ -198,6 +199,16 @@ class StatsGroup extends HttpApiGroup.make("stats").add(
  * undeclared tag would not decode into a typed error on the client.
  */
 class ProfilesGroup extends HttpApiGroup.make("profiles")
+  .add(
+    // The sitemap's source: every public profile, a page at a time, by login.
+    HttpApiEndpoint.get("index", "/profiles", {
+      query: {
+        /** Start after this login (the previous page's `nextAfter`). */
+        after: Schema.optional(Schema.String),
+      },
+      success: ProfileIndexResponse,
+    }),
+  )
   .add(
     HttpApiEndpoint.get("identity", "/profiles/:login/identity", {
       params: {

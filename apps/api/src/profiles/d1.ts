@@ -1,5 +1,5 @@
 import { loginAliases, usageDays, usageSourceStats, userAccounts, users } from "@tokenmaxxing/db";
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { Effect, Layer, Option } from "effect";
 
 import { DEFAULT_LEADERBOARD_METRIC } from "@tokenmaxxing/api-contract";
@@ -8,6 +8,7 @@ import { Drizzle, firstRow } from "../database";
 import { authUserColumns, toAuthUser } from "../public-user";
 import { singleAggregateRow, sumOf, usageAggregates } from "../usage/aggregates";
 import { userRank } from "../usage/ranking";
+import { lastVisibleUsageDate } from "../usage/visible";
 import { makeProfilesService, ProfilesRepository, ProfilesService } from "./service";
 import { usageStreaks } from "./streaks";
 
@@ -61,6 +62,26 @@ const makeD1ProfilesRepository = Effect.fn("makeD1ProfilesRepository")(function*
             user: toAuthUser(row.user),
           })),
         );
+      }),
+    index: ({ after, limit, until }) =>
+      database.use((db) => {
+        const lastDate = lastVisibleUsageDate(db, { until });
+
+        // Walks users in login order on users_login_unique, one index seek
+        // into usage_days per user: never a scan of usage, never a ranking.
+        // A login is unique, so `after` resumes exactly past the last page.
+        return db
+          .select({ lastDate: sql<string>`${lastDate}`.as("last_date"), login: users.login })
+          .from(users)
+          .where(
+            and(
+              isNull(users.shadowBannedAt),
+              after === null ? undefined : gt(users.login, after),
+              isNotNull(lastDate),
+            ),
+          )
+          .orderBy(asc(users.login))
+          .limit(limit);
       }),
     leaderboardRank: (input) =>
       Effect.gen(function* () {
